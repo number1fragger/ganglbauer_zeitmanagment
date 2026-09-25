@@ -1,0 +1,19 @@
+parameters:
+    jwt_ttl: '%env(int:JWT_TTL)%'
+
+services:
+    _defaults:
+        autowire: true
+        autoconfigure: true
+
+    App\:
+        resource: '../src/'
+        exclude:
+            - '../src/DependencyInjection/'
+            - '../src/Entity/'
+            - '../src/Enum/'
+            - '../src/Kernel.php'
+
+    App\EventListener\ApiExceptionListener:
+        arguments:
+            $debug: '%kernel.debug%'

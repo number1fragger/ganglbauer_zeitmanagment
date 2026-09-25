@@ -1,0 +1,23 @@
+# Nur die Datenbank laeuft im Container. Backend und Frontend startest du
+# lokal – die Container in diesem Netz kommen nicht ins Internet, Composer
+# und npm wuerden darin haengen.
+services:
+  database:
+    image: postgres:16-alpine
+    container_name: gz_database
+    environment:
+      POSTGRES_DB: zeitmanagement
+      POSTGRES_USER: zeitmanagement
+      POSTGRES_PASSWORD: zeitmanagement
+    ports:
+      - '5432:5432'
+    volumes:
+      - db_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ['CMD-SHELL', 'pg_isready -U zeitmanagement']
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+volumes:
+  db_data:

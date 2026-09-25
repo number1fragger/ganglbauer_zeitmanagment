@@ -91,4 +91,54 @@ class JobRepository extends ServiceEntityRepository
             ->getQuery()
             ->getResult();
     }
+
+    /**
+     * Eingeplante Arbeiten, die im Zeitraum liegen koennten. Weil eine Arbeit
+     * ueber mehrere Tage laufen kann, wird auch etwas vor "from" gesucht –
+     * den genauen Schnitt macht der CalendarBuilder.
+     *
+     * @return Job[]
+     */
+    public function findScheduledAround(\DateTimeImmutable $from, \DateTimeImmutable $to, ?User $assignee = null): array
+    {
+        $qb = $this->createQueryBuilder('j')
+            ->addSelect('u', 'e')
+            ->join('j.assignee', 'u')
+            ->leftJoin('j.timeEntries', 'e')
+            ->andWhere('j.startsAt IS NOT NULL')
+            ->andWhere('j.startsAt <= :to')
+            ->andWhere('j.startsAt >= :lookBack')
+            ->setParameter('to', $to)
+            ->setParameter('lookBack', $from->modify('-60 days'))
+            ->orderBy('j.startsAt', 'ASC');
+
+        if (null !== $assignee) {
+            $qb->andWhere('j.assignee = :assignee')->setParameter('assignee', $assignee);
+        }
+
+        return $qb->getQuery()->getResult();
+    }
+
+    /**
+     * Offene Arbeiten ohne Beginn oder ohne Arbeiter – die tauchen im
+     * Kalender noch nicht auf und muessen erst eingeplant werden.
+     *
+     * @return Job[]
+     */
+    public function findUnscheduled(?User $assignee = null): array
+    {
+        $qb = $this->createQueryBuilder('j')
+            ->addSelect('u')
+            ->leftJoin('j.assignee', 'u')
+            ->andWhere('j.status != :done')
+            ->andWhere('j.startsAt IS NULL OR j.assignee IS NULL')
+            ->setParameter('done', JobStatus::Done)
+            ->orderBy('j.createdAt', 'ASC');
+
+        if (null !== $assignee) {
+            $qb->andWhere('j.assignee = :assignee')->setParameter('assignee', $assignee);
+        }
+
+        return $qb->getQuery()->getResult();
+    }
 }

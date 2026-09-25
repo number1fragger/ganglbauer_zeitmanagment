@@ -11,13 +11,15 @@ use Symfony\Component\Validator\Context\ExecutionContextInterface;
 
 /**
  * F7/F8 – "Brauche Arbeit": Ein Arbeiter meldet, ab wann er wieder
- * eine neue Arbeit braucht. Vorlauf mindestens ein Tag, damit noch
- * ein Kunde in die Werkstatt geholt werden kann.
+ * eine neue Arbeit braucht. Die Anforderung muss spaetestens am Vortag
+ * kommen, damit noch ein Kunde in die Werkstatt geholt werden kann –
+ * "morgen frueh" geht also immer, "heute Nachmittag" nie.
  */
 #[ORM\Entity(repositoryClass: WorkRequestRepository::class)]
 class WorkRequest
 {
-    public const MIN_LEAD_TIME_HOURS = 24;
+    /** Mindestvorlauf in Kalendertagen. */
+    public const MIN_LEAD_TIME_DAYS = 1;
 
     #[ORM\Id]
     #[ORM\GeneratedValue]
@@ -51,21 +53,27 @@ class WorkRequest
 
     public function __construct()
     {
-        $this->neededAt = new \DateTimeImmutable('+1 day');
+        $this->neededAt = (new \DateTimeImmutable('+1 day'))->setTime(7, 0);
         $this->createdAt = new \DateTimeImmutable();
     }
 
-    /** F8 – Vorlaufzeit von mindestens einem Tag. */
+    /** F8 – fruehestens der naechste Kalendertag. */
     #[Assert\Callback]
     public function validateLeadTime(ExecutionContextInterface $context): void
     {
-        $earliest = $this->createdAt->modify(sprintf('+%d hours', self::MIN_LEAD_TIME_HOURS));
-
-        if ($this->neededAt < $earliest) {
-            $context->buildViolation('Die Anforderung ist fruehestens einen Tag im Voraus moeglich.')
+        if ($this->neededAt < $this->earliestNeededAt()) {
+            $context->buildViolation('Neue Arbeit kann fruehestens fuer den naechsten Tag angefordert werden.')
                 ->atPath('neededAt')
                 ->addViolation();
         }
+    }
+
+    /** Beginn des naechsten Tages, gerechnet ab dem Zeitpunkt der Anforderung. */
+    public function earliestNeededAt(): \DateTimeImmutable
+    {
+        return $this->createdAt
+            ->modify(sprintf('+%d day', self::MIN_LEAD_TIME_DAYS))
+            ->setTime(0, 0);
     }
 
     public function getId(): ?int

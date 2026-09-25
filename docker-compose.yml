@@ -1,20 +1,22 @@
-# Nur die Datenbank laeuft im Container. Backend und Frontend startest du
-# lokal – die Container in diesem Netz kommen nicht ins Internet, Composer
-# und npm wuerden darin haengen.
+# Entwicklung: Nur die Datenbank laeuft im Container. Backend und Frontend
+# startest du lokal mit ./dev.sh backend und ./dev.sh frontend.
+# Den kompletten Stack in Containern gibt es unter docker/docker-compose.yml.
 services:
   database:
-    image: postgres:16-alpine
+    image: mariadb:11
     container_name: gz_database
     environment:
-      POSTGRES_DB: zeitmanagement
-      POSTGRES_USER: zeitmanagement
-      POSTGRES_PASSWORD: zeitmanagement
+      MARIADB_ROOT_PASSWORD: root
+      MARIADB_DATABASE: zeitmanagement
+      MARIADB_USER: zeitmanagement
+      MARIADB_PASSWORD: zeitmanagement
     ports:
-      - '5432:5432'
+      - '3306:3306'
     volumes:
-      - db_data:/var/lib/postgresql/data
+      - db_data:/var/lib/mysql
+    # Prüft, ob die Datenbank erreichbar und vollständig initialisiert ist.
     healthcheck:
-      test: ['CMD-SHELL', 'pg_isready -U zeitmanagement']
+      test: ['CMD', 'healthcheck.sh', '--connect', '--innodb_initialized']
       interval: 5s
       timeout: 5s
       retries: 10

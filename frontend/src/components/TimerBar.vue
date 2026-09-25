@@ -45,7 +45,7 @@ async function start(): Promise<void> {
   try {
     await workshop.startWork(selectedJobId.value)
     selectedJobId.value = null
-    await Promise.all([workshop.loadJobs(), workshop.loadOverview()])
+    await workshop.refresh()
   } catch (e) {
     error.value = errorMessage(e)
   } finally {
@@ -59,7 +59,7 @@ async function stop(): Promise<void> {
 
   try {
     await workshop.stopWork()
-    await Promise.all([workshop.loadJobs(), workshop.loadOverview()])
+    await workshop.refresh()
   } catch (e) {
     error.value = errorMessage(e)
   } finally {

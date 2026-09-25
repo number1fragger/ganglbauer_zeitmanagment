@@ -6,6 +6,7 @@ use App\Entity\Job;
 use App\Entity\TimeEntry;
 use App\Repository\JobRepository;
 use App\Repository\TimeEntryRepository;
+use App\Security\Voter\JobVoter;
 use App\Service\TimeTracker;
 use Doctrine\ORM\EntityManagerInterface;
 use Symfony\Component\HttpFoundation\JsonResponse;
@@ -57,6 +58,7 @@ class TimeEntryController extends AbstractApiController
         if (!$job instanceof Job) {
             throw new BadRequestHttpException('Bitte eine Arbeit angeben, an der gearbeitet wird.');
         }
+        $this->denyAccessUnlessGranted(JobVoter::WORK, $job, 'Auf diese Arbeit bist du nicht eingeteilt.');
 
         $entry = $this->tracker->start($this->currentUser(), $job, isset($data['note']) ? (string) $data['note'] : null);
 
@@ -94,6 +96,7 @@ class TimeEntryController extends AbstractApiController
         if (!$job instanceof Job) {
             throw new BadRequestHttpException('Bitte eine Arbeit angeben.');
         }
+        $this->denyAccessUnlessGranted(JobVoter::WORK, $job, 'Auf diese Arbeit bist du nicht eingeteilt.');
 
         $entry = new TimeEntry();
         $entry->setUser($this->currentUser());
@@ -140,7 +143,7 @@ class TimeEntryController extends AbstractApiController
 
     private function denyUnlessOwner(TimeEntry $entry): void
     {
-        if ($entry->getUser() !== $this->currentUser() && !$this->isGranted('ROLE_ADMIN')) {
+        if ($entry->getUser() !== $this->currentUser() && !$this->isGranted('ROLE_FOREMAN')) {
             throw $this->createAccessDeniedException('Dieser Eintrag gehoert einer anderen Person.');
         }
     }
@@ -165,6 +168,7 @@ class TimeEntryController extends AbstractApiController
         if (!empty($data['jobId'])) {
             $job = $this->jobs->find((int) $data['jobId']);
             if ($job instanceof Job) {
+                $this->denyAccessUnlessGranted(JobVoter::WORK, $job, 'Auf diese Arbeit bist du nicht eingeteilt.');
                 $entry->setJob($job);
             }
         }

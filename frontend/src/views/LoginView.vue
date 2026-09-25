@@ -17,7 +17,8 @@ async function submit(): Promise<void> {
 
   try {
     await auth.login(email.value, password.value)
-    const redirect = typeof route.query.redirect === 'string' ? route.query.redirect : '/'
+    const redirect =
+      typeof route.query.redirect === 'string' ? route.query.redirect : auth.homeRoute
     await router.push(redirect)
   } catch (e) {
     error.value = errorMessage(e)
@@ -59,9 +60,17 @@ async function submit(): Promise<void> {
       </button>
     </form>
 
-    <p class="hint muted">
-      Demo-Zugang aus den Fixtures: <code>meister@ganglbauer.at</code> / <code>admin1234</code>
-    </p>
+    <div class="hint muted">
+      <p>Die Rolle bestimmt die sichtbaren Ansichten. Demo-Zugänge:</p>
+      <ul>
+        <li><strong>Chef</strong> <code>meister@ganglbauer.at</code> / <code>admin1234</code></li>
+        <li>
+          <strong>Vorarbeiter</strong> <code>vorarbeiter@ganglbauer.at</code> /
+          <code>test1234</code>
+        </li>
+        <li><strong>Arbeiter</strong> <code>kevin@ganglbauer.at</code> / <code>test1234</code></li>
+      </ul>
+    </div>
   </div>
 </template>
 
@@ -106,6 +115,14 @@ button {
 .hint {
   margin: 1.1rem 0 0;
   font-size: 0.75rem;
-  text-align: center;
+}
+
+.hint p {
+  margin: 0 0 0.3rem;
+}
+
+.hint ul {
+  margin: 0;
+  padding-left: 1rem;
 }
 </style>

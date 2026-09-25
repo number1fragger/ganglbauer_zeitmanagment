@@ -3,6 +3,7 @@
 namespace App\Command;
 
 use App\Entity\User;
+use App\Enum\UserRole;
 use Doctrine\ORM\EntityManagerInterface;
 use Symfony\Component\Console\Attribute\AsCommand;
 use Symfony\Component\Console\Command\Command;
@@ -30,7 +31,8 @@ class CreateUserCommand extends Command
             ->addArgument('password', InputArgument::REQUIRED, 'Passwort')
             ->addArgument('firstName', InputArgument::OPTIONAL, 'Vorname', 'Max')
             ->addArgument('lastName', InputArgument::OPTIONAL, 'Nachname', 'Mustermann')
-            ->addOption('admin', null, InputOption::VALUE_NONE, 'Vergibt zusaetzlich ROLE_ADMIN');
+            ->addOption('admin', null, InputOption::VALUE_NONE, 'Kurzform fuer --role=chef')
+            ->addOption('role', null, InputOption::VALUE_REQUIRED, 'chef, vorarbeiter oder arbeiter', 'arbeiter');
     }
 
     protected function execute(InputInterface $input, OutputInterface $output): int
@@ -43,14 +45,18 @@ class CreateUserCommand extends Command
         $user->setLastName((string) $input->getArgument('lastName'));
         $user->setPassword($this->hasher->hashPassword($user, (string) $input->getArgument('password')));
 
-        if ($input->getOption('admin')) {
-            $user->setRoles(['ROLE_ADMIN']);
-        }
+        $role = $input->getOption('admin') ? 'chef' : (string) $input->getOption('role');
+        $user->setRole(match ($role) {
+            'chef' => UserRole::Admin,
+            'vorarbeiter' => UserRole::Foreman,
+            'arbeiter' => UserRole::Worker,
+            default => throw new \InvalidArgumentException('Rolle muss chef, vorarbeiter oder arbeiter sein.'),
+        });
 
         $this->em->persist($user);
         $this->em->flush();
 
-        $io->success(sprintf('Benutzer "%s" wurde angelegt.', $user->getEmail()));
+        $io->success(sprintf('Benutzer "%s" wurde als %s angelegt.', $user->getEmail(), $user->getRoleLabel()));
 
         return Command::SUCCESS;
     }

@@ -8,6 +8,11 @@ security:
                 class: App\Entity\User
                 property: email
 
+    # Chef > Vorarbeiter > Arbeiter: Jede Rolle erbt die Rechte der darunter.
+    role_hierarchy:
+        ROLE_ADMIN: [ROLE_FOREMAN]
+        ROLE_FOREMAN: [ROLE_USER]
+
     firewalls:
         dev:
             pattern: ^/(_(profiler|wdt)|css|images|js)/
@@ -16,6 +21,7 @@ security:
         login:
             pattern: ^/api/login$
             stateless: true
+            user_checker: App\Security\UserChecker
             json_login:
                 check_path: api_login
                 username_path: email
@@ -26,11 +32,16 @@ security:
         api:
             pattern: ^/api
             stateless: true
+            user_checker: App\Security\UserChecker
             jwt: ~
 
+    # Grobe Absicherung pro Pfad. Die feinen Regeln (z. B. "Arbeiter darf nur
+    # die eigene Arbeit abhaken") stehen im JobVoter und in den Controllern.
     access_control:
         - { path: ^/api/login, roles: PUBLIC_ACCESS }
         - { path: ^/api/health, roles: PUBLIC_ACCESS }
+        - { path: ^/api/users, roles: ROLE_ADMIN }
+        - { path: ^/api/(overview|reports|workers), roles: ROLE_FOREMAN }
         - { path: ^/api, roles: IS_AUTHENTICATED_FULLY }
 
 when@test:

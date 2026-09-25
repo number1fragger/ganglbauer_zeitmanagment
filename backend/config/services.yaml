@@ -13,7 +13,20 @@ services:
             - '../src/Entity/'
             - '../src/Enum/'
             - '../src/Kernel.php'
+            # Fixtures brauchen das Fixtures-Bundle, das es nur in dev/test gibt.
+            - '../src/DataFixtures/'
 
     App\EventListener\ApiExceptionListener:
         arguments:
             $debug: '%kernel.debug%'
+
+when@dev: &fixtures
+    services:
+        _defaults:
+            autowire: true
+            autoconfigure: true
+
+        App\DataFixtures\:
+            resource: '../src/DataFixtures/'
+
+when@test: *fixtures

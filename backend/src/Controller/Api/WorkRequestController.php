@@ -29,7 +29,8 @@ class WorkRequestController extends AbstractApiController
     #[Route('', name: 'api_requests_list', methods: ['GET'])]
     public function list(Request $request): JsonResponse
     {
-        $all = $request->query->getBoolean('all');
+        // Alle Anforderungen sehen nur Chef und Vorarbeiter – sie teilen die Arbeit zu.
+        $all = $request->query->getBoolean('all') && $this->isGranted('ROLE_FOREMAN');
         $user = $all ? null : $this->currentUser();
 
         return $this->item(
@@ -78,11 +79,17 @@ class WorkRequestController extends AbstractApiController
     #[Route('/{id}/status', name: 'api_requests_status', methods: ['PUT'], requirements: ['id' => '\d+'])]
     public function changeStatus(WorkRequest $workRequest, Request $request): JsonResponse
     {
-        $this->denyUnlessOwnerOrAdmin($workRequest);
+        $this->denyUnlessOwnerOrForeman($workRequest);
 
         $data = $this->payload($request);
         $status = WorkRequestStatus::tryFrom((string) ($data['status'] ?? ''))
             ?? throw new BadRequestHttpException('Unbekannter Status.');
+
+        // Der Arbeiter kann seine Anforderung nur zurueckziehen –
+        // als "zugeteilt" markiert sie, wer die Arbeit verteilt.
+        if (WorkRequestStatus::Fulfilled === $status && !$this->isGranted('ROLE_FOREMAN')) {
+            throw $this->createAccessDeniedException('Nur Chef und Vorarbeiter teilen Arbeit zu.');
+        }
 
         $workRequest->setStatus($status);
         $this->em->flush();
@@ -93,7 +100,7 @@ class WorkRequestController extends AbstractApiController
     #[Route('/{id}', name: 'api_requests_delete', methods: ['DELETE'], requirements: ['id' => '\d+'])]
     public function delete(WorkRequest $workRequest): JsonResponse
     {
-        $this->denyUnlessOwnerOrAdmin($workRequest);
+        $this->denyUnlessOwnerOrForeman($workRequest);
 
         $this->em->remove($workRequest);
         $this->em->flush();
@@ -101,9 +108,9 @@ class WorkRequestController extends AbstractApiController
         return new JsonResponse(null, Response::HTTP_NO_CONTENT);
     }
 
-    private function denyUnlessOwnerOrAdmin(WorkRequest $workRequest): void
+    private function denyUnlessOwnerOrForeman(WorkRequest $workRequest): void
     {
-        if ($workRequest->getUser() !== $this->currentUser() && !$this->isGranted('ROLE_ADMIN')) {
+        if ($workRequest->getUser() !== $this->currentUser() && !$this->isGranted('ROLE_FOREMAN')) {
             throw $this->createAccessDeniedException('Diese Anforderung gehoert einer anderen Person.');
         }
     }

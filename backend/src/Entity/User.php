@@ -2,6 +2,7 @@
 
 namespace App\Entity;
 
+use App\Enum\UserRole;
 use App\Repository\UserRepository;
 use Doctrine\Common\Collections\ArrayCollection;
 use Doctrine\Common\Collections\Collection;
@@ -120,6 +121,31 @@ class User implements UserInterface, PasswordAuthenticatedUserInterface
         return $this;
     }
 
+    /** Die hoechste Rolle – bestimmt, welche Ansichten sichtbar sind. */
+    #[Groups(['user:read'])]
+    public function getRole(): string
+    {
+        return UserRole::highestOf($this->getRoles())->value;
+    }
+
+    #[Groups(['user:read'])]
+    public function getRoleLabel(): string
+    {
+        return UserRole::highestOf($this->getRoles())->label();
+    }
+
+    public function setRole(UserRole $role): static
+    {
+        $this->roles = $role->storedRoles();
+
+        return $this;
+    }
+
+    public function hasRole(UserRole $role): bool
+    {
+        return \in_array($role->value, $this->getRoles(), true);
+    }
+
     public function getPassword(): string
     {
         return $this->password;
@@ -164,6 +190,15 @@ class User implements UserInterface, PasswordAuthenticatedUserInterface
     public function getFullName(): string
     {
         return trim($this->firstName.' '.$this->lastName);
+    }
+
+    /** Kuerzel fuer Kalenderkarten, z. B. "KL" fuer Kevin Lichtl. */
+    #[Groups(['user:read', 'job:read'])]
+    public function getInitials(): string
+    {
+        $initials = mb_substr($this->firstName, 0, 1).mb_substr($this->lastName, 0, 1);
+
+        return mb_strtoupper('' !== $initials ? $initials : mb_substr($this->email, 0, 2));
     }
 
     public function getWeeklyHours(): float

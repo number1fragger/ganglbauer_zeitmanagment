@@ -132,7 +132,7 @@ async function changePassword(): Promise<void> {
       <h2>Konto</h2>
       <p class="muted">
         Angemeldet als <strong>{{ auth.user?.email }}</strong>
-        <span v-if="auth.isAdmin" class="badge">Administrator</span>
+        <span class="badge">{{ auth.user?.roleLabel }}</span>
       </p>
     </section>
   </div>

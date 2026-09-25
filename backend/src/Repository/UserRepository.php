@@ -38,4 +38,15 @@ class UserRepository extends ServiceEntityRepository implements PasswordUpgrader
             ->getQuery()
             ->getResult();
     }
+
+    /** Aktive Benutzer – alle, die man einer Arbeit zuteilen kann. @return User[] */
+    public function findActiveOrdered(): array
+    {
+        return $this->createQueryBuilder('u')
+            ->andWhere('u.active = true')
+            ->orderBy('u.lastName', 'ASC')
+            ->addOrderBy('u.firstName', 'ASC')
+            ->getQuery()
+            ->getResult();
+    }
 }

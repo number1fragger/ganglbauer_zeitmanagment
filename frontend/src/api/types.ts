@@ -1,3 +1,6 @@
+/** Chef > Vorarbeiter > Arbeiter – siehe role_hierarchy im Backend. */
+export type Role = 'ROLE_ADMIN' | 'ROLE_FOREMAN' | 'ROLE_USER'
+
 export interface User {
   id: number
   email: string
@@ -5,13 +8,16 @@ export interface User {
   lastName: string
   fullName: string
   roles: string[]
+  role: Role
+  roleLabel: string
+  initials: string
   weeklyHours: number
   dailyMinutes: number
   active: boolean
   createdAt: string
 }
 
-export type WorkerRef = Pick<User, 'id' | 'firstName' | 'lastName' | 'fullName'>
+export type WorkerRef = Pick<User, 'id' | 'firstName' | 'lastName' | 'fullName' | 'initials'>
 
 export type Priority = 'niedrig' | 'normal' | 'hoch' | 'dringend'
 export type JobStatus = 'offen' | 'in_arbeit' | 'erledigt'
@@ -133,4 +139,50 @@ export interface ApiError {
   title: string
   status?: number
   errors?: { field: string; message: string }[]
+}
+
+/** Eine Arbeit, wie sie der Kalender liefert. */
+export interface CalendarJob {
+  jobId: number
+  title: string
+  customer: string | null
+  priority: Priority
+  status: JobStatus
+  done: boolean
+  running: boolean
+  overrun: boolean
+  plannedMinutes: number
+  actualMinutes: number
+  assignee: { id: number; fullName: string; initials: string } | null
+  startsAt: string | null
+  dueAt: string | null
+}
+
+/** Ein Tagesabschnitt einer Arbeit – mehrtaegige Arbeiten haben mehrere. */
+export interface CalendarSegment extends CalendarJob {
+  workerId: number
+  start: string
+  end: string
+  part: number
+  parts: number
+  plannedEnd: string
+  late: boolean
+  /** Geplantes Ende ist vorbei, die Arbeit aber noch nicht erledigt. */
+  behind: boolean
+}
+
+export interface CalendarWorker {
+  id: number
+  fullName: string
+  initials: string
+  dailyMinutes: number
+}
+
+export interface CalendarData {
+  from: string
+  to: string
+  dayStartHour: number
+  workers: CalendarWorker[]
+  segments: CalendarSegment[]
+  unscheduled: CalendarJob[]
 }

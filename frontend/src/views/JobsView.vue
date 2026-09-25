@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { computed, onMounted, reactive, ref } from 'vue'
-import { errorMessage } from '@/api/client'
+import { useRoute, useRouter } from 'vue-router'
+import { errorMessage, http } from '@/api/client'
 import { useAuthStore } from '@/stores/auth'
 import { useWorkshopStore } from '@/stores/workshop'
 import type { Job, Priority } from '@/api/types'
@@ -20,6 +21,11 @@ import {
  */
 const workshop = useWorkshopStore()
 const auth = useAuthStore()
+const route = useRoute()
+const router = useRouter()
+
+/** Kam der Aufruf aus dem Kalender (?neu=1 / ?bearbeiten=ID), geht es danach dorthin zurueck. */
+const fromCalendar = ref(false)
 
 const showDone = ref(false)
 const onlyMine = ref(false)
@@ -57,13 +63,62 @@ async function reload(): Promise<void> {
   }
 }
 
+/** Uebersicht nur fuer Chef/Vorarbeiter neu laden – Arbeiter bekaemen 403. */
+function refreshOverview(): Promise<void> {
+  return auth.isForeman ? refreshOverview() : Promise.resolve()
+}
+
 onMounted(async () => {
   await Promise.all([reload(), workshop.loadWorkers()])
+  await openFromQuery()
 })
+
+/** Vorbelegung aus dem Kalender: Klick auf eine Karte oder eine freie Stelle. */
+async function openFromQuery(): Promise<void> {
+  const { bearbeiten, neu, arbeiter, beginn } = route.query
+
+  if (typeof bearbeiten === 'string') {
+    let job = workshop.jobs.find((j) => j.id === Number(bearbeiten))
+
+    // Erledigte Arbeiten sind nicht in der Liste – einzeln nachladen.
+    if (!job) {
+      try {
+        job = (await http.get<Job>(`/api/jobs/${bearbeiten}`)).data
+      } catch (e) {
+        error.value = errorMessage(e)
+      }
+    }
+
+    if (job && auth.isForeman) {
+      fromCalendar.value = true
+      edit(job)
+    }
+  } else if (neu === '1' && auth.isForeman) {
+    fromCalendar.value = true
+    Object.assign(form, emptyForm())
+    if (typeof arbeiter === 'string') form.assigneeId = Number(arbeiter)
+    if (typeof beginn === 'string') form.startsAt = beginn.slice(0, 16)
+    formOpen.value = true
+  }
+}
+
+/** Nach Speichern oder Abbrechen zurueck in den Kalender, falls man von dort kam. */
+function leave(): void {
+  if (!fromCalendar.value) return
+
+  fromCalendar.value = false
+
+  if (router.options.history.state.back) {
+    router.back()
+  } else {
+    void router.push('/kalender')
+  }
+}
 
 function resetForm(): void {
   Object.assign(form, emptyForm())
   formOpen.value = false
+  leave()
 }
 
 function edit(job: Job): void {
@@ -102,7 +157,7 @@ async function submit(): Promise<void> {
     }
 
     resetForm()
-    await Promise.all([reload(), workshop.loadOverview()])
+    await Promise.all([reload(), refreshOverview()])
   } catch (e) {
     error.value = errorMessage(e)
   } finally {
@@ -116,7 +171,7 @@ async function extend(job: Job, minutes: number): Promise<void> {
 
   try {
     await workshop.extendJob(job.id, minutes)
-    await Promise.all([reload(), workshop.loadOverview()])
+    await Promise.all([reload(), refreshOverview()])
   } catch (e) {
     error.value = errorMessage(e)
   }
@@ -128,18 +183,23 @@ async function toggleDone(job: Job): Promise<void> {
 
   try {
     await workshop.completeJob(job.id, job.status !== 'erledigt')
-    await Promise.all([reload(), workshop.loadOverview()])
+    await Promise.all([reload(), refreshOverview()])
   } catch (e) {
     error.value = errorMessage(e)
   }
 }
 
 async function remove(job: Job): Promise<void> {
+  if (
+    !window.confirm(`„${job.title}“ wirklich löschen? Die erfassten Zeiten gehen dabei verloren.`)
+  )
+    return
+
   error.value = ''
 
   try {
     await workshop.deleteJob(job.id)
-    await workshop.loadOverview()
+    await refreshOverview()
   } catch (e) {
     error.value = errorMessage(e)
   }
@@ -150,7 +210,7 @@ async function start(job: Job): Promise<void> {
 
   try {
     await workshop.startWork(job.id)
-    await Promise.all([reload(), workshop.loadOverview()])
+    await Promise.all([reload(), refreshOverview()])
   } catch (e) {
     error.value = errorMessage(e)
   }
@@ -161,17 +221,21 @@ async function start(job: Job): Promise<void> {
   <div>
     <div class="head">
       <div>
-        <h1>Arbeiten</h1>
+        <h1>{{ auth.isForeman ? 'Arbeiten' : 'Meine Arbeiten' }}</h1>
         <p class="muted">Nach Priorität sortiert – oben steht, was zuerst dran ist.</p>
       </div>
-      <button type="button" @click="formOpen = !formOpen">
+      <button
+        v-if="auth.isForeman"
+        type="button"
+        @click="formOpen ? resetForm() : (formOpen = true)"
+      >
         {{ formOpen ? 'Formular schließen' : 'Neue Arbeit' }}
       </button>
     </div>
 
     <p v-if="error" class="error">{{ error }}</p>
 
-    <section v-if="formOpen" class="card">
+    <section v-if="formOpen && auth.isForeman" class="card">
       <h2>{{ form.id === null ? 'Neue Arbeit anlegen' : 'Arbeit bearbeiten' }}</h2>
 
       <form class="form" @submit.prevent="submit">
@@ -239,7 +303,7 @@ async function start(job: Job): Promise<void> {
     </section>
 
     <section class="card filters">
-      <label class="check">
+      <label v-if="auth.isForeman" class="check">
         <input v-model="onlyMine" type="checkbox" />
         nur meine Arbeiten
       </label>
@@ -302,7 +366,9 @@ async function start(job: Job): Promise<void> {
         </button>
         <button type="button" class="secondary small" @click="extend(job, 30)">+30 min</button>
         <button type="button" class="secondary small" @click="extend(job, 120)">+2 h</button>
-        <button type="button" class="secondary small" @click="edit(job)">Bearbeiten</button>
+        <button v-if="auth.isForeman" type="button" class="secondary small" @click="edit(job)">
+          Bearbeiten
+        </button>
         <button
           type="button"
           class="small"
@@ -311,7 +377,9 @@ async function start(job: Job): Promise<void> {
         >
           {{ job.status === 'erledigt' ? 'Wieder öffnen' : 'Erledigt' }}
         </button>
-        <button type="button" class="danger small" @click="remove(job)">Löschen</button>
+        <button v-if="auth.isForeman" type="button" class="danger small" @click="remove(job)">
+          Löschen
+        </button>
       </div>
     </section>
 

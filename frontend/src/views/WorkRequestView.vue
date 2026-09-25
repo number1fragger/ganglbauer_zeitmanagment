@@ -18,13 +18,8 @@ const busy = ref(false)
 const note = ref('')
 const all = ref<WorkRequest[]>([])
 
-/** Frühestens morgen – daraus ergeben sich auch die Schnellauswahlen. */
-const earliest = computed(() => {
-  const date = new Date()
-  date.setDate(date.getDate() + 1)
-
-  return date
-})
+/** Frühestens morgen 00:00 – dieselbe Regel wie im Backend (WorkRequest::earliestNeededAt). */
+const earliest = computed(() => withTime(shift(1), 0))
 
 const neededAt = ref(toDateTimeInput(withTime(earliest.value, 7)))
 
@@ -55,7 +50,7 @@ async function reload(): Promise<void> {
   try {
     await workshop.loadMyRequest()
 
-    if (auth.isAdmin) {
+    if (auth.isForeman) {
       const { data } = await http.get<WorkRequest[]>('/api/work-requests', {
         params: { all: true },
       })
@@ -75,7 +70,7 @@ async function submit(): Promise<void> {
   try {
     await workshop.requestWork(new Date(neededAt.value).toISOString(), note.value || null)
     note.value = ''
-    await Promise.all([reload(), workshop.loadOverview()])
+    await Promise.all([reload(), auth.isForeman ? workshop.loadOverview() : Promise.resolve()])
   } catch (e) {
     error.value = errorMessage(e)
   } finally {
@@ -90,7 +85,7 @@ async function withdraw(): Promise<void> {
 
   try {
     await workshop.withdrawRequest(workshop.myRequest.id)
-    await Promise.all([reload(), workshop.loadOverview()])
+    await Promise.all([reload(), auth.isForeman ? workshop.loadOverview() : Promise.resolve()])
   } catch (e) {
     error.value = errorMessage(e)
   }
@@ -101,7 +96,7 @@ async function markFulfilled(request: WorkRequest): Promise<void> {
 
   try {
     await http.put(`/api/work-requests/${request.id}/status`, { status: 'zugeteilt' })
-    await Promise.all([reload(), workshop.loadOverview()])
+    await Promise.all([reload(), auth.isForeman ? workshop.loadOverview() : Promise.resolve()])
   } catch (e) {
     error.value = errorMessage(e)
   }
@@ -173,7 +168,7 @@ async function markFulfilled(request: WorkRequest): Promise<void> {
       </form>
     </section>
 
-    <section v-if="auth.isAdmin" class="card">
+    <section v-if="auth.isForeman" class="card">
       <h2>Offene Anforderungen</h2>
 
       <table v-if="all.length">

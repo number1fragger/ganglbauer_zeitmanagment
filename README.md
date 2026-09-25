@@ -1,24 +1,74 @@
-# ganglbauer_zeitmanagment
+# Ganglbauer Zeitmanagement
 
-## Project setup
-```
-pnpm install
+Werkstatt-Planung für Ganglbauer Landtechnik: Arbeiten einplanen, Zeiten erfassen
+und auf einen Blick sehen, wer wann wieder neue Arbeit braucht.
+Die Anforderungen stehen in [Angabe.md](Angabe.md).
+
+- **Backend:** Symfony 7.4 (PHP 8.4), JWT-Login, Doctrine – Ordner `backend/`
+- **Frontend:** Vue 3 + TypeScript, Pinia, Vite – Ordner `frontend/`
+- **Datenbank:** MariaDB 11
+
+## Rollen
+
+| | Chef | Vorarbeiter | Arbeiter |
+|---|:-:|:-:|:-:|
+| Kalender (Tag / Woche / Monat), Kapazität | ✓ | ✓ | – |
+| Arbeiten anlegen, bearbeiten, zuteilen, löschen | ✓ | ✓ | – |
+| Eigene Arbeiten: Zeit erfassen, verlängern, abhaken | ✓ | ✓ | ✓ |
+| „Brauche Arbeit“ melden | ✓ | ✓ | ✓ |
+| Anfragen als zugeteilt markieren, Auswertung | ✓ | ✓ | – |
+| Benutzer & Rechte | ✓ | – | – |
+
+Die Rechte werden im **Backend** geprüft (`security.yaml`, `JobVoter`). Das Frontend
+blendet nur die Seiten aus, die eine Rolle ohnehin nicht benutzen darf.
+
+## Entwicklung (Datenbank in Docker, Rest lokal)
+
+Voraussetzungen: PHP 8.4 mit `pdo_mysql`, Composer, Node 22, Docker.
+
+```bash
+./dev.sh db         # MariaDB starten
+./dev.sh install    # composer install, JWT-Schlüssel, npm install
+./dev.sh setup      # Schema anlegen und Demodaten laden
+./dev.sh backend    # API auf http://127.0.0.1:8000
+./dev.sh frontend   # App auf http://localhost:5173
+./dev.sh test       # PHPUnit und TypeScript-Check
 ```
 
-### Compiles and hot-reloads for development
-```
-pnpm run serve
+Demo-Zugänge aus den Fixtures:
+
+| Rolle | E-Mail | Passwort |
+|---|---|---|
+| Chef | meister@ganglbauer.at | admin1234 |
+| Vorarbeiter | vorarbeiter@ganglbauer.at | test1234 |
+| Arbeiter | kevin@ganglbauer.at (auch resul@, toni@) | test1234 |
+
+## Kompletter Stack in Docker
+
+```bash
+cd docker
+# vorher in docker/.env die Passwörter, APP_SECRET und JWT_PASSPHRASE ändern
+docker compose up -d --build
 ```
 
-### Compiles and minifies for production
-```
-pnpm run build
+Die App läuft dann unter http://localhost:8080. Im Produktivmodus gibt es keine
+Demodaten – den ersten Chef legst du so an:
+
+```bash
+docker compose exec backend php bin/console app:create-user chef@firma.at 'geheimes-passwort' Vorname Nachname --role=chef
 ```
 
-### Lints and fixes files
-```
-pnpm run lint
-```
+Weitere Rollen: `--role=vorarbeiter` oder `--role=arbeiter` (Standard).
 
-### Customize configuration
-See [Configuration Reference](https://cli.vuejs.org/config/).
+## Wichtige API-Endpunkte
+
+| Pfad | Wer | Zweck |
+|---|---|---|
+| `POST /api/login` | alle | JWT holen |
+| `GET /api/calendar?from=…&to=…` | alle (Arbeiter nur eigene) | Kalenderabschnitte, max. 45 Tage |
+| `GET/POST/PATCH/DELETE /api/jobs` | siehe Rollen | Arbeiten |
+| `POST /api/work-requests` | alle | „Brauche Arbeit“, frühestens für den nächsten Tag |
+| `GET /api/overview` | Chef, Vorarbeiter | Wer ist wann wieder frei |
+| `GET /api/workers` | Chef, Vorarbeiter | Aktive Arbeiter zum Zuteilen |
+| `GET /api/reports/soll-ist` | Chef, Vorarbeiter | Soll/Ist-Vergleich |
+| `/api/users` | Chef | Benutzer & Rechte |

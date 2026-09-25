@@ -2,6 +2,7 @@ import { computed, ref } from 'vue'
 import { defineStore } from 'pinia'
 import { http } from '@/api/client'
 import type { Job, Overview, TimeEntry, User, WorkRequest } from '@/api/types'
+import { useAuthStore } from '@/stores/auth'
 
 /**
  * Haelt den Zustand der Werkstatt: Arbeiten, Uebersicht, laufende
@@ -52,14 +53,29 @@ export const useWorkshopStore = defineStore('workshop', () => {
     jobs.value = data
   }
 
+  /** Aktive Arbeiter zum Zuteilen – nur fuer Chef und Vorarbeiter. */
   async function loadWorkers(): Promise<void> {
-    try {
-      const { data } = await http.get<User[]>('/api/users')
-      workers.value = data
-    } catch {
-      // Nur Administratoren duerfen die Liste sehen – sonst bleibt sie leer.
+    if (!useAuthStore().isForeman) {
       workers.value = []
+      return
     }
+
+    const { data } = await http.get<User[]>('/api/workers')
+    workers.value = data
+  }
+
+  /**
+   * Nach einer Aenderung neu laden. Die Uebersicht gibt es nur fuer
+   * Chef und Vorarbeiter – ein Arbeiter bekaeme dort 403.
+   */
+  async function refresh(params: Record<string, unknown> = {}): Promise<void> {
+    const tasks: Promise<void>[] = [loadJobs(params)]
+
+    if (useAuthStore().isForeman) {
+      tasks.push(loadOverview())
+    }
+
+    await Promise.all(tasks)
   }
 
   async function loadRunning(): Promise<void> {
@@ -147,6 +163,7 @@ export const useWorkshopStore = defineStore('workshop', () => {
     loadOverview,
     loadJobs,
     loadWorkers,
+    refresh,
     loadRunning,
     loadMyRequest,
     createJob,

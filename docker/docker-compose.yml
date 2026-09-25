@@ -1,3 +1,6 @@
+# Kompletter Stack in Containern: MariaDB, Symfony-Backend und Vue-Frontend.
+# Start aus diesem Ordner:  docker compose up -d --build
+# App danach unter http://localhost:8080
 services:
   mariadb:
     container_name: mariadb
@@ -8,8 +11,6 @@ services:
       MARIADB_DATABASE: ${DB_NAME}
       MARIADB_USER: ${DB_USER}
       MARIADB_PASSWORD: ${DB_PASSWORD}
-    ports:
-      - "3306:3306"
     volumes:
       - db-data:/var/lib/mysql
     # Prüft, ob die Datenbank erreichbar und vollständig initialisiert ist.
@@ -20,6 +21,24 @@ services:
       timeout: 5s
       retries: 5
 
+  backend:
+    container_name: symfony
+    build:
+      context: ..
+      dockerfile: docker/backend.Dockerfile
+    restart: unless-stopped
+    environment:
+      APP_SECRET: ${APP_SECRET}
+      DATABASE_URL: "mysql://${DB_USER}:${DB_PASSWORD}@mariadb:3306/${DB_NAME}?serverVersion=11.4.0-MariaDB&charset=utf8mb4"
+      JWT_PASSPHRASE: ${JWT_PASSPHRASE}
+    volumes:
+      # Die JWT-Schluessel bleiben erhalten, sonst waeren nach jedem Neustart alle abgemeldet.
+      - jwt-keys:/var/www/html/config/jwt
+    # Startet erst, wenn der Healthcheck der Datenbank erfolgreich war (Status "healthy").
+    depends_on:
+      mariadb:
+        condition: service_healthy
+
   vuejs-prod:
     container_name: vue.js
     build:
@@ -28,10 +47,9 @@ services:
     restart: unless-stopped
     ports:
       - "8080:80"
-    # Startet erst, wenn der Healthcheck der Datenbank erfolgreich war (Status "healthy").
     depends_on:
-      mariadb:
-        condition: service_healthy
+      - backend
 
 volumes:
   db-data:
+  jwt-keys:

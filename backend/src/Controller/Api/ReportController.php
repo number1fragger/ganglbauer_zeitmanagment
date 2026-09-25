@@ -6,10 +6,14 @@ use App\Repository\JobRepository;
 use Symfony\Component\HttpFoundation\JsonResponse;
 use Symfony\Component\HttpFoundation\Request;
 use Symfony\Component\Routing\Attribute\Route;
+use Symfony\Component\Security\Http\Attribute\IsGranted;
 
 /**
  * A1 – Soll/Ist-Vergleich pro Arbeiter und pro Arbeit.
+ *
+ * Nur fuer Chef und Vorarbeiter.
  */
+#[IsGranted('ROLE_FOREMAN')]
 class ReportController extends AbstractApiController
 {
     #[Route('/api/reports/soll-ist', name: 'api_report_soll_ist', methods: ['GET'])]

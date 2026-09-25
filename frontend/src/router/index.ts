@@ -1,5 +1,17 @@
 import { createRouter, createWebHistory } from 'vue-router'
+import type { Role } from '@/api/types'
 import { useAuthStore } from '@/stores/auth'
+
+declare module 'vue-router' {
+  interface RouteMeta {
+    /** Ohne Anmeldung erreichbar. */
+    public?: boolean
+    /** Mindestrolle; ohne Angabe reicht jede Anmeldung. */
+    role?: Role
+    /** Seite nutzt die volle Bildschirmbreite (Kalender). */
+    wide?: boolean
+  }
+}
 
 const router = createRouter({
   history: createWebHistory(import.meta.env.BASE_URL),
@@ -11,9 +23,22 @@ const router = createRouter({
       meta: { public: true },
     },
     {
+      // Chef und Vorarbeiter starten im Kalender, Arbeiter bei ihren Arbeiten.
       path: '/',
+      name: 'home',
+      redirect: () => useAuthStore().homeRoute,
+    },
+    {
+      path: '/kalender',
+      name: 'calendar',
+      component: () => import('@/views/CalendarView.vue'),
+      meta: { role: 'ROLE_FOREMAN', wide: true },
+    },
+    {
+      path: '/kapazitaet',
       name: 'overview',
       component: () => import('@/views/OverviewView.vue'),
+      meta: { role: 'ROLE_FOREMAN' },
     },
     {
       path: '/arbeiten',
@@ -29,6 +54,13 @@ const router = createRouter({
       path: '/auswertung',
       name: 'report',
       component: () => import('@/views/ReportView.vue'),
+      meta: { role: 'ROLE_FOREMAN' },
+    },
+    {
+      path: '/benutzer',
+      name: 'users',
+      component: () => import('@/views/UsersView.vue'),
+      meta: { role: 'ROLE_ADMIN' },
     },
     {
       path: '/einstellungen',
@@ -44,6 +76,10 @@ const router = createRouter({
   ],
 })
 
+// Navigation Guard: Wird vor jedem Seitenwechsel ausgefuehrt.
+// Leitet zum Login weiter, wenn die Zielseite eine Anmeldung verlangt, und zur
+// eigenen Startseite, wenn die Rolle nicht reicht (meta.role).
+// Achtung: Das blendet nur Seiten aus – die eigentliche Rechtepruefung macht das Backend.
 router.beforeEach(async (to) => {
   const auth = useAuthStore()
 
@@ -63,6 +99,10 @@ router.beforeEach(async (to) => {
 
       return { name: 'login' }
     }
+  }
+
+  if (to.meta.role && !auth.hasRole(to.meta.role)) {
+    return auth.homeRoute
   }
 
   return true

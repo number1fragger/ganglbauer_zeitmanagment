@@ -1,16 +1,16 @@
 #!/usr/bin/env bash
 # Kurzbefehle fuer die Entwicklung – Aufruf: ./dev.sh <befehl>
-# Die Datenbank laeuft in Docker, Backend und Frontend lokal.
+# Die Datenbank (MariaDB) laeuft in Docker, Backend und Frontend lokal.
 set -euo pipefail
 cd "$(dirname "$0")"
 
 case "${1:-help}" in
-  # PostgreSQL starten und warten, bis sie Verbindungen annimmt
+  # MariaDB starten und warten, bis sie Verbindungen annimmt
   db)
     docker compose up -d database
     printf 'warte auf die Datenbank '
     for _ in $(seq 1 60); do
-      if docker compose exec -T database pg_isready -U zeitmanagement -q 2>/dev/null; then
+      if docker compose exec -T database healthcheck.sh --connect --innodb_initialized >/dev/null 2>&1; then
         echo '– bereit.'
         exit 0
       fi
@@ -78,7 +78,7 @@ case "${1:-help}" in
     cat <<'USAGE'
 Verwendung: ./dev.sh <befehl>
 
-  db         PostgreSQL im Container starten
+  db         MariaDB im Container starten
   install    composer install und npm install (lokal)
   setup      Schema anlegen und Demodaten laden
   backend    Symfony-Devserver auf http://127.0.0.1:8000

@@ -1,54 +1,79 @@
-# Kompletter Stack in Containern: MariaDB, Symfony-Backend und Vue-Frontend.
-# Start aus diesem Ordner:  docker compose up -d --build
-# App danach unter http://localhost:8080
+# Kompletter Stack: Datenbank, Symfony-Backend und Vue-Frontend als eigene Container.
+#
+#   cd docker
+#   cp .env.example .env        # einmalig, Passwoerter eintragen
+#   docker compose up -d --build
+#
+# App: http://localhost:8080 (Port in .env: HTTP_PORT)
+# Nur das Frontend ist von aussen erreichbar; es leitet /api an das Backend weiter.
+name: ganglbauer
+
 services:
-  mariadb:
-    container_name: mariadb
+  db:
     image: mariadb:11
+    container_name: ganglbauer-db
     restart: unless-stopped
     environment:
-      MARIADB_ROOT_PASSWORD: ${DB_ROOT_PASSWORD}
-      MARIADB_DATABASE: ${DB_NAME}
-      MARIADB_USER: ${DB_USER}
-      MARIADB_PASSWORD: ${DB_PASSWORD}
+      MARIADB_DATABASE: ${DB_NAME:-zeitmanagement}
+      MARIADB_USER: ${DB_USER:-zeitmanagement}
+      MARIADB_PASSWORD: ${DB_PASSWORD:?In docker/.env fehlt DB_PASSWORD - siehe .env.example}
+      MARIADB_ROOT_PASSWORD: ${DB_ROOT_PASSWORD:?In docker/.env fehlt DB_ROOT_PASSWORD - siehe .env.example}
+      TZ: ${APP_TIMEZONE:-Europe/Vienna}
     volumes:
       - db-data:/var/lib/mysql
     # Prüft, ob die Datenbank erreichbar und vollständig initialisiert ist.
-    # Prüfung alle 10 s, max. 5 s pro Versuch; nach 5 Fehlschlägen gilt der Container als "unhealthy".
     healthcheck:
-      test: [ "CMD", "healthcheck.sh", "--connect", "--innodb_initialized" ]
+      test: ['CMD', 'healthcheck.sh', '--connect', '--innodb_initialized']
       interval: 10s
       timeout: 5s
-      retries: 5
+      retries: 10
+    # Zum Anschauen mit einem Datenbank-Programm (z. B. DBeaver) einkommentieren –
+    # auf einem oeffentlichen Server besser nicht.
+    # ports:
+    #   - '3308:3306'
 
   backend:
-    container_name: symfony
     build:
       context: ..
       dockerfile: docker/backend.Dockerfile
+    image: ganglbauer-backend
+    container_name: ganglbauer-backend
     restart: unless-stopped
     environment:
-      APP_SECRET: ${APP_SECRET}
-      DATABASE_URL: "mysql://${DB_USER}:${DB_PASSWORD}@mariadb:3306/${DB_NAME}?serverVersion=11.4.0-MariaDB&charset=utf8mb4"
-      JWT_PASSPHRASE: ${JWT_PASSPHRASE}
+      APP_SECRET: ${APP_SECRET:?In docker/.env fehlt APP_SECRET - siehe .env.example}
+      APP_TIMEZONE: ${APP_TIMEZONE:-Europe/Vienna}
+      TZ: ${APP_TIMEZONE:-Europe/Vienna}
+      DATABASE_URL: mysql://${DB_USER:-zeitmanagement}:${DB_PASSWORD}@db:3306/${DB_NAME:-zeitmanagement}?serverVersion=11.4.0-MariaDB&charset=utf8mb4
+      JWT_PASSPHRASE: ${JWT_PASSPHRASE:?In docker/.env fehlt JWT_PASSPHRASE - siehe .env.example}
+      ADMIN_EMAIL: ${ADMIN_EMAIL:-}
+      ADMIN_PASSWORD: ${ADMIN_PASSWORD:-}
+      ADMIN_FIRSTNAME: ${ADMIN_FIRSTNAME:-Chef}
+      ADMIN_LASTNAME: ${ADMIN_LASTNAME:-Werkstatt}
     volumes:
       # Die JWT-Schluessel bleiben erhalten, sonst waeren nach jedem Neustart alle abgemeldet.
       - jwt-keys:/var/www/html/config/jwt
-    # Startet erst, wenn der Healthcheck der Datenbank erfolgreich war (Status "healthy").
     depends_on:
-      mariadb:
+      db:
         condition: service_healthy
+    healthcheck:
+      test: ['CMD', 'php', '-r', 'exit(@file_get_contents("http://localhost/api/health") ? 0 : 1);']
+      interval: 10s
+      timeout: 5s
+      retries: 10
+      start_period: 20s
 
-  vuejs-prod:
-    container_name: vue.js
+  frontend:
     build:
       context: ..
-      dockerfile: docker/Dockerfile
+      dockerfile: docker/frontend.Dockerfile
+    image: ganglbauer-frontend
+    container_name: ganglbauer-frontend
     restart: unless-stopped
     ports:
-      - "8080:80"
+      - '${HTTP_PORT:-8080}:80'
     depends_on:
-      - backend
+      backend:
+        condition: service_healthy
 
 volumes:
   db-data:

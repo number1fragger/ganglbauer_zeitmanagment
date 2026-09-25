@@ -46,20 +46,19 @@ Demo-Zugänge aus den Fixtures:
 
 ## Kompletter Stack in Docker
 
+Datenbank, Symfony-Backend und Vue-Frontend laufen als eigene Container
+(`ganglbauer-db`, `ganglbauer-backend`, `ganglbauer-frontend`):
+
 ```bash
 cd docker
-# vorher in docker/.env die Passwörter, APP_SECRET und JWT_PASSPHRASE ändern
+cp .env.example .env      # einmalig, Passwörter und ersten Chef eintragen
 docker compose up -d --build
 ```
 
-Die App läuft dann unter http://localhost:8080. Im Produktivmodus gibt es keine
-Demodaten – den ersten Chef legst du so an:
+Die App läuft dann unter http://localhost:8080. Der Chef aus `ADMIN_EMAIL` /
+`ADMIN_PASSWORD` wird beim ersten Start automatisch angelegt.
 
-```bash
-docker compose exec backend php bin/console app:create-user chef@firma.at 'geheimes-passwort' Vorname Nachname --role=chef
-```
-
-Weitere Rollen: `--role=vorarbeiter` oder `--role=arbeiter` (Standard).
+Serverbetrieb mit HTTPS, Updates und Datensicherung: [docs/Deployment.md](docs/Deployment.md)
 
 ## Wichtige API-Endpunkte
 

@@ -72,7 +72,9 @@ abstract class AbstractApiController extends AbstractController
         }
 
         try {
-            return new \DateTimeImmutable($value);
+            // Der Browser schickt UTC ("...Z"). Doctrine speichert ohne Zeitzone,
+            // deshalb erst in die Zeitzone der Werkstatt umrechnen.
+            return (new \DateTimeImmutable($value))->setTimezone(new \DateTimeZone(date_default_timezone_get()));
         } catch (\Throwable) {
             throw new BadRequestHttpException(sprintf('"%s" ist kein gueltiges Datum.', $field));
         }

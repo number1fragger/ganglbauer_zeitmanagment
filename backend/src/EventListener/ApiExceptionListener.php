@@ -29,11 +29,17 @@ class ApiExceptionListener
             ? $exception->getStatusCode()
             : Response::HTTP_INTERNAL_SERVER_ERROR;
 
+        $title = $exception->getMessage();
+        if (!$this->debug && $status >= 500) {
+            $title = 'Interner Serverfehler';
+        } elseif (!$this->debug && Response::HTTP_NOT_FOUND === $status) {
+            // Sonst stuenden interne Klassennamen in der Antwort ("App\Entity\Job object not found").
+            $title = 'Nicht gefunden.';
+        }
+
         $payload = [
             'status' => $status,
-            'title' => $status >= 500 && !$this->debug
-                ? 'Interner Serverfehler'
-                : $exception->getMessage(),
+            'title' => $title,
         ];
 
         if ($this->debug) {

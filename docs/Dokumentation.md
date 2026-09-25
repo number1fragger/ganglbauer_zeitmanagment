@@ -170,7 +170,7 @@ frontend/
     views/              eine Datei pro Seite
     utils/              Datums- und Formatierungshilfen
     assets/main.css     Design-Tokens aus Figma, Grundstile
-docker/                 Kompletter Stack (MariaDB, Symfony, nginx)
+docker/                 Container fuer Datenbank, Backend und Frontend (siehe Deployment.md)
 docs/                   Diese Dokumentation
 ```
 
@@ -331,16 +331,16 @@ Datenbank landen („Access denied for user … @'localhost'“).
 | Vorarbeiter | vorarbeiter@ganglbauer.at | test1234 |
 | Arbeiter | kevin@ganglbauer.at, resul@…, toni@… | test1234 |
 
-**Kompletter Stack in Docker** (MariaDB, Symfony, nginx mit gebautem Frontend):
+**Kompletter Stack in Docker** (Datenbank, Backend, Frontend als eigene Container):
 
 ```bash
 cd docker
-# vorher in docker/.env Passwörter, APP_SECRET und JWT_PASSPHRASE ändern
+cp .env.example .env      # einmalig, Passwörter und ersten Chef eintragen
 docker compose up -d --build
-docker compose exec backend php bin/console app:create-user chef@firma.at 'passwort' Vorname Nachname --role=chef
 ```
 
-Die App läuft dann unter http://localhost:8080.
+Die App läuft dann unter http://localhost:8080. Details, Serverbetrieb mit HTTPS und
+Datensicherung stehen in [Deployment.md](Deployment.md).
 
 **Code-Stil prüfen** (im Ordner `frontend/`): `npm run lint` und `npm run format`.
 
@@ -370,7 +370,8 @@ Drag & Drop wurde im Browser mit Maus und simuliertem Finger getestet.
 
 **Grenzen**
 
-- Die Arbeitszeit beginnt fest um 07:00. Pausen, Feiertage und Urlaub kennt die App noch nicht.
+- Die Arbeitszeit beginnt fest um 07:00 (in der Zeitzone `APP_TIMEZONE`). Pausen,
+  Feiertage und Urlaub kennt die App noch nicht.
 - Das Datenbankschema wird per `doctrine:schema:update` angelegt, Migrationen gibt es noch keine.
 - Im Produktivbetrieb gibt es keine Demodaten, den ersten Chef legt man per Befehl an.
 

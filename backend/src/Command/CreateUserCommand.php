@@ -32,15 +32,24 @@ class CreateUserCommand extends Command
             ->addArgument('firstName', InputArgument::OPTIONAL, 'Vorname', 'Max')
             ->addArgument('lastName', InputArgument::OPTIONAL, 'Nachname', 'Mustermann')
             ->addOption('admin', null, InputOption::VALUE_NONE, 'Kurzform fuer --role=chef')
-            ->addOption('role', null, InputOption::VALUE_REQUIRED, 'chef, vorarbeiter oder arbeiter', 'arbeiter');
+            ->addOption('role', null, InputOption::VALUE_REQUIRED, 'chef, vorarbeiter oder arbeiter', 'arbeiter')
+            ->addOption('skip-if-exists', null, InputOption::VALUE_NONE, 'Nichts tun, wenn es die E-Mail-Adresse schon gibt');
     }
 
     protected function execute(InputInterface $input, OutputInterface $output): int
     {
         $io = new SymfonyStyle($input, $output);
+        $email = (string) $input->getArgument('email');
+
+        // Fuer den Container-Start: den ersten Chef nur beim allerersten Mal anlegen.
+        if ($input->getOption('skip-if-exists') && null !== $this->em->getRepository(User::class)->findOneBy(['email' => $email])) {
+            $io->note(sprintf('Benutzer "%s" gibt es schon – nichts zu tun.', $email));
+
+            return Command::SUCCESS;
+        }
 
         $user = new User();
-        $user->setEmail((string) $input->getArgument('email'));
+        $user->setEmail($email);
         $user->setFirstName((string) $input->getArgument('firstName'));
         $user->setLastName((string) $input->getArgument('lastName'));
         $user->setPassword($this->hasher->hashPassword($user, (string) $input->getArgument('password')));

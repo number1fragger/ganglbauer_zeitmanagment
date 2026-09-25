@@ -38,7 +38,8 @@ case "${1:-help}" in
     composer install
     php bin/console lexik:jwt:generate-keypair --skip-if-exists
     cd ../frontend
-    npm install
+    # npm ci installiert genau die Versionen aus package-lock.json und aendert die Datei nicht.
+    npm ci
     echo
     echo 'Fertig. Weiter mit: ./dev.sh setup'
     ;;

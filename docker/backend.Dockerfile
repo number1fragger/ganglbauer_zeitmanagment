@@ -9,8 +9,10 @@ RUN apt-get update \
 
 COPY --from=composer:2 /usr/bin/composer /usr/bin/composer
 
-# Apache: DocumentRoot auf public/, alle Anfragen an index.php. Ohne SetEnvIf verwirft
-# Apache den Authorization-Header – dann waere jeder Request nach dem Login ein 401.
+# Apache: DocumentRoot auf public/, alle Anfragen an index.php.
+#  - SetEnvIf: sonst verwirft Apache den Authorization-Header (jeder Request nach dem Login waere 401)
+#  - PassEnv:  sonst sieht PHP die Umgebungsvariablen aus docker-compose nicht und faellt auf die
+#              .env zurueck (APP_ENV=dev, falsche Datenbank)
 RUN sed -ri 's!/var/www/html!/var/www/html/public!g' /etc/apache2/sites-available/000-default.conf \
     && printf '%s\n' \
        '<Directory /var/www/html/public>' \
@@ -18,6 +20,8 @@ RUN sed -ri 's!/var/www/html!/var/www/html/public!g' /etc/apache2/sites-availabl
        '    FallbackResource /index.php' \
        '</Directory>' \
        'SetEnvIf Authorization "(.*)" HTTP_AUTHORIZATION=$1' \
+       'PassEnv APP_ENV APP_DEBUG APP_SECRET APP_TIMEZONE DATABASE_URL JWT_PASSPHRASE' \
+       'ServerName localhost' \
        'ServerTokens Prod' \
        'ServerSignature Off' \
        > /etc/apache2/conf-enabled/symfony.conf

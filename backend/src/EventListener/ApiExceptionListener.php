@@ -10,8 +10,11 @@ use Symfony\Component\HttpKernel\Exception\HttpExceptionInterface;
 
 /**
  * Liefert fuer /api/* immer sauberes JSON statt HTML-Fehlerseiten.
+ *
+ * Prioritaet -64: Symfony schreibt den Fehler vorher ins Log (ErrorListener::
+ * logKernelException, Prioritaet 0). Im Container landet er so in `docker compose logs`.
  */
-#[AsEventListener(event: 'kernel.exception', priority: 0)]
+#[AsEventListener(event: 'kernel.exception', priority: -64)]
 class ApiExceptionListener
 {
     public function __construct(private readonly bool $debug = false)

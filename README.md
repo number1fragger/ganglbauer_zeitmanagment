@@ -2,17 +2,18 @@
 
 Werkstatt-Planung für Ganglbauer Landtechnik: Arbeiten einplanen, Zeiten erfassen
 und auf einen Blick sehen, wer wann wieder neue Arbeit braucht.
-Die Anforderungen stehen in [Angabe.md](Angabe.md).
+Die Anforderungen stehen in [Angabe.md](Angabe.md), die ausführliche
+**Projektdokumentation** in [docs/Dokumentation.md](docs/Dokumentation.md).
 
 - **Backend:** Symfony 7.4 (PHP 8.4), JWT-Login, Doctrine – Ordner `backend/`
-- **Frontend:** Vue 3 + TypeScript, Pinia, Vite – Ordner `frontend/`
+- **Frontend:** Vue 3 (JavaScript), Vue Router, Pinia, Vite – Ordner `frontend/`
 - **Datenbank:** MariaDB 11
 
 ## Rollen
 
 | | Chef | Vorarbeiter | Arbeiter |
 |---|:-:|:-:|:-:|
-| Kalender (Tag / Woche / Monat), Kapazität | ✓ | ✓ | – |
+| Kalender (Tag / Woche / Monat), Drag & Drop | ✓ | ✓ | – |
 | Arbeiten anlegen, bearbeiten, zuteilen, löschen | ✓ | ✓ | – |
 | Eigene Arbeiten: Zeit erfassen, verlängern, abhaken | ✓ | ✓ | ✓ |
 | „Brauche Arbeit“ melden | ✓ | ✓ | ✓ |
@@ -27,12 +28,12 @@ blendet nur die Seiten aus, die eine Rolle ohnehin nicht benutzen darf.
 Voraussetzungen: PHP 8.4 mit `pdo_mysql`, Composer, Node 22, Docker.
 
 ```bash
-./dev.sh db         # MariaDB starten
+./dev.sh db         # MariaDB starten (Port 3307)
 ./dev.sh install    # composer install, JWT-Schlüssel, npm install
 ./dev.sh setup      # Schema anlegen und Demodaten laden
 ./dev.sh backend    # API auf http://127.0.0.1:8000
 ./dev.sh frontend   # App auf http://localhost:5173
-./dev.sh test       # PHPUnit und TypeScript-Check
+./dev.sh test       # PHPUnit und ESLint
 ```
 
 Demo-Zugänge aus den Fixtures:

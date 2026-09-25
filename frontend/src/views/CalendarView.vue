@@ -1,12 +1,10 @@
-<script setup lang="ts">
-import { computed, ref, watch } from 'vue'
+<script setup>
+import { computed, onBeforeUnmount, ref, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
-import { errorMessage, http } from '@/api/client'
-import type { CalendarData, WorkRequest } from '@/api/types'
+import { api } from '@/api/client'
 import MonthGrid from '@/components/calendar/MonthGrid.vue'
-import TimeGrid, { type GridColumn, type GridItem } from '@/components/calendar/TimeGrid.vue'
+import TimeGrid from '@/components/calendar/TimeGrid.vue'
 import { useJobDialogStore } from '@/stores/jobDialog'
-import { useWorkshopStore } from '@/stores/workshop'
 import {
   addDays,
   dayKey,
@@ -18,108 +16,103 @@ import {
   startOfDay,
   visibleRange,
   workerColor,
-  type CalendarMode,
 } from '@/utils/calendar'
-import { formatHours, formatWeekdayTime, priorities } from '@/utils/format'
+import { formatDateTime, formatHours, formatWeekdayTime, priorities } from '@/utils/format'
 
 /**
- * Kalender fuer Chef und Vorarbeiter (Figma 01a/01b/01c).
+ * Kalender fuer Chef und Vorarbeiter – Tag, Woche und Monat.
  * Ansicht und Datum stehen in der URL (?ansicht=woche&datum=2026-09-28).
  */
 const route = useRoute()
 const router = useRouter()
-const workshop = useWorkshopStore()
 const dialog = useJobDialogStore()
 
 const START_HOUR = 7
 const END_HOUR = 17
+const isPhone = window.matchMedia('(max-width: 768px)').matches
 
-const data = ref<CalendarData | null>(null)
-const requests = ref<WorkRequest[]>([])
+const data = ref(null)
+const overview = ref(null)
+const requests = ref([])
 const loading = ref(false)
 const error = ref('')
-const hiddenWorkers = ref<number[]>([])
-/** Anfrage, fuer die gerade eine Arbeit angelegt wird ("zuteilen"). */
-const pendingRequest = ref<number | null>(null)
+const hiddenWorkers = ref([])
+const pendingRequest = ref(null)
+const toast = ref(null)
 
-const mode = computed<CalendarMode>(() => {
+// --- Ansicht und Datum aus der URL -------------------------------------------
+
+const mode = computed(() => {
   const value = route.query.ansicht
-
-  return value === 'tag' || value === 'monat' ? value : 'woche'
+  if (['tag', 'woche', 'monat'].includes(value)) return value
+  return isPhone ? 'tag' : 'woche'
 })
 
 const anchor = computed(() => {
   const value = route.query.datum
-
-  return typeof value === 'string' && /^\d{4}-\d{2}-\d{2}$/.test(value)
-    ? parseDay(value)
-    : startOfDay(new Date())
+  return /^\d{4}-\d{2}-\d{2}$/.test(value ?? '') ? parseDay(value) : startOfDay(new Date())
 })
 
 const range = computed(() => visibleRange(mode.value, anchor.value))
 
 const title = computed(() => {
   const a = anchor.value
-
   if (mode.value === 'tag') {
     return a.toLocaleDateString('de-AT', {
-      weekday: 'long',
+      weekday: isPhone ? 'short' : 'long',
       day: 'numeric',
-      month: 'long',
-      year: 'numeric',
+      month: isPhone ? 'short' : 'long',
+      year: isPhone ? undefined : 'numeric',
     })
   }
-
   if (mode.value === 'woche') {
     const { from, to } = range.value
-    const fmt = (d: Date, year = false) =>
+    const fmt = (d, year) =>
       d.toLocaleDateString('de-AT', {
         day: 'numeric',
         month: 'short',
-        ...(year ? { year: 'numeric' } : {}),
+        year: year ? 'numeric' : undefined,
       })
-
-    return `KW ${isoWeek(from)}  ·  ${fmt(from)} – ${fmt(to, true)}`
+    return isPhone
+      ? `KW ${isoWeek(from)}`
+      : `KW ${isoWeek(from)}  ·  ${fmt(from)} – ${fmt(to, true)}`
   }
-
   return a.toLocaleDateString('de-AT', { month: 'long', year: 'numeric' })
 })
 
-function go(next: { ansicht?: CalendarMode; datum?: Date }): void {
-  void router.replace({
-    query: { ansicht: next.ansicht ?? mode.value, datum: dayKey(next.datum ?? anchor.value) },
-  })
+function go({ ansicht = mode.value, datum = anchor.value } = {}) {
+  router.replace({ query: { ansicht, datum: dayKey(datum) } })
 }
 
-function step(direction: 1 | -1): void {
+function step(direction) {
   const a = anchor.value
-
   if (mode.value === 'tag') go({ datum: shiftWorkday(a, direction) })
   else if (mode.value === 'woche') go({ datum: addDays(a, 7 * direction) })
   else go({ datum: new Date(a.getFullYear(), a.getMonth() + direction, 1) })
 }
 
-function today(): void {
+function today() {
   const now = startOfDay(new Date())
   go({ datum: mode.value === 'tag' && isWeekend(now) ? shiftWorkday(now, 1) : now })
 }
 
-async function load(): Promise<void> {
+function openDay(date) {
+  go({ ansicht: 'tag', datum: isWeekend(date) ? shiftWorkday(date, 1) : date })
+}
+
+// --- Daten ---------------------------------------------------------------------
+
+async function load() {
   loading.value = true
   error.value = ''
-
   try {
-    const [calendar, open] = await Promise.all([
-      http.get<CalendarData>('/api/calendar', {
-        params: { from: dayKey(range.value.from), to: dayKey(range.value.to) },
-      }),
-      http.get<WorkRequest[]>('/api/work-requests', { params: { all: true } }),
-      workshop.loadOverview(),
+    ;[data.value, overview.value, requests.value] = await Promise.all([
+      api.get('/api/calendar', { from: dayKey(range.value.from), to: dayKey(range.value.to) }),
+      api.get('/api/overview'),
+      api.get('/api/work-requests', { all: 1 }),
     ])
-    data.value = calendar.data
-    requests.value = open.data
   } catch (e) {
-    error.value = errorMessage(e)
+    error.value = e.message
   } finally {
     loading.value = false
   }
@@ -129,33 +122,28 @@ watch(() => [mode.value, dayKey(range.value.from), dayKey(range.value.to)], load
   immediate: true,
 })
 
-// Nach dem Speichern im Dialog neu laden – und eine "zuteilen"-Anfrage abschliessen.
+// Nach Aenderungen im Dialog neu laden – und eine "zuteilen"-Anfrage abschliessen.
 watch(
   () => dialog.version,
   async () => {
-    if (pendingRequest.value !== null) {
-      try {
-        await http.put(`/api/work-requests/${pendingRequest.value}/status`, { status: 'zugeteilt' })
-      } catch (e) {
-        error.value = errorMessage(e)
-      }
+    if (pendingRequest.value) {
+      await api
+        .put(`/api/work-requests/${pendingRequest.value}/status`, { status: 'zugeteilt' })
+        .catch(() => {})
       pendingRequest.value = null
     }
-    await load()
+    load()
   },
 )
 watch(
   () => dialog.open,
-  (open) => {
-    if (!open) setTimeout(() => (pendingRequest.value = null), 0)
-  },
+  (open) => !open && setTimeout(() => (pendingRequest.value = null)),
 )
 
-// --- Farben, Filter ------------------------------------------------------
+// --- Arbeiter, Farben, Filter ------------------------------------------------
 
 const workerOrder = computed(() => data.value?.workers.map((w) => w.id) ?? [])
-const colors = (id: number) => workerColor(id, workerOrder.value)
-
+const colors = (id) => workerColor(id, workerOrder.value)
 const visibleWorkers = computed(() =>
   (data.value?.workers ?? []).filter((w) => !hiddenWorkers.value.includes(w.id)),
 )
@@ -163,67 +151,65 @@ const visibleSegments = computed(() =>
   (data.value?.segments ?? []).filter((s) => !hiddenWorkers.value.includes(s.workerId)),
 )
 
-function toggleWorker(id: number): void {
+function toggleWorker(id) {
   hiddenWorkers.value = hiddenWorkers.value.includes(id)
     ? hiddenWorkers.value.filter((w) => w !== id)
     : [...hiddenWorkers.value, id]
 }
 
-const availability = computed(() => {
-  const map = new Map<number, string>()
-  for (const w of workshop.overview?.workers ?? []) map.set(w.user.id, w.availableFrom)
+const availability = computed(
+  () => new Map((overview.value?.workers ?? []).map((w) => [w.user.id, w.availableFrom])),
+)
 
-  return map
-})
+const plannedMinutes = (segments) =>
+  segments.reduce((sum, s) => sum + (new Date(s.end) - new Date(s.start)) / 60_000, 0)
 
-// --- Tag -------------------------------------------------------------------
+// --- Tag: Spalte = Arbeiter ----------------------------------------------------
 
-const dayColumns = computed<GridColumn[]>(() =>
+const dayColumns = computed(() =>
   visibleWorkers.value.map((w) => ({
     key: String(w.id),
     title: w.fullName,
-    subtitle: `frei ab ${formatWeekdayTime(availability.value.get(w.id) ?? null, true)}`,
+    subtitle: `frei ab ${formatWeekdayTime(availability.value.get(w.id), true)}`,
     badge: w.initials,
   })),
 )
 
-const dayItems = computed<GridItem[]>(() =>
+const dayItems = computed(() =>
   visibleSegments.value
     .filter((s) => isSameDay(new Date(s.start), anchor.value))
     .map((s) => ({ key: String(s.workerId), segment: s, ...colors(s.workerId) })),
 )
 
-// --- Woche -----------------------------------------------------------------
+// --- Woche: Spalte = Tag -------------------------------------------------------
 
-const weekColumns = computed<GridColumn[]>(() =>
+const weekColumns = computed(() =>
   Array.from({ length: 5 }, (_, i) => {
     const date = addDays(range.value.from, i)
     const key = dayKey(date)
-    // Wer hat an diesem Tag noch mindestens 30 Minuten frei? -> "frei: 2 Arbeiter"
-    const free = visibleWorkers.value.filter((w) => {
-      const planned = visibleSegments.value
-        .filter((s) => s.workerId === w.id && dayKey(new Date(s.start)) === key)
-        .reduce(
-          (sum, s) => sum + (new Date(s.end).getTime() - new Date(s.start).getTime()) / 60_000,
-          0,
-        )
-
-      return w.dailyMinutes - planned >= 30
-    }).length
-    const future = key >= dayKey(new Date())
+    // Wer hat an diesem Tag noch mindestens 30 Minuten frei?
+    const free = visibleWorkers.value.filter(
+      (w) =>
+        w.dailyMinutes -
+          plannedMinutes(
+            visibleSegments.value.filter(
+              (s) => s.workerId === w.id && dayKey(new Date(s.start)) === key,
+            ),
+          ) >=
+        30,
+    ).length
 
     return {
       key,
       title: String(date.getDate()),
       subtitle: date.toLocaleDateString('de-AT', { weekday: 'short' }).replace('.', ''),
       today: isSameDay(date, new Date()),
-      freeNote:
-        future && free > 0 ? `frei: ${free} ${free === 1 ? 'Arbeiter' : 'Arbeiter'}` : undefined,
+      freeNote: key >= dayKey(new Date()) && free > 0 ? `frei: ${free} Arbeiter` : undefined,
     }
   }),
 )
 
-const weekItems = computed<GridItem[]>(() =>
+const weekItems = computed(() =>
   visibleSegments.value.map((s) => ({
     key: dayKey(new Date(s.start)),
     segment: s,
@@ -236,72 +222,64 @@ const monthItems = computed(() =>
 )
 
 const nowColumns = computed(() => {
-  const now = new Date()
-
   if (mode.value === 'tag')
-    return isSameDay(anchor.value, now) ? dayColumns.value.map((c) => c.key) : []
-
-  return [dayKey(now)]
+    return isSameDay(anchor.value, new Date()) ? dayColumns.value.map((c) => c.key) : []
+  return [dayKey(new Date())]
 })
 
-/** Wochenauslastung: eingeplante gegen verfuegbare Stunden. */
+// --- Seitenleiste --------------------------------------------------------------
+
 const weekLoad = computed(() =>
   (data.value?.workers ?? []).map((w) => {
-    const planned = (data.value?.segments ?? [])
-      .filter((s) => s.workerId === w.id)
-      .reduce(
-        (sum, s) => sum + (new Date(s.end).getTime() - new Date(s.start).getTime()) / 60_000,
-        0,
-      )
+    const planned = plannedMinutes((data.value?.segments ?? []).filter((s) => s.workerId === w.id))
     const capacity = w.dailyMinutes * 5
-
     return { ...w, planned, capacity, percent: Math.min(100, (planned / capacity) * 100) }
   }),
 )
 
-/** Wer braucht innerhalb des naechsten Werktags neue Arbeit? */
-const needsWorkSoon = computed(() => {
-  const limit = shiftWorkday(startOfDay(new Date()), 1).getTime() + 24 * 3_600_000
-
-  return (workshop.overview?.workers ?? []).filter(
-    (w) => new Date(w.availableFrom).getTime() < limit,
-  )
-})
-
-// --- Seitenleiste Tag ------------------------------------------------------
-
 const capacity = computed(() =>
-  (workshop.overview?.workers ?? []).map((w) => ({
+  (overview.value?.workers ?? []).map((w) => ({
     ...w,
-    urgent: new Date(w.availableFrom).getTime() - Date.now() < 24 * 3_600_000,
+    urgent: new Date(w.availableFrom) - Date.now() < 24 * 3_600_000,
   })),
 )
 
+const needsWorkSoon = computed(() => capacity.value.filter((w) => w.urgent))
+
 /** Offene Arbeiten mit ueberschrittener Zeit (F6). */
 const warnings = computed(() => {
-  const seen = new Set<number>()
-
-  return (data.value?.segments ?? []).filter((s) => {
-    if (!s.overrun || s.done || seen.has(s.jobId)) return false
-    seen.add(s.jobId)
-
-    return true
-  })
+  const seen = new Set()
+  return (data.value?.segments ?? []).filter(
+    (s) => s.overrun && !s.done && !seen.has(s.jobId) && seen.add(s.jobId),
+  )
 })
 
-// --- Dialog ----------------------------------------------------------------
+function requestLabel(r) {
+  const d = new Date(r.neededAt)
+  const days = Math.round((startOfDay(d) - startOfDay(new Date())) / 86_400_000)
+  const part = d.getHours() < 12 ? 'früh' : 'Nachmittag'
+  if (days === 1) return `morgen ${part}`
+  if (days === 2) return `übermorgen ${part}`
+  return formatWeekdayTime(r.neededAt)
+}
 
-function onSlot(columnKey: string, minutes: number): void {
-  const time = `${String(Math.floor(minutes / 60)).padStart(2, '0')}:${String(minutes % 60).padStart(2, '0')}`
+// --- Anlegen, Zuteilen, Verschieben ------------------------------------------------
 
+const clock = (minutes) =>
+  `${String(Math.floor(minutes / 60)).padStart(2, '0')}:${String(minutes % 60).padStart(2, '0')}`
+
+function onSlot(columnKey, minutes) {
   if (mode.value === 'tag') {
-    dialog.create({ assigneeId: Number(columnKey), startsAt: `${dayKey(anchor.value)}T${time}` })
+    dialog.create({
+      assigneeId: Number(columnKey),
+      startsAt: `${dayKey(anchor.value)}T${clock(minutes)}`,
+    })
   } else {
-    dialog.create({ startsAt: `${columnKey}T${time}` })
+    dialog.create({ startsAt: `${columnKey}T${clock(minutes)}` })
   }
 }
 
-function assign(request: WorkRequest): void {
+function assign(request) {
   const needed = new Date(request.neededAt)
   dialog.create({
     assigneeId: request.user.id,
@@ -310,37 +288,91 @@ function assign(request: WorkRequest): void {
   pendingRequest.value = request.id
 }
 
-function requestLabel(r: WorkRequest): string {
-  const d = new Date(r.neededAt)
-  const days = Math.round((startOfDay(d).getTime() - startOfDay(new Date()).getTime()) / 86_400_000)
-  const part = d.getHours() < 12 ? 'früh' : 'Nachmittag'
+/**
+ * Drag & Drop: Der gezogene Abschnitt landet am Ziel. Die ganze Arbeit
+ * verschiebt sich um denselben Betrag; in der Tagesansicht kann auch der
+ * Arbeiter wechseln. Das Backend legt die Arbeit danach neu auf die Arbeitszeit.
+ */
+async function onMove(segment, target) {
+  const from = new Date(segment.start)
+  let to
+  let assigneeId
 
-  if (days === 1) return `morgen ${part}`
-  if (days === 2) return `übermorgen ${part}`
+  if (target.day) {
+    to = parseDay(target.day)
+    to.setHours(from.getHours(), from.getMinutes())
+  } else {
+    to = mode.value === 'tag' ? new Date(anchor.value) : parseDay(target.columnKey)
+    to.setHours(0, target.minutes)
+    if (mode.value === 'tag' && Number(target.columnKey) !== segment.workerId)
+      assigneeId = Number(target.columnKey)
+  }
 
-  return formatWeekdayTime(r.neededAt)
+  const shift = to - from
+  if (shift === 0 && assigneeId === undefined) return
+
+  const startsAt = new Date(new Date(segment.startsAt).getTime() + shift).toISOString()
+  const undo = { startsAt: segment.startsAt, assigneeId: segment.workerId }
+
+  try {
+    await api.post(`/api/jobs/${segment.jobId}/move`, {
+      startsAt,
+      ...(assigneeId ? { assigneeId } : {}),
+    })
+    const who = assigneeId
+      ? ` · ${data.value.workers.find((w) => w.id === assigneeId)?.fullName}`
+      : ''
+    showToast(`„${segment.title}“ → ${formatDateTime(to.toISOString())}${who}`, async () => {
+      await api.post(`/api/jobs/${segment.jobId}/move`, undo)
+      load()
+    })
+  } catch (e) {
+    error.value = e.message
+  }
+  load()
 }
+
+let toastTimer
+function showToast(text, undo) {
+  clearTimeout(toastTimer)
+  toast.value = { text, undo }
+  toastTimer = setTimeout(() => (toast.value = null), 7000)
+}
+
+async function undoMove() {
+  const { undo } = toast.value
+  toast.value = null
+  await undo().catch((e) => (error.value = e.message))
+}
+
+onBeforeUnmount(() => clearTimeout(toastTimer))
 </script>
 
 <template>
   <Teleport defer to="#header-center">
     <div class="controls">
-      <button type="button" class="nav-btn" aria-label="Zurück" @click="step(-1)">&lt;</button>
-      <button type="button" class="nav-btn" aria-label="Weiter" @click="step(1)">&gt;</button>
-      <button v-if="mode !== 'tag'" type="button" class="today-btn" @click="today">Heute</button>
+      <button type="button" class="nav-btn" aria-label="Zurück" @click="step(-1)">‹</button>
+      <button type="button" class="nav-btn" aria-label="Weiter" @click="step(1)">›</button>
+      <button v-if="mode !== 'tag' || isPhone" type="button" class="today-btn" @click="today">
+        Heute
+      </button>
       <h1 class="date" :class="{ loading }">{{ title }}</h1>
 
       <div class="modes" role="tablist" aria-label="Ansicht">
         <button
-          v-for="m in ['tag', 'woche', 'monat'] as const"
-          :key="m"
+          v-for="[value, label] in [
+            ['tag', 'Tag'],
+            ['woche', 'Woche'],
+            ['monat', 'Monat'],
+          ]"
+          :key="value"
           type="button"
           role="tab"
-          :aria-selected="mode === m"
-          :class="{ active: mode === m }"
-          @click="go({ ansicht: m })"
+          :aria-selected="mode === value"
+          :class="{ active: mode === value }"
+          @click="go({ ansicht: value })"
         >
-          {{ m === 'tag' ? 'Tag' : m === 'woche' ? 'Woche' : 'Monat' }}
+          {{ label }}
         </button>
       </div>
     </div>
@@ -349,8 +381,8 @@ function requestLabel(r: WorkRequest): string {
   <p v-if="error" class="error banner">{{ error }}</p>
 
   <div class="layout" :class="{ full: mode === 'monat' }">
-    <section class="board">
-      <p v-if="data && data.workers.length === 0" class="empty muted">
+    <section class="board" data-scroll :class="mode">
+      <p v-if="data && !data.workers.length" class="empty">
         Es gibt noch keine aktiven Arbeiter. Lege sie unter „Benutzer &amp; Rechte“ an.
       </p>
 
@@ -364,6 +396,7 @@ function requestLabel(r: WorkRequest): string {
         :now-columns="nowColumns"
         @open="dialog.edit"
         @slot="onSlot"
+        @move="onMove"
       />
 
       <TimeGrid
@@ -376,6 +409,7 @@ function requestLabel(r: WorkRequest): string {
         :now-columns="nowColumns"
         @open="dialog.edit"
         @slot="onSlot"
+        @move="onMove"
       />
 
       <MonthGrid
@@ -384,20 +418,21 @@ function requestLabel(r: WorkRequest): string {
         :month="anchor.getMonth()"
         :items="monthItems"
         @open="dialog.edit"
-        @day="(d) => go({ ansicht: 'tag', datum: isWeekend(d) ? shiftWorkday(d, 1) : d })"
+        @day="openDay"
+        @move="onMove"
       />
     </section>
 
-    <!-- Seitenleiste Tag (Figma 01a) -->
+    <!-- Tag: Kapazitaet, Anfragen, Warnungen -->
     <aside v-if="mode === 'tag'" class="side">
       <h2>Kapazität</h2>
       <p class="hint">Wann ist welcher Arbeiter wieder frei?</p>
       <div v-for="w in capacity" :key="w.user.id" class="cap" :class="{ urgent: w.urgent }">
         <strong>{{ w.user.fullName }}</strong>
-        <span class="cap__when">braucht Arbeit: {{ formatWeekdayTime(w.availableFrom) }}</span>
-        <span class="cap__rest">
+        <span class="cap-when">braucht Arbeit: {{ formatWeekdayTime(w.availableFrom) }}</span>
+        <span class="cap-rest">
           {{
-            w.remainingMinutes > 0
+            w.remainingMinutes
               ? `noch ${formatHours(w.remainingMinutes)} Arbeit`
               : 'keine offene Arbeit'
           }}
@@ -411,7 +446,7 @@ function requestLabel(r: WorkRequest): string {
         <span>braucht Arbeit: {{ requestLabel(r) }}</span>
         <button type="button" class="small" @click="assign(r)">zuteilen</button>
       </div>
-      <p v-if="requests.length === 0" class="none">Zurzeit hat niemand Arbeit angefordert.</p>
+      <p v-if="!requests.length" class="none">Zurzeit hat niemand Arbeit angefordert.</p>
 
       <template v-if="warnings.length">
         <h2 class="gap">Warnungen</h2>
@@ -422,14 +457,14 @@ function requestLabel(r: WorkRequest): string {
           class="warn"
           @click="dialog.edit(s.jobId)"
         >
-          <span class="warn__icon">!</span>
+          <span class="warn-icon">!</span>
           <span>
             <strong>Zeit überschritten</strong>
-            <span>
-              {{ s.title }} · {{ s.assignee?.fullName }} · +{{
+            <small
+              >{{ s.title }} · {{ s.assignee?.fullName }} · +{{
                 formatHours(s.actualMinutes - s.plannedMinutes)
-              }}
-            </span>
+              }}</small
+            >
           </span>
         </button>
       </template>
@@ -441,9 +476,13 @@ function requestLabel(r: WorkRequest): string {
         >
         <span><i style="background: var(--faint)"></i>erledigt</span>
       </div>
+      <p class="tip">
+        Tipp: Arbeiten lassen sich per Drag &amp; Drop verschieben – auch auf einen anderen
+        Arbeiter.
+      </p>
     </aside>
 
-    <!-- Seitenleiste Woche (Figma 01b) -->
+    <!-- Woche: Filter und Auslastung -->
     <aside v-else-if="mode === 'woche'" class="side">
       <h2>Arbeiter anzeigen</h2>
       <label v-for="w in data?.workers ?? []" :key="w.id" class="filter">
@@ -459,14 +498,15 @@ function requestLabel(r: WorkRequest): string {
               ? {}
               : { background: colors(w.id).color, borderColor: colors(w.id).color }
           "
-          >✓</span
         >
+          ✓
+        </span>
         {{ w.fullName }}
       </label>
 
       <h2 class="gap">Wochenauslastung</h2>
       <div v-for="w in weekLoad" :key="w.id" class="load">
-        <span class="load__row">
+        <span class="load-row">
           {{ w.fullName }}
           <span
             >{{ formatHours(w.planned).replace(' h', '') }} / {{ formatHours(w.capacity) }}</span
@@ -490,12 +530,19 @@ function requestLabel(r: WorkRequest): string {
           ><i :style="{ background: p.color }"></i>{{ p.label }}</span
         >
       </div>
+      <p class="tip">Tipp: Arbeiten auf einen anderen Tag oder eine andere Uhrzeit ziehen.</p>
     </aside>
   </div>
+
+  <Transition name="toast">
+    <div v-if="toast" class="toast" role="status">
+      <span>{{ toast.text }}</span>
+      <button type="button" @click="undoMove">Rückgängig</button>
+    </div>
+  </Transition>
 </template>
 
 <style scoped>
-/* ---------- Steuerung im Header ---------- */
 .controls {
   display: flex;
   align-items: center;
@@ -503,19 +550,20 @@ function requestLabel(r: WorkRequest): string {
   width: 100%;
 }
 
-.nav-btn {
-  width: 36px;
+.nav-btn,
+.today-btn {
   padding: 0;
   background: var(--button);
   color: var(--text);
-  font-size: 0.875rem;
+}
+
+.nav-btn {
+  width: 36px;
+  font-size: 1.125rem;
 }
 
 .today-btn {
   width: 64px;
-  padding: 0;
-  background: var(--button);
-  color: var(--text);
   font-weight: 500;
 }
 
@@ -528,25 +576,25 @@ function requestLabel(r: WorkRequest): string {
 }
 
 .date.loading {
-  opacity: 0.8;
+  opacity: 0.7;
 }
 
 .modes {
   display: flex;
   margin: 0 1.5rem 0 auto;
   padding: 3px;
-  background: var(--button);
   border-radius: 8px;
+  background: var(--button);
 }
 
 .modes button {
   width: 67px;
   height: 30px;
   padding: 0;
+  border-radius: 6px;
   background: none;
   color: var(--muted);
   font-weight: 500;
-  border-radius: 6px;
 }
 
 .modes button.active {
@@ -555,7 +603,6 @@ function requestLabel(r: WorkRequest): string {
   font-weight: 600;
 }
 
-/* ---------- Layout ---------- */
 .banner {
   margin: 0.75rem 1.5rem 0;
 }
@@ -577,14 +624,15 @@ function requestLabel(r: WorkRequest): string {
 
 .empty {
   padding: 2rem;
+  color: var(--muted);
 }
 
 /* ---------- Seitenleiste ---------- */
 .side {
   overflow-y: auto;
   padding: 20px 16px 2rem;
-  background: var(--side);
   border-left: 1px solid var(--border);
+  background: var(--side);
 }
 
 .side h2 {
@@ -608,11 +656,11 @@ function requestLabel(r: WorkRequest): string {
   display: flex;
   flex-direction: column;
   gap: 4px;
-  padding: 12px 16px;
   margin-bottom: 12px;
+  padding: 12px 16px;
+  border-left: 3px solid var(--primary);
   border-radius: 10px;
   background: var(--surface);
-  border-left: 3px solid var(--primary);
 }
 
 .cap.urgent {
@@ -625,47 +673,56 @@ function requestLabel(r: WorkRequest): string {
   font-weight: 600;
 }
 
-.cap__when {
+.cap-when {
   font-size: 0.6875rem;
   font-weight: 500;
   color: var(--primary);
 }
 
-.cap.urgent .cap__when {
+.cap.urgent .cap-when {
   color: var(--danger);
 }
 
-.cap__rest {
+.cap-rest {
   font-size: 0.625rem;
   color: var(--muted);
 }
 
 .req {
-  background: var(--warning-soft);
-  border-left: none;
   padding-bottom: 14px;
+  border-left: none;
+  background: var(--warning-soft);
 }
 
 .req span {
+  padding-right: 100px;
   font-size: 0.6875rem;
   font-weight: 500;
   color: var(--warning-text);
-  padding-right: 100px;
 }
 
 .req button {
   position: absolute;
   right: 16px;
   bottom: 12px;
-  height: 20px;
   width: 96px;
+  height: 22px;
   font-size: 0.625rem;
 }
 
-.none {
+.none,
+.tip {
   margin: 0 4px;
   font-size: 0.6875rem;
   color: var(--muted);
+}
+
+.tip {
+  margin-top: 24px;
+  padding: 10px 12px;
+  border-radius: 8px;
+  background: var(--primary-soft);
+  color: var(--primary);
 }
 
 .warn {
@@ -683,26 +740,26 @@ function requestLabel(r: WorkRequest): string {
   white-space: normal;
 }
 
-.warn__icon {
+.warn-icon {
+  display: grid;
   flex: none;
+  place-items: center;
   width: 18px;
   height: 18px;
   border-radius: 50%;
   background: var(--danger);
   color: #fff;
-  display: grid;
-  place-items: center;
   font-size: 0.6875rem;
   font-weight: 700;
 }
 
 .warn strong {
   display: block;
-  color: var(--danger);
   font-size: 0.75rem;
+  color: var(--danger);
 }
 
-.warn span span {
+.warn small {
   font-size: 0.625rem;
   font-weight: 400;
   color: var(--muted);
@@ -753,12 +810,12 @@ function requestLabel(r: WorkRequest): string {
 }
 
 .box {
-  width: 16px;
-  height: 16px;
-  border-radius: 4px;
-  border: 1.5px solid var(--border);
   display: grid;
   place-items: center;
+  width: 16px;
+  height: 16px;
+  border: 1.5px solid var(--border);
+  border-radius: 4px;
   color: #fff;
   font-size: 0.625rem;
   font-weight: 700;
@@ -768,14 +825,14 @@ function requestLabel(r: WorkRequest): string {
   margin: 16px 4px 0;
 }
 
-.load__row {
+.load-row {
   display: flex;
   justify-content: space-between;
   font-size: 0.6875rem;
   font-weight: 500;
 }
 
-.load__row span {
+.load-row span {
   font-size: 0.625rem;
   font-weight: 400;
   color: var(--muted);
@@ -785,9 +842,9 @@ function requestLabel(r: WorkRequest): string {
   display: block;
   height: 8px;
   margin-top: 8px;
+  overflow: hidden;
   border-radius: 4px;
   background: var(--grid);
-  overflow: hidden;
 }
 
 .bar span {
@@ -802,19 +859,57 @@ function requestLabel(r: WorkRequest): string {
   gap: 8px;
   margin-top: 28px;
   padding: 14px 16px;
-  border-radius: 10px;
   border-left: 3px solid var(--danger);
+  border-radius: 10px;
   background: var(--danger-soft);
   font-size: 0.6875rem;
   font-weight: 500;
 }
 
 .soon strong {
-  color: var(--danger);
   font-size: 0.75rem;
   font-weight: 600;
+  color: var(--danger);
 }
 
+/* ---------- Hinweis nach dem Verschieben ---------- */
+.toast {
+  position: fixed;
+  bottom: 24px;
+  left: 50%;
+  z-index: 60;
+  display: flex;
+  align-items: center;
+  gap: 16px;
+  max-width: calc(100vw - 32px);
+  padding: 10px 10px 10px 18px;
+  border-radius: 10px;
+  background: var(--text);
+  color: #fff;
+  font-size: 0.75rem;
+  box-shadow: 0 10px 30px rgba(16, 24, 40, 0.25);
+  transform: translateX(-50%);
+}
+
+.toast button {
+  height: 30px;
+  background: rgba(255, 255, 255, 0.14);
+}
+
+.toast-enter-active,
+.toast-leave-active {
+  transition:
+    opacity 0.2s,
+    transform 0.2s;
+}
+
+.toast-enter-from,
+.toast-leave-to {
+  opacity: 0;
+  transform: translate(-50%, 12px);
+}
+
+/* ---------- Tablet und Handy ---------- */
 @media (max-width: 1100px) {
   .layout {
     grid-template-columns: 1fr;
@@ -822,11 +917,56 @@ function requestLabel(r: WorkRequest): string {
   }
 
   .board {
-    max-height: 75vh;
+    height: calc(100vh - 150px);
+  }
+
+  .board.monat {
+    height: auto;
+  }
+
+  .side {
+    border-top: 1px solid var(--border);
+    border-left: none;
+  }
+}
+
+@media (max-width: 768px) {
+  .controls {
+    flex-wrap: wrap;
+    gap: 6px;
+  }
+
+  .date {
+    flex: 1;
+    margin-left: 0.25rem;
+    font-size: 0.875rem;
   }
 
   .modes {
-    margin-right: 0;
+    order: 3;
+    width: 100%;
+    margin: 4px 0 0;
+  }
+
+  .modes button {
+    flex: 1;
+  }
+
+  .banner {
+    margin: 0.75rem 1rem 0;
+  }
+
+  .board {
+    height: calc(100dvh - 170px);
+    scroll-snap-type: x proximity;
+  }
+
+  .side {
+    padding: 20px 12px 6rem;
+  }
+
+  .toast {
+    bottom: 88px;
   }
 }
 </style>

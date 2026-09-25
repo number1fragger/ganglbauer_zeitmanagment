@@ -1,10 +1,8 @@
-<script setup lang="ts">
+<script setup>
 import { ref } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
-import { errorMessage } from '@/api/client'
 import { useAuthStore } from '@/stores/auth'
 
-/** Figma 05 – Login. */
 const auth = useAuthStore()
 const router = useRouter()
 const route = useRoute()
@@ -16,16 +14,13 @@ const showPassword = ref(false)
 const forgotten = ref(false)
 const error = ref('')
 
-async function submit(): Promise<void> {
+async function submit() {
   error.value = ''
-
   try {
     await auth.login(email.value, password.value, remember.value)
-    const redirect =
-      typeof route.query.redirect === 'string' ? route.query.redirect : auth.homeRoute
-    await router.push(redirect)
+    router.push(typeof route.query.redirect === 'string' ? route.query.redirect : auth.homeRoute)
   } catch (e) {
-    error.value = errorMessage(e)
+    error.value = e.message
   }
 }
 </script>

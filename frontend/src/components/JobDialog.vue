@@ -1,38 +1,30 @@
-<script setup lang="ts">
+<script setup>
 import { computed, reactive, ref, watch } from 'vue'
-import { errorMessage, http } from '@/api/client'
-import type { Job, Priority } from '@/api/types'
+import { api } from '@/api/client'
 import { useJobDialogStore } from '@/stores/jobDialog'
-import { useWorkshopStore } from '@/stores/workshop'
 import { formatHours, priorities, toDateTimeInput } from '@/utils/format'
 
-/**
- * Figma-Screen 02 "Arbeit anlegen / bearbeiten" (F1–F5).
- */
+/** Dialog "Arbeit anlegen / bearbeiten" (F1–F5). */
 const dialog = useJobDialogStore()
-const workshop = useWorkshopStore()
 
 const STEP_MINUTES = 30
 
 const loading = ref(false)
 const busy = ref(false)
 const error = ref('')
-const job = ref<Job | null>(null)
-/** Ende wurde von Hand gesetzt – dann nicht mehr automatisch nachziehen. */
+const job = ref(null)
+const workers = ref([])
+/** Ende von Hand gesetzt – dann nicht mehr automatisch nachziehen. */
 const endTouched = ref(false)
 
-const form = reactive({
-  title: '',
-  customer: '',
-  priority: 'normal' as Priority,
-  plannedMinutes: 120,
-  assigneeId: null as number | null,
-  startsAt: '',
-  dueAt: '',
-  done: false,
-})
-
+const form = reactive({})
 const isEdit = computed(() => dialog.jobId !== null)
+
+function nextFullHour() {
+  const date = new Date()
+  date.setHours(date.getHours() + 1, 0, 0, 0)
+  return date
+}
 
 watch(
   () => dialog.open,
@@ -40,8 +32,8 @@ watch(
     if (!open) return
 
     error.value = ''
-    endTouched.value = false
     job.value = null
+    endTouched.value = false
     Object.assign(form, {
       title: '',
       customer: '',
@@ -55,119 +47,98 @@ watch(
 
     loading.value = true
     try {
-      const tasks: Promise<unknown>[] = [workshop.loadWorkers()]
-      if (dialog.jobId !== null) {
-        tasks.push(
-          http.get<Job>(`/api/jobs/${dialog.jobId}`).then(({ data }) => {
-            job.value = data
-            endTouched.value = true
-            Object.assign(form, {
-              title: data.title,
-              customer: data.customer ?? '',
-              priority: data.priority === 'dringend' ? 'hoch' : data.priority,
-              plannedMinutes: data.plannedMinutes,
-              assigneeId: data.assignee?.id ?? null,
-              startsAt: data.startsAt ? toDateTimeInput(data.startsAt) : '',
-              dueAt: data.dueAt ? toDateTimeInput(data.dueAt) : '',
-              done: data.status === 'erledigt',
-            })
-          }),
-        )
+      const [list, data] = await Promise.all([
+        api.get('/api/workers'),
+        dialog.jobId !== null ? api.get(`/api/jobs/${dialog.jobId}`) : null,
+      ])
+      workers.value = list
+
+      if (data) {
+        job.value = data
+        endTouched.value = true
+        Object.assign(form, {
+          title: data.title,
+          customer: data.customer ?? '',
+          priority: data.priority === 'dringend' ? 'hoch' : data.priority,
+          plannedMinutes: data.plannedMinutes,
+          assigneeId: data.assignee?.id ?? null,
+          startsAt: data.startsAt ? toDateTimeInput(data.startsAt) : '',
+          dueAt: data.dueAt ? toDateTimeInput(data.dueAt) : '',
+          done: data.status === 'erledigt',
+        })
       }
-      await Promise.all(tasks)
     } catch (e) {
-      error.value = errorMessage(e)
+      error.value = e.message
     } finally {
       loading.value = false
-      if (!endTouched.value) suggestEnd()
+      suggestEnd()
     }
   },
 )
 
-function nextFullHour(): Date {
-  const date = new Date()
-  date.setHours(date.getHours() + 1, 0, 0, 0)
-
-  return date
-}
-
-/** Vorschlag fuer das Ende: Beginn + geplante Zeit (ohne Arbeitszeitgrenzen). */
-function suggestEnd(): void {
+/** Vorschlag fuer das Ende: Beginn + geplante Zeit. */
+function suggestEnd() {
   if (endTouched.value || !form.startsAt) return
-
-  const end = new Date(new Date(form.startsAt).getTime() + form.plannedMinutes * 60_000)
-  form.dueAt = toDateTimeInput(end)
+  form.dueAt = toDateTimeInput(
+    new Date(new Date(form.startsAt).getTime() + form.plannedMinutes * 60_000),
+  )
 }
 
 watch(() => [form.startsAt, form.plannedMinutes], suggestEnd)
 
-function stepPlanned(direction: 1 | -1): void {
+function stepPlanned(direction) {
   form.plannedMinutes = Math.max(STEP_MINUTES, form.plannedMinutes + direction * STEP_MINUTES)
 }
 
-/** F5 – sofort um eine Stunde verlaengern, unabhaengig vom Speichern. */
-async function extendOneHour(): Promise<void> {
-  if (!job.value) return
-
+async function run(action) {
   busy.value = true
   error.value = ''
   try {
-    const { data } = await http.post<Job>(`/api/jobs/${job.value.id}/extend`, { minutes: 60 })
-    job.value = data
-    form.plannedMinutes = data.plannedMinutes
+    await action()
   } catch (e) {
-    error.value = errorMessage(e)
+    error.value = e.message
   } finally {
     busy.value = false
   }
 }
 
-async function save(): Promise<void> {
-  busy.value = true
-  error.value = ''
+/** F5 – sofort um eine Stunde verlaengern. */
+const extendOneHour = () =>
+  run(async () => {
+    job.value = await api.post(`/api/jobs/${job.value.id}/extend`, { minutes: 60 })
+    form.plannedMinutes = job.value.plannedMinutes
+  })
 
-  const payload = {
-    title: form.title,
-    customer: form.customer || null,
-    priority: form.priority,
-    plannedMinutes: form.plannedMinutes,
-    assigneeId: form.assigneeId,
-    startsAt: form.startsAt ? new Date(form.startsAt).toISOString() : null,
-    dueAt: form.dueAt ? new Date(form.dueAt).toISOString() : null,
-  }
+const save = () =>
+  run(async () => {
+    const payload = {
+      title: form.title,
+      customer: form.customer || null,
+      priority: form.priority,
+      plannedMinutes: form.plannedMinutes,
+      assigneeId: form.assigneeId,
+      startsAt: form.startsAt ? new Date(form.startsAt).toISOString() : null,
+      dueAt: form.dueAt ? new Date(form.dueAt).toISOString() : null,
+    }
 
-  try {
     if (job.value) {
-      await http.patch(`/api/jobs/${job.value.id}`, payload)
-      const wasDone = job.value.status === 'erledigt'
-      if (form.done !== wasDone) {
-        await http.post(`/api/jobs/${job.value.id}/complete`, { done: form.done })
+      await api.patch(`/api/jobs/${job.value.id}`, payload)
+      if (form.done !== (job.value.status === 'erledigt')) {
+        await api.post(`/api/jobs/${job.value.id}/complete`, { done: form.done })
       }
     } else {
-      await http.post('/api/jobs', payload)
+      await api.post('/api/jobs', payload)
     }
-    dialog.saved()
-  } catch (e) {
-    error.value = errorMessage(e)
-  } finally {
-    busy.value = false
-  }
-}
+    dialog.changed()
+  })
 
-async function remove(): Promise<void> {
-  if (!job.value) return
+function remove() {
   if (!window.confirm(`„${job.value.title}“ wirklich löschen? Erfasste Zeiten gehen verloren.`))
     return
-
-  busy.value = true
-  try {
-    await http.delete(`/api/jobs/${job.value.id}`)
-    dialog.saved()
-  } catch (e) {
-    error.value = errorMessage(e)
-  } finally {
-    busy.value = false
-  }
+  run(async () => {
+    await api.delete(`/api/jobs/${job.value.id}`)
+    dialog.changed()
+  })
 }
 </script>
 
@@ -246,7 +217,7 @@ async function remove(): Promise<void> {
             <label for="jd-worker">Zugewiesener Arbeiter</label>
             <select id="jd-worker" v-model="form.assigneeId">
               <option :value="null">Noch niemand</option>
-              <option v-for="w in workshop.workers" :key="w.id" :value="w.id">
+              <option v-for="w in workers" :key="w.id" :value="w.id">
                 {{ w.fullName }}
               </option>
             </select>
@@ -457,10 +428,45 @@ hr {
   padding: 0;
 }
 
-@media (max-width: 560px) {
-  .two,
+/* Handy: Blatt von unten, alles untereinander */
+@media (max-width: 600px) {
+  .overlay {
+    align-items: flex-end;
+    padding: 0;
+  }
+
+  .dialog {
+    max-height: 92dvh;
+    overflow-y: auto;
+    padding: 1.5rem 1.25rem calc(1.25rem + env(safe-area-inset-bottom));
+    border-radius: 16px 16px 0 0;
+  }
+
+  .two {
+    grid-template-columns: 1fr;
+    gap: 0;
+  }
+
   .prios {
-    grid-template-columns: 1fr 1fr;
+    gap: 0.5rem;
+  }
+
+  .extend {
+    flex-direction: column;
+    align-items: stretch;
+  }
+
+  .extend button {
+    width: 100%;
+  }
+
+  .actions {
+    flex-wrap: wrap;
+  }
+
+  .cancel,
+  .save {
+    flex: 1;
   }
 }
 </style>

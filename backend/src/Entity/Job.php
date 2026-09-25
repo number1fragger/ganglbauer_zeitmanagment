@@ -214,6 +214,22 @@ class Job
         return $this;
     }
 
+    /**
+     * Drag & Drop im Kalender: neuer Beginn. Ein geplantes Ende wandert um
+     * denselben Betrag mit, damit die Dauer der Arbeit gleich bleibt.
+     */
+    public function moveTo(\DateTimeImmutable $start): static
+    {
+        if (null !== $this->startsAt && null !== $this->dueAt) {
+            $shift = $start->getTimestamp() - $this->startsAt->getTimestamp();
+            $this->dueAt = $this->dueAt->modify(sprintf('%+d seconds', $shift));
+        }
+
+        $this->startsAt = $start;
+
+        return $this;
+    }
+
     public function getDueAt(): ?\DateTimeImmutable
     {
         return $this->dueAt;

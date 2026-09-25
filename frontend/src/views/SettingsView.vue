@@ -1,64 +1,59 @@
-<script setup lang="ts">
+<script setup>
 import { reactive, ref, watch } from 'vue'
-import { RouterLink } from 'vue-router'
-import { errorMessage, http } from '@/api/client'
+import { api } from '@/api/client'
 import { useAuthStore } from '@/stores/auth'
 
+/** Eigenes Profil und Passwort – fuer alle Rollen. */
 const auth = useAuthStore()
 
-const profile = reactive({
-  firstName: auth.user?.firstName ?? '',
-  lastName: auth.user?.lastName ?? '',
-  weeklyHours: auth.user?.weeklyHours ?? 38.5,
-})
-
-const passwords = reactive({
-  currentPassword: '',
-  newPassword: '',
-})
-
+const profile = reactive({ firstName: '', lastName: '', weeklyHours: 38.5 })
+const passwords = reactive({ currentPassword: '', newPassword: '' })
 const profileMessage = ref('')
 const passwordMessage = ref('')
 const error = ref('')
 
 watch(
   () => auth.user,
-  (user) => {
-    if (!user) return
-
-    profile.firstName = user.firstName
-    profile.lastName = user.lastName
-    profile.weeklyHours = user.weeklyHours
-  },
+  (user) =>
+    user &&
+    Object.assign(profile, {
+      firstName: user.firstName,
+      lastName: user.lastName,
+      weeklyHours: user.weeklyHours,
+    }),
   { immediate: true },
 )
 
-async function saveProfile(): Promise<void> {
+async function run(action, message, success) {
   error.value = ''
-  profileMessage.value = ''
-
+  message.value = ''
   try {
-    await http.patch('/api/me', profile)
-    await auth.loadUser()
-    profileMessage.value = 'Profil gespeichert.'
+    await action()
+    message.value = success
   } catch (e) {
-    error.value = errorMessage(e)
+    error.value = e.message
   }
 }
 
-async function changePassword(): Promise<void> {
-  error.value = ''
-  passwordMessage.value = ''
+const saveProfile = () =>
+  run(
+    async () => {
+      await api.patch('/api/me', profile)
+      await auth.loadUser()
+    },
+    profileMessage,
+    'Profil gespeichert.',
+  )
 
-  try {
-    await http.put('/api/me/password', passwords)
-    passwords.currentPassword = ''
-    passwords.newPassword = ''
-    passwordMessage.value = 'Passwort geaendert.'
-  } catch (e) {
-    error.value = errorMessage(e)
-  }
-}
+const changePassword = () =>
+  run(
+    async () => {
+      await api.put('/api/me/password', passwords)
+      Object.assign(passwords, { currentPassword: '', newPassword: '' })
+    },
+    passwordMessage,
+    'Passwort geändert.',
+  )
 </script>
 
 <template>

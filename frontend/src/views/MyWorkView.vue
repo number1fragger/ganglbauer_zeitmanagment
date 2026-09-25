@@ -1,26 +1,26 @@
-<script setup lang="ts">
+<script setup>
 import { computed, onBeforeUnmount, onMounted, ref } from 'vue'
 import { useRouter } from 'vue-router'
-import { errorMessage, http } from '@/api/client'
-import type { Job } from '@/api/types'
+import { api } from '@/api/client'
 import { useAuthStore } from '@/stores/auth'
-import { useWorkshopStore } from '@/stores/workshop'
 import { isWeekend, shiftWorkday, startOfDay } from '@/utils/calendar'
 import { formatHours, formatWhen } from '@/utils/format'
 
 /**
- * Figma 03 – Arbeiter-Ansicht: eigene Arbeiten, Restzeit und
- * "Ich brauche neue Arbeit" (F4, F5, F7, F8).
+ * Arbeiter-Ansicht (fuers Handy gebaut): eigene Arbeiten, Zeiterfassung,
+ * Restzeit und "Ich brauche neue Arbeit" (F4, F5, F7, F8).
  */
 const auth = useAuthStore()
-const workshop = useWorkshopStore()
 const router = useRouter()
 
-const jobs = ref<Job[]>([])
-const workload = ref<{ remainingMinutes: number; availableFrom: string } | null>(null)
-const expanded = ref<number | null>(null)
+const jobs = ref([])
+const workload = ref(null)
+const running = ref(null)
+const myRequest = ref(null)
+const expanded = ref(null)
 const error = ref('')
 const busy = ref(false)
+const now = ref(Date.now())
 
 const todayLabel = new Date().toLocaleDateString('de-AT', {
   weekday: 'long',
@@ -29,115 +29,97 @@ const todayLabel = new Date().toLocaleDateString('de-AT', {
   year: 'numeric',
 })
 
-/** Offene Arbeiten und die heute erledigten – wie im Figma-Entwurf. */
+/** Offene Arbeiten und die heute erledigten. */
 const visibleJobs = computed(() => {
   const today = startOfDay(new Date()).getTime()
-
   return jobs.value
-    .filter(
-      (j) =>
-        j.status !== 'erledigt' || (j.completedAt && new Date(j.completedAt).getTime() >= today),
-    )
+    .filter((j) => j.status !== 'erledigt' || new Date(j.completedAt).getTime() >= today)
     .sort(
       (a, b) =>
-        Number(a.status !== 'erledigt') - Number(b.status !== 'erledigt') ||
+        (a.status !== 'erledigt') - (b.status !== 'erledigt') ||
         (a.startsAt ?? '').localeCompare(b.startsAt ?? ''),
     )
 })
 
-async function load(): Promise<void> {
+async function load() {
   try {
-    const [list, load] = await Promise.all([
-      http.get<Job[]>('/api/jobs', { params: { assignee: 'me', includeDone: true } }),
-      http.get<{ remainingMinutes: number; availableFrom: string }>('/api/me/workload'),
-      workshop.loadRunning(),
-      workshop.loadMyRequest(),
+    ;[jobs.value, workload.value, running.value, myRequest.value] = await Promise.all([
+      api.get('/api/jobs', { assignee: 'me', includeDone: 1 }),
+      api.get('/api/me/workload'),
+      api.get('/api/time-entries/running'),
+      api.get('/api/work-requests/mine'),
     ])
-    jobs.value = list.data
-    workload.value = load.data
   } catch (e) {
-    error.value = errorMessage(e)
+    error.value = e.message
   }
 }
 
+// Laufende Zeit jede Sekunde aktualisieren.
+const ticker = setInterval(() => (now.value = Date.now()), 1000)
 onMounted(load)
-onBeforeUnmount(() => workshop.reset())
+onBeforeUnmount(() => clearInterval(ticker))
 
-async function act(action: () => Promise<unknown>): Promise<void> {
+async function act(action) {
   error.value = ''
   busy.value = true
   try {
     await action()
     await load()
   } catch (e) {
-    error.value = errorMessage(e)
+    error.value = e.message
   } finally {
     busy.value = false
   }
 }
 
-function toggleDone(job: Job): Promise<void> {
-  return act(() => workshop.completeJob(job.id, job.status !== 'erledigt'))
-}
+const startWork = (job) => act(() => api.post('/api/time-entries/start', { jobId: job.id }))
+const stopWork = () => act(() => api.post('/api/time-entries/stop'))
+const extend = (job) => act(() => api.post(`/api/jobs/${job.id}/extend`, { minutes: 60 }))
+const toggleDone = (job) =>
+  act(() => api.post(`/api/jobs/${job.id}/complete`, { done: job.status !== 'erledigt' }))
 
-function stateOf(job: Job): 'done' | 'over' | 'open' {
+function stateOf(job) {
   if (job.status === 'erledigt') return 'done'
-
   return job.overrun ? 'over' : 'open'
 }
 
-function timeLine(job: Job): string {
+function timeLine(job) {
   if (job.status === 'erledigt')
     return `${formatHours(job.actualMinutes || job.plannedMinutes)} · erledigt`
-
   const soll = `Soll ${formatHours(job.plannedMinutes)}`
-
   return job.actualMinutes > 0 ? `${soll} · Ist ${formatHours(job.actualMinutes)}` : soll
 }
 
-// --- Laufende Zeit ---------------------------------------------------------
-
 const clock = computed(() => {
-  const t = workshop.runningSeconds
-  const pad = (n: number) => String(n).padStart(2, '0')
-
+  if (!running.value) return ''
+  const t = Math.max(0, Math.floor((now.value - new Date(running.value.startedAt)) / 1000))
+  const pad = (n) => String(n).padStart(2, '0')
   return `${pad(Math.floor(t / 3600))}:${pad(Math.floor((t % 3600) / 60))}:${pad(t % 60)}`
 })
 
-// --- Ich brauche neue Arbeit (F7/F8) ---------------------------------------
+// --- Ich brauche neue Arbeit (F7/F8): fruehestens der naechste Werktag ---------
 
-interface Slot {
-  label: string
-  detail: string
-  value: Date | null
-}
-
-function slotName(date: Date): string {
-  const days = Math.round(
-    (startOfDay(date).getTime() - startOfDay(new Date()).getTime()) / 86_400_000,
-  )
+function slotName(date) {
+  const days = Math.round((startOfDay(date) - startOfDay(new Date())) / 86_400_000)
   if (days === 1) return 'Morgen'
   if (days === 2) return 'Übermorgen'
-
   return date.toLocaleDateString('de-AT', { weekday: 'long' })
 }
 
-function at(date: Date, hour: number): Date {
+function at(date, hour) {
   const d = new Date(date)
   d.setHours(hour, 0, 0, 0)
-
   return d
 }
 
-const slots = computed<Slot[]>(() => {
+const slots = computed(() => {
   const first = shiftWorkday(startOfDay(new Date()), 1)
   const second = shiftWorkday(first, 1)
-  const short = (d: Date) =>
-    d
-      .toLocaleDateString('de-AT', { weekday: 'short', day: '2-digit', month: '2-digit' })
-      .replace('.,', ',')
+  const short = (d) =>
+    d.toLocaleDateString('de-AT', { weekday: 'short', day: '2-digit', month: '2-digit' })
+  const todayOpen = !isWeekend(new Date()) && new Date().getHours() < 13
 
-  const list: Slot[] = [
+  return [
     { label: `${slotName(first)} früh`, detail: `${short(first)} · ab 07:00`, value: at(first, 7) },
     {
       label: `${slotName(first)} Nachmittag`,
@@ -149,49 +131,33 @@ const slots = computed<Slot[]>(() => {
       detail: `${short(second)} · ab 07:00`,
       value: at(second, 7),
     },
+    // Zur Verdeutlichung der Regel: heute geht nicht mehr.
+    {
+      label: todayOpen ? 'Heute Nachmittag' : 'Heute',
+      detail: 'Gesperrt – zu kurzfristig',
+      value: null,
+    },
   ]
-
-  // Zur Verdeutlichung der Regel: heute geht nicht mehr.
-  if (!isWeekend(new Date()) && new Date().getHours() < 13) {
-    list.push({ label: 'Heute Nachmittag', detail: 'Gesperrt – zu kurzfristig', value: null })
-  } else {
-    list.push({ label: 'Heute', detail: 'Gesperrt – zu kurzfristig', value: null })
-  }
-
-  return list
 })
 
-const requestedAt = computed(() => workshop.myRequest?.neededAt ?? null)
+const isRequested = (slot) =>
+  slot.value &&
+  myRequest.value &&
+  new Date(myRequest.value.neededAt).getTime() === slot.value.getTime()
 
-function isRequested(slot: Slot): boolean {
-  return (
-    !!slot.value &&
-    !!requestedAt.value &&
-    new Date(requestedAt.value).getTime() === slot.value.getTime()
+const requestSlot = (slot) =>
+  act(() => api.post('/api/work-requests', { neededAt: slot.value.toISOString(), note: null }))
+const withdraw = () =>
+  act(() =>
+    api.put(`/api/work-requests/${myRequest.value.id}/status`, { status: 'zurueckgezogen' }),
   )
-}
 
-function requestSlot(slot: Slot): Promise<void> {
-  if (!slot.value) return Promise.resolve()
-  const value = slot.value
-
-  return act(() => workshop.requestWork(value.toISOString(), null))
-}
-
-function withdraw(): Promise<void> {
-  const id = workshop.myRequest?.id
-  if (!id) return Promise.resolve()
-
-  return act(() => workshop.withdrawRequest(id))
-}
-
-function logout(): void {
-  workshop.reset()
+function logout() {
   auth.logout()
-  void router.push({ name: 'login' })
+  router.push('/login')
 }
 
-const roleClass = computed(() => `role role--${auth.role.toLowerCase().replace('role_', '')}`)
+const roleClass = computed(() => `role role-${auth.role.toLowerCase().replace('role_', '')}`)
 </script>
 
 <template>
@@ -212,15 +178,13 @@ const roleClass = computed(() => `role role--${auth.role.toLowerCase().replace('
     <main class="body">
       <p v-if="error" class="error">{{ error }}</p>
 
-      <div v-if="workshop.running" class="running">
+      <div v-if="running" class="running">
         <span class="pulse"></span>
         <span class="running__text">
-          <strong>{{ workshop.running.job.title }}</strong>
+          <strong>{{ running.job.title }}</strong>
           <span>läuft seit {{ clock }}</span>
         </span>
-        <button type="button" class="stop" :disabled="busy" @click="act(workshop.stopWork)">
-          Stopp
-        </button>
+        <button type="button" class="stop" :disabled="busy" @click="stopWork">Stopp</button>
       </div>
 
       <h2>Meine Arbeiten heute</h2>
@@ -255,20 +219,15 @@ const roleClass = computed(() => `role role--${auth.role.toLowerCase().replace('
           @click.stop
         >
           <button
-            v-if="workshop.running?.job.id !== job.id"
+            v-if="running?.job.id !== job.id"
             type="button"
             class="small"
             :disabled="busy"
-            @click="act(() => workshop.startWork(job.id))"
+            @click="startWork(job)"
           >
             Zeit starten
           </button>
-          <button
-            type="button"
-            class="small secondary"
-            :disabled="busy"
-            @click="act(() => workshop.extendJob(job.id, 60))"
-          >
+          <button type="button" class="small secondary" :disabled="busy" @click="extend(job)">
             + 1 Stunde
           </button>
           <button type="button" class="small secondary" :disabled="busy" @click="toggleDone(job)">
@@ -308,9 +267,9 @@ const roleClass = computed(() => `role role--${auth.role.toLowerCase().replace('
         </button>
       </div>
 
-      <p v-if="requestedAt" class="note">
-        Deine Anfrage steht: {{ formatWhen(requestedAt) }}. Nochmal tippen zieht sie zurück, eine
-        andere Zeit ersetzt sie.
+      <p v-if="myRequest?.neededAt" class="note">
+        Deine Anfrage steht: {{ formatWhen(myRequest?.neededAt) }}. Nochmal tippen zieht sie zurück,
+        eine andere Zeit ersetzt sie.
       </p>
     </main>
   </div>
@@ -377,17 +336,17 @@ const roleClass = computed(() => `role role--${auth.role.toLowerCase().replace('
   background: currentColor;
 }
 
-.role--user {
+.role-user {
   background: var(--success-soft);
   color: var(--success) !important;
 }
 
-.role--foreman {
+.role-foreman {
   background: var(--warning-soft);
   color: var(--warning-text) !important;
 }
 
-.role--admin {
+.role-admin {
   background: var(--primary-soft);
   color: var(--primary) !important;
 }

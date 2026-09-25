@@ -270,3 +270,32 @@ td {
   padding: 1.75rem 2rem 3rem;
   max-width: 1080px;
 }
+
+/* ---------- Handy ---------- */
+@media (max-width: 768px) {
+  .page-head {
+    flex-direction: column;
+    align-items: stretch;
+    padding: 1rem;
+  }
+
+  .page-head > div:last-child:not(:first-child) {
+    flex-wrap: wrap;
+  }
+
+  .page-head select {
+    flex: 1;
+    width: auto;
+  }
+
+  .page-body {
+    padding: 1rem 1rem 6rem;
+  }
+
+  /* 16px verhindert das automatische Hineinzoomen von iOS in Eingabefelder */
+  input,
+  select,
+  textarea {
+    font-size: 16px;
+  }
+}

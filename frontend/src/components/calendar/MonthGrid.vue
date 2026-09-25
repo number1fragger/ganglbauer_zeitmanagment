@@ -1,57 +1,62 @@
-<script setup lang="ts">
+<script setup>
 import { computed } from 'vue'
-import type { CalendarSegment } from '@/api/types'
+import { useDrag } from '@/composables/useDrag'
 import { addDays, dayKey, isWeekend } from '@/utils/calendar'
 
 /**
- * Monatsansicht (Figma 01c): Raster Mo–So, pro Tag bis zu drei Arbeiten
- * als "AH · Kupplung", freie Werktage mit "noch frei".
+ * Monatsansicht: pro Tag bis zu drei Arbeiten ("AH · Kupplung"), freie
+ * Werktage mit "noch frei". Arbeiten lassen sich auf einen anderen Tag ziehen.
+ * Auf dem Handy werden die Eintraege zu farbigen Punkten.
  */
-const props = defineProps<{
-  from: Date
-  month: number
-  items: { segment: CalendarSegment; color: string; soft: string }[]
-}>()
+const props = defineProps({
+  from: { type: Date, required: true },
+  month: { type: Number, required: true },
+  items: { type: Array, required: true }, // { segment, color, soft }
+})
 
-const emit = defineEmits<{
-  open: [jobId: number]
-  day: [date: Date]
-}>()
+const emit = defineEmits(['open', 'day', 'move'])
 
 const MAX_PER_DAY = 3
 const weekdays = ['Mo', 'Di', 'Mi', 'Do', 'Fr', 'Sa', 'So']
 const todayKey = dayKey(new Date())
 
 const days = computed(() => {
-  const byDay = new Map<string, typeof props.items>()
-  for (const item of props.items) {
-    const key = dayKey(new Date(item.segment.start))
-    byDay.set(key, [...(byDay.get(key) ?? []), item])
-  }
+  const byDay = {}
+  for (const item of props.items) (byDay[dayKey(new Date(item.segment.start))] ??= []).push(item)
 
   return Array.from({ length: 42 }, (_, i) => addDays(props.from, i))
     .filter((date, i) => i < 35 || date.getMonth() === props.month)
     .map((date) => {
       const key = dayKey(date)
-      const items = byDay.get(key) ?? []
+      const items = byDay[key] ?? []
 
       return {
         date,
         key,
-        items: items.slice(0, MAX_PER_DAY),
+        items,
+        visible: items.slice(0, MAX_PER_DAY),
         more: Math.max(0, items.length - MAX_PER_DAY),
-        inMonth: date.getMonth() === props.month,
         weekend: isWeekend(date),
+        muted: date.getMonth() !== props.month || isWeekend(date),
         today: key === todayKey,
         // Vergangene Tage sind nicht mehr "frei" – dort plant niemand mehr.
         free: items.length === 0 && !isWeekend(date) && key >= todayKey,
       }
     })
 })
+
+const { drag, start } = useDrag({
+  resolveTarget: (x, y) => {
+    const cell = document.elementFromPoint(x, y)?.closest('[data-day]')
+    return cell ? { day: cell.dataset.day } : null
+  },
+  onDrop: (item, target) => emit('move', item.segment, target),
+  onClick: (item) => emit('open', item.segment.jobId),
+})
 </script>
 
 <template>
-  <div class="month">
+  <div class="month" :class="{ dragging: drag.active }">
     <div
       v-for="d in weekdays"
       :key="d"
@@ -61,38 +66,48 @@ const days = computed(() => {
       {{ d }}
     </div>
 
-    <div v-for="day in days" :key="day.key" class="day" :class="{ weekend: day.weekend }">
+    <div
+      v-for="day in days"
+      :key="day.key"
+      class="day"
+      :class="{ weekend: day.weekend, target: drag.target?.day === day.key }"
+      :data-day="day.key"
+      @click.self="emit('day', day.date)"
+    >
       <button
         type="button"
         class="num"
-        :class="{ today: day.today, outside: !day.inMonth || day.weekend }"
+        :class="{ today: day.today, muted: day.muted }"
         @click="emit('day', day.date)"
       >
         {{ day.date.getDate() }}
       </button>
 
-      <button
-        v-for="item in day.items"
-        :key="`${item.segment.jobId}-${item.segment.part}`"
-        type="button"
-        class="entry"
-        :class="{
-          done: item.segment.done,
-          warn:
-            (item.segment.overrun || item.segment.late || item.segment.behind) &&
-            !item.segment.done,
-        }"
-        :style="{ '--accent': item.color, '--fill': item.soft }"
-        :title="`${item.segment.title} – ${item.segment.assignee?.fullName ?? ''}`"
-        @click="emit('open', item.segment.jobId)"
-      >
-        {{ item.segment.assignee?.initials }} · {{ item.segment.title }}
-      </button>
+      <div class="entries" @click.self="emit('day', day.date)">
+        <button
+          v-for="item in day.visible"
+          :key="`${item.segment.jobId}-${item.segment.part}`"
+          type="button"
+          class="entry"
+          :class="{
+            done: item.segment.done,
+            warn:
+              (item.segment.overrun || item.segment.late || item.segment.behind) &&
+              !item.segment.done,
+            lifted: drag.item?.segment === item.segment,
+          }"
+          :style="{ '--accent': item.color, '--fill': item.soft }"
+          :title="`${item.segment.title} – ${item.segment.assignee?.fullName ?? ''}`"
+          draggable="false"
+          @pointerdown="start($event, item, { draggable: !item.segment.done })"
+        >
+          {{ item.segment.assignee?.initials }} · {{ item.segment.title }}
+        </button>
+      </div>
 
       <button v-if="day.more" type="button" class="more" @click="emit('day', day.date)">
         +{{ day.more }} weitere
       </button>
-
       <span v-if="day.free" class="free">noch frei</span>
     </div>
   </div>
@@ -102,20 +117,24 @@ const days = computed(() => {
 .month {
   display: grid;
   grid-template-columns: repeat(7, minmax(110px, 1fr));
-  grid-auto-rows: auto;
   min-width: 770px;
   background: var(--surface);
 }
 
+.month.dragging {
+  cursor: grabbing;
+  user-select: none;
+}
+
 .weekday {
-  height: 40px;
-  padding: 0 0.875rem;
   display: flex;
   align-items: center;
+  height: 40px;
+  padding: 0 0.875rem;
+  border-bottom: 1px solid var(--border);
   font-size: 0.6875rem;
   font-weight: 600;
   color: var(--muted);
-  border-bottom: 1px solid var(--border);
 }
 
 .weekday.weekend {
@@ -123,25 +142,31 @@ const days = computed(() => {
 }
 
 .day {
-  min-height: 172px;
-  padding: 0.5rem;
   display: flex;
   flex-direction: column;
   gap: 5px;
+  min-height: 172px;
+  padding: 0.5rem;
   border-left: 1px solid var(--grid);
   border-bottom: 1px solid var(--grid);
+  cursor: pointer;
 }
 
 .day.weekend {
   background: #fafafb;
 }
 
+.day.target {
+  background: var(--primary-soft);
+  box-shadow: inset 0 0 0 2px var(--primary);
+}
+
 .num {
   align-self: flex-start;
-  height: 24px;
   min-width: 26px;
-  padding: 0 0.35rem;
+  height: 24px;
   margin-bottom: 0.3rem;
+  padding: 0 0.35rem;
   border-radius: 12px;
   background: none;
   color: var(--text);
@@ -149,7 +174,7 @@ const days = computed(() => {
   font-weight: 600;
 }
 
-.num.outside {
+.num.muted {
   color: var(--faint);
 }
 
@@ -159,27 +184,42 @@ const days = computed(() => {
   font-weight: 700;
 }
 
+.entries {
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+}
+
 .entry {
   height: 21px;
   padding: 0 0.5rem;
-  border-radius: 5px;
+  overflow: hidden;
   border-left: 3px solid var(--accent);
+  border-radius: 5px;
   background: var(--fill);
   color: var(--text);
   font-size: 0.625rem;
   font-weight: 500;
   text-align: left;
-  overflow: hidden;
   text-overflow: ellipsis;
+  cursor: grab;
+  touch-action: pan-x pan-y;
+  user-select: none;
+  -webkit-touch-callout: none;
 }
 
 .entry.done {
   opacity: 0.55;
   text-decoration: line-through;
+  cursor: pointer;
 }
 
 .entry.warn {
   box-shadow: inset 0 0 0 1px var(--danger);
+}
+
+.entry.lifted {
+  opacity: 0.35;
 }
 
 .more {
@@ -195,5 +235,56 @@ const days = computed(() => {
   padding: 0.1rem 0.35rem;
   font-size: 0.625rem;
   color: var(--faint);
+}
+
+/* ---------- Handy: Punkte statt Texte ---------- */
+@media (max-width: 768px) {
+  .month {
+    grid-template-columns: repeat(7, 1fr);
+    min-width: 0;
+  }
+
+  .weekday {
+    justify-content: center;
+    padding: 0;
+  }
+
+  .day {
+    align-items: center;
+    min-height: 64px;
+    padding: 0.35rem 0.15rem;
+  }
+
+  .num {
+    align-self: center;
+    margin: 0;
+  }
+
+  .entries {
+    flex-direction: row;
+    flex-wrap: wrap;
+    justify-content: center;
+    gap: 3px;
+    pointer-events: none;
+  }
+
+  .entry {
+    width: 7px;
+    height: 7px;
+    padding: 0;
+    border: none;
+    border-radius: 50%;
+    background: var(--accent);
+    font-size: 0;
+  }
+
+  .more {
+    padding: 0;
+    font-size: 0.5625rem;
+  }
+
+  .free {
+    display: none;
+  }
 }
 </style>

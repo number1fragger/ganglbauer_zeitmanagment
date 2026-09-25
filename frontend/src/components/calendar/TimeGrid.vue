@@ -1,129 +1,133 @@
-<script setup lang="ts">
+<script setup>
 import { computed, onBeforeUnmount, ref } from 'vue'
-import type { CalendarSegment } from '@/api/types'
+import { useDrag } from '@/composables/useDrag'
 import { layoutLanes, minutesOfDay } from '@/utils/calendar'
 import { formatHours, formatTime, priorityColor, priorityLabel } from '@/utils/format'
 
 /**
- * Zeitraster fuer Tag (Figma 01a) und Woche (Figma 01b).
- *  - variant "day":  Spalte = Arbeiter, Karte mit Prioritaetsleiste, Kunde und Soll/Ist
- *  - variant "week": Spalte = Tag, Karte in Arbeiterfarbe mit Kuerzel und Prioritaetspunkt
+ * Zeitraster fuer Tag (Spalte = Arbeiter) und Woche (Spalte = Tag).
+ * Karten lassen sich per Drag & Drop verschieben, Klick oeffnet sie,
+ * Klick auf eine freie Stelle legt dort eine neue Arbeit an.
  */
-export interface GridColumn {
-  key: string
-  /** Tag: Arbeitername · Woche: Tageszahl */
-  title: string
-  /** Tag: "frei ab Mi 14:00" · Woche: "MO" */
-  subtitle?: string
-  /** Tag: Kuerzel im Kreis */
-  badge?: string
-  today?: boolean
-  /** Woche: "frei: 2 Arbeiter" am Tagesende */
-  freeNote?: string
-}
+const props = defineProps({
+  variant: { type: String, required: true }, // 'day' | 'week'
+  columns: { type: Array, required: true }, // { key, title, subtitle, badge, today, freeNote }
+  items: { type: Array, required: true }, // { key, segment, color, soft }
+  startHour: { type: Number, default: 7 },
+  endHour: { type: Number, default: 17 },
+  nowColumns: { type: Array, default: () => [] },
+})
 
-export interface GridItem {
-  key: string
-  segment: CalendarSegment
-  /** Arbeiterfarbe (Woche) */
-  color: string
-  /** helle Arbeiterfarbe (Woche) */
-  soft: string
-}
-
-const props = defineProps<{
-  variant: 'day' | 'week'
-  columns: GridColumn[]
-  items: GridItem[]
-  startHour: number
-  endHour: number
-  nowColumns: string[]
-}>()
-
-const emit = defineEmits<{
-  open: [jobId: number]
-  slot: [columnKey: string, minutes: number]
-}>()
+const emit = defineEmits(['open', 'slot', 'move'])
 
 const HOUR_PX = 58
+const SNAP_MINUTES = 15
+const root = ref(null)
+
 const hours = computed(() =>
   Array.from({ length: props.endHour - props.startHour + 1 }, (_, i) => props.startHour + i),
 )
 const gridHeight = computed(() => (props.endHour - props.startHour) * HOUR_PX)
 
-function top(minutes: number): number {
-  const clamped = Math.min(Math.max(minutes, props.startHour * 60), props.endHour * 60)
+const toPx = (minutes) =>
+  ((Math.min(Math.max(minutes, props.startHour * 60), props.endHour * 60) - props.startHour * 60) /
+    60) *
+  HOUR_PX
 
-  return ((clamped - props.startHour * 60) / 60) * HOUR_PX
-}
+const pad = (n) => String(n).padStart(2, '0')
+const clock = (minutes) => `${pad(Math.floor(minutes / 60))}:${pad(minutes % 60)}`
 
-function place(entry: { item: GridItem; lane: number; lanes: number }) {
-  const y = top(minutesOfDay(new Date(entry.item.segment.start)))
-  const height = Math.max(24, top(minutesOfDay(new Date(entry.item.segment.end))) - y - 6)
-  const inset = props.variant === 'day' ? 8 : 3
-
-  return {
-    ...entry.item,
-    height,
-    // Ab vier parallelen Arbeiten ist fuer Text kein Platz – nur das Kuerzel (Details im Tooltip).
-    tiny: props.variant === 'week' && entry.lanes >= 4,
-    style: {
-      top: `${y + 3}px`,
-      height: `${height}px`,
-      left: `calc(${(entry.lane / entry.lanes) * 100}% + ${inset}px)`,
-      width: `calc(${100 / entry.lanes}% - ${inset * 2}px)`,
-    },
-  }
-}
-
+/** Karten je Spalte, ueberlappende nebeneinander. */
 const laidOut = computed(() => {
-  const byColumn = new Map<string, GridItem[]>()
-  for (const item of props.items) byColumn.set(item.key, [...(byColumn.get(item.key) ?? []), item])
+  const byColumn = {}
+  for (const item of props.items) (byColumn[item.key] ??= []).push(item)
 
-  const result: Record<string, ReturnType<typeof place>[]> = {}
-  for (const [key, list] of byColumn) {
+  const result = {}
+  for (const [key, list] of Object.entries(byColumn)) {
     result[key] = layoutLanes(list, (i) => [
       minutesOfDay(new Date(i.segment.start)),
       minutesOfDay(new Date(i.segment.end)),
-    ]).map(place)
+    ]).map(({ item, lane, lanes }) => {
+      const y = toPx(minutesOfDay(new Date(item.segment.start)))
+      const height = Math.max(24, toPx(minutesOfDay(new Date(item.segment.end))) - y - 6)
+      const inset = props.variant === 'day' ? 8 : 3
+
+      return {
+        ...item,
+        height,
+        // Ab vier parallelen Arbeiten passt in der Woche nur noch das Kuerzel.
+        tiny: props.variant === 'week' && lanes >= 4,
+        style: {
+          top: `${y + 3}px`,
+          height: `${height}px`,
+          left: `calc(${(lane / lanes) * 100}% + ${inset}px)`,
+          width: `calc(${100 / lanes}% - ${inset * 2}px)`,
+          ...(props.variant === 'week'
+            ? { '--accent': item.color, '--fill': item.soft }
+            : { '--accent': priorityColor(item.segment.priority) }),
+        },
+      }
+    })
   }
 
   return result
 })
 
-// Rote "Jetzt"-Linie, jede Minute aktualisiert.
+// --- Drag & Drop -----------------------------------------------------------
+
+const { drag, start } = useDrag({
+  resolveTarget(x, y, state) {
+    const column = document.elementFromPoint(x, y)?.closest('[data-column]')
+    if (!column || !root.value?.contains(column)) return null
+
+    const top = y - state.offsetY - column.getBoundingClientRect().top
+    const raw = props.startHour * 60 + (top / HOUR_PX) * 60
+    const snapped = Math.round(raw / SNAP_MINUTES) * SNAP_MINUTES
+    const minutes = Math.min(
+      Math.max(snapped, props.startHour * 60),
+      props.endHour * 60 - SNAP_MINUTES,
+    )
+
+    return { columnKey: column.dataset.column, minutes }
+  },
+  onDrop: (item, target) => emit('move', item.segment, target),
+  onClick: (item) => emit('open', item.segment.jobId),
+})
+
+const isDragged = (item) =>
+  drag.active &&
+  drag.item?.segment.jobId === item.segment.jobId &&
+  drag.item?.segment.part === item.segment.part
+
+// --- Jetzt-Linie ------------------------------------------------------------
+
 const now = ref(new Date())
 const timer = setInterval(() => (now.value = new Date()), 60_000)
 onBeforeUnmount(() => clearInterval(timer))
 
 const nowTop = computed(() => {
   const minutes = minutesOfDay(now.value)
-  if (minutes < props.startHour * 60 || minutes > props.endHour * 60) return null
-
-  return top(minutes)
+  return minutes < props.startHour * 60 || minutes > props.endHour * 60 ? null : toPx(minutes)
 })
 
-/** Klick auf eine freie Stelle: Uhrzeit auf halbe Stunden runden. */
-function onSlotClick(event: MouseEvent, columnKey: string): void {
-  const y = event.clientY - (event.currentTarget as HTMLElement).getBoundingClientRect().top
+function onSlotClick(event, columnKey) {
+  const y = event.clientY - event.currentTarget.getBoundingClientRect().top
   emit('slot', columnKey, props.startHour * 60 + Math.floor((y / HOUR_PX) * 2) * 30)
 }
 
-function state(s: CalendarSegment): 'done' | 'over' | 'open' {
-  if (s.done) return 'done'
-  if (s.overrun || s.behind || s.late) return 'over'
+// --- Darstellung ------------------------------------------------------------
 
-  return 'open'
+function state(s) {
+  if (s.done) return 'done'
+  return s.overrun || s.behind || s.late ? 'over' : 'open'
 }
 
-/** "Soll 2,5 h · Ist 2,0 h" – Ist nur, wenn schon gearbeitet wurde. */
-function timeLine(s: CalendarSegment): string {
+function timeLine(s) {
   const soll = `Soll ${formatHours(s.plannedMinutes)}`
-
   return s.actualMinutes > 0 ? `${soll} · Ist ${formatHours(s.actualMinutes)}` : soll
 }
 
-function tooltip(s: CalendarSegment): string {
+function tooltip(s) {
   const lines = [
     s.title,
     `Kunde: ${s.customer ?? '–'}`,
@@ -134,6 +138,7 @@ function tooltip(s: CalendarSegment): string {
   if (s.parts > 1) lines.push(`Teil ${s.part} von ${s.parts}`)
   if (s.behind) lines.push('Überfällig: Plan ist vorbei, Arbeit noch nicht erledigt')
   else if (s.late) lines.push('Wird nicht bis zum geplanten Ende fertig')
+  if (!s.done) lines.push('Ziehen zum Verschieben')
 
   return lines.join('\n')
 }
@@ -141,15 +146,16 @@ function tooltip(s: CalendarSegment): string {
 
 <template>
   <div
+    ref="root"
     class="tgrid"
-    :class="variant"
+    :class="[variant, { dragging: drag.active }]"
     :style="{ '--cols': columns.length, '--hour': `${HOUR_PX}px` }"
   >
     <div class="head gutter"><span v-if="variant === 'day'">Zeit</span></div>
     <div v-for="col in columns" :key="col.key" class="head" :class="{ today: col.today }">
       <template v-if="variant === 'day'">
         <span class="avatar">{{ col.badge }}</span>
-        <span class="head__text">
+        <span class="head-text">
           <strong>{{ col.title }}</strong>
           <span>{{ col.subtitle }}</span>
         </span>
@@ -160,9 +166,9 @@ function tooltip(s: CalendarSegment): string {
       </template>
     </div>
 
-    <div class="gutter hours" :style="{ height: `${gridHeight + 12}px` }">
+    <div class="gutter hours" :style="{ height: `${gridHeight}px` }">
       <span v-for="h in hours" :key="h" :style="{ top: `${(h - startHour) * HOUR_PX}px` }">
-        {{ String(h).padStart(2, '0') }}:00
+        {{ pad(h) }}:00
       </span>
     </div>
 
@@ -170,8 +176,8 @@ function tooltip(s: CalendarSegment): string {
       v-for="col in columns"
       :key="col.key"
       class="column"
+      :data-column="col.key"
       :style="{ height: `${gridHeight}px` }"
-      title="Klicken, um hier eine Arbeit einzuplanen"
       @click.self="onSlotClick($event, col.key)"
     >
       <button
@@ -179,47 +185,48 @@ function tooltip(s: CalendarSegment): string {
         :key="`${item.segment.jobId}-${item.segment.part}`"
         type="button"
         class="job"
-        :class="state(item.segment)"
-        :style="
-          variant === 'week'
-            ? { ...item.style, '--accent': item.color, '--fill': item.soft }
-            : { ...item.style, '--accent': priorityColor(item.segment.priority) }
-        "
+        :class="[state(item.segment), { lifted: isDragged(item), locked: item.segment.done }]"
+        :style="item.style"
         :title="tooltip(item.segment)"
-        @click="emit('open', item.segment.jobId)"
+        draggable="false"
+        @pointerdown="start($event, item, { draggable: !item.segment.done })"
+        @keydown.enter.prevent="emit('open', item.segment.jobId)"
       >
-        <!-- Tagesansicht -->
         <template v-if="variant === 'day'">
           <strong class="title">
             {{ item.segment.title }}
-            <span v-if="item.segment.parts > 1" class="part">
-              {{ item.segment.part }}/{{ item.segment.parts }}
-            </span>
+            <span v-if="item.segment.parts > 1" class="part"
+              >{{ item.segment.part }}/{{ item.segment.parts }}</span
+            >
           </strong>
           <span v-if="item.height > 40" class="customer"
             >Kunde: {{ item.segment.customer ?? '–' }}</span
           >
           <span v-if="item.height > 60" class="times">{{ timeLine(item.segment) }}</span>
 
-          <span v-if="item.segment.done" class="mark mark--ok">OK</span>
-          <span v-else-if="state(item.segment) === 'over'" class="mark mark--warn">!</span>
-          <span v-else-if="item.segment.running" class="mark mark--run">läuft</span>
+          <span v-if="item.segment.done" class="mark mark-ok">OK</span>
+          <span v-else-if="state(item.segment) === 'over'" class="mark mark-warn">!</span>
+          <span v-else-if="item.segment.running" class="mark mark-run">läuft</span>
         </template>
 
-        <!-- Wochenansicht -->
         <template v-else-if="item.tiny">
-          <span v-if="item.segment.assignee" class="who who--top">{{
-            item.segment.assignee.initials
-          }}</span>
+          <span class="who who-top">{{ item.segment.assignee?.initials }}</span>
         </template>
+
         <template v-else>
           <strong class="title">{{ item.segment.title }}</strong>
           <span class="prio" :style="{ background: priorityColor(item.segment.priority) }"></span>
-          <span v-if="item.height > 44 && item.segment.assignee" class="who">
-            {{ item.segment.assignee.initials }}
-          </span>
+          <span v-if="item.height > 44" class="who">{{ item.segment.assignee?.initials }}</span>
         </template>
       </button>
+
+      <div
+        v-if="drag.active && drag.target?.columnKey === col.key"
+        class="preview"
+        :style="{ top: `${toPx(drag.target.minutes) + 3}px`, height: `${drag.height}px` }"
+      >
+        <span>{{ clock(drag.target.minutes) }}</span>
+      </div>
 
       <div v-if="col.freeNote" class="free" :style="{ top: `${gridHeight - HOUR_PX + 3}px` }">
         {{ col.freeNote }}
@@ -240,6 +247,11 @@ function tooltip(s: CalendarSegment): string {
   grid-template-columns: 64px repeat(var(--cols), minmax(170px, 1fr));
   min-width: calc(64px + var(--cols) * 170px);
   background: var(--surface);
+}
+
+.tgrid.dragging {
+  cursor: grabbing;
+  user-select: none;
 }
 
 .head {
@@ -265,14 +277,14 @@ function tooltip(s: CalendarSegment): string {
   color: var(--muted);
 }
 
-.head__text {
+.head-text {
   display: flex;
   flex-direction: column;
   min-width: 0;
   line-height: 1.35;
 }
 
-.head__text strong {
+.head-text strong {
   font-size: 0.8125rem;
   font-weight: 600;
   white-space: nowrap;
@@ -280,12 +292,11 @@ function tooltip(s: CalendarSegment): string {
   text-overflow: ellipsis;
 }
 
-.head__text span {
+.head-text span {
   font-size: 0.6875rem;
   color: var(--muted);
 }
 
-/* Wochenkopf: "MO" klein, darunter die Tageszahl – heute blau im Kreis */
 .week .head {
   flex-direction: column;
   align-items: flex-start;
@@ -311,19 +322,20 @@ function tooltip(s: CalendarSegment): string {
 }
 
 .head.today .daynum {
-  background: var(--primary);
-  color: #fff;
-  font-weight: 700;
-  font-size: 0.9375rem;
   min-width: 34px;
   height: 30px;
   padding: 0 0.4rem;
   border-radius: 15px;
+  background: var(--primary);
+  color: #fff;
+  font-size: 0.9375rem;
+  font-weight: 700;
   text-align: center;
 }
 
 .hours {
   position: relative;
+  background: var(--surface);
 }
 
 .hours span {
@@ -338,6 +350,7 @@ function tooltip(s: CalendarSegment): string {
 .column {
   position: relative;
   border-left: 1px solid var(--grid);
+  border-bottom: 1px solid var(--grid);
   background-image: repeating-linear-gradient(
     to bottom,
     var(--grid) 0,
@@ -345,7 +358,6 @@ function tooltip(s: CalendarSegment): string {
     transparent 1px,
     transparent var(--hour)
   );
-  border-bottom: 1px solid var(--grid);
   cursor: copy;
 }
 
@@ -356,7 +368,6 @@ function tooltip(s: CalendarSegment): string {
   display: flex;
   flex-direction: column;
   align-items: flex-start;
-  text-align: left;
   height: auto;
   padding: 0.6rem 0.75rem 0.6rem 0.875rem;
   border-radius: 8px;
@@ -364,13 +375,28 @@ function tooltip(s: CalendarSegment): string {
   background: #f0f4fe;
   color: var(--text);
   font-weight: 400;
-  overflow: hidden;
+  text-align: left;
   white-space: normal;
+  overflow: hidden;
+  cursor: grab;
+  touch-action: pan-x pan-y;
+  user-select: none;
+  -webkit-user-select: none;
+  -webkit-touch-callout: none;
+  transition: opacity 0.15s;
 }
 
 .job:hover {
   z-index: 2;
   box-shadow: 0 4px 14px rgba(16, 24, 40, 0.14);
+}
+
+.job.locked {
+  cursor: pointer;
+}
+
+.job.lifted {
+  opacity: 0.35;
 }
 
 .job.over {
@@ -383,10 +409,10 @@ function tooltip(s: CalendarSegment): string {
 }
 
 .title {
+  padding-right: 1.9rem;
   font-size: 0.75rem;
   font-weight: 600;
   line-height: 1.3;
-  padding-right: 1.9rem;
 }
 
 .job.done .title {
@@ -399,9 +425,9 @@ function tooltip(s: CalendarSegment): string {
 }
 
 .customer {
+  margin-top: 0.15rem;
   font-size: 0.625rem;
   color: var(--muted);
-  margin-top: 0.15rem;
 }
 
 .times {
@@ -419,36 +445,35 @@ function tooltip(s: CalendarSegment): string {
   position: absolute;
   top: 10px;
   right: 10px;
-  height: 18px;
   min-width: 18px;
-  border-radius: 9px;
+  height: 18px;
   display: grid;
   place-items: center;
+  border-radius: 9px;
   color: #fff;
   font-size: 0.5rem;
   font-weight: 700;
 }
 
-.mark--ok {
+.mark-ok {
   background: var(--success);
 }
 
-.mark--warn {
+.mark-warn {
   background: var(--danger);
   font-size: 0.6875rem;
 }
 
-.mark--run {
-  background: var(--primary);
+.mark-run {
   padding: 0 0.5rem;
+  background: var(--primary);
 }
 
-/* Wochenkarte: Arbeiterfarbe statt Prioritaet */
 .week .job {
-  background: var(--fill);
+  padding: 0.45rem 0.4rem 0.4rem 0.55rem;
   border-left-width: 3px;
   border-radius: 6px;
-  padding: 0.45rem 0.4rem 0.4rem 0.55rem;
+  background: var(--fill);
 }
 
 .week .job.done {
@@ -461,13 +486,13 @@ function tooltip(s: CalendarSegment): string {
 }
 
 .week .title {
-  font-size: 0.625rem;
-  padding-right: 0.7rem;
   display: -webkit-box;
+  padding-right: 0.7rem;
+  overflow: hidden;
+  font-size: 0.625rem;
+  word-break: break-word;
   -webkit-line-clamp: 3;
   -webkit-box-orient: vertical;
-  overflow: hidden;
-  word-break: break-word;
 }
 
 .prio {
@@ -491,14 +516,38 @@ function tooltip(s: CalendarSegment): string {
   line-height: 15px;
 }
 
-.who--top {
-  margin-top: 0;
+.who-top {
   align-self: center;
+  margin-top: 0;
 }
 
-.week .job:has(.who--top) {
-  padding: 0.35rem 0 0 0;
+.week .job:has(.who-top) {
   align-items: center;
+  padding: 0.35rem 0 0;
+}
+
+/* ---------- Vorschau beim Ziehen ---------- */
+.preview {
+  position: absolute;
+  left: 4px;
+  right: 4px;
+  z-index: 4;
+  border: 2px dashed var(--primary);
+  border-radius: 8px;
+  background: rgba(37, 99, 235, 0.08);
+  pointer-events: none;
+}
+
+.preview span {
+  position: absolute;
+  top: -11px;
+  left: 8px;
+  padding: 1px 8px;
+  border-radius: 10px;
+  background: var(--primary);
+  color: #fff;
+  font-size: 0.6875rem;
+  font-weight: 600;
 }
 
 .free {
@@ -519,20 +568,53 @@ function tooltip(s: CalendarSegment): string {
   position: absolute;
   left: 0;
   right: 0;
+  z-index: 2;
   height: 2px;
   background: var(--danger);
-  z-index: 2;
   pointer-events: none;
 }
 
 .now::before {
-  content: '';
   position: absolute;
-  left: -4px;
   top: -3px;
+  left: -4px;
   width: 8px;
   height: 8px;
   border-radius: 50%;
   background: var(--danger);
+  content: '';
+}
+
+/* ---------- Handy: eine Spalte pro Bildschirm, seitlich wischen ---------- */
+@media (max-width: 768px) {
+  .tgrid {
+    grid-template-columns: 44px repeat(var(--cols), calc(100vw - 60px));
+    min-width: 0;
+  }
+
+  .head {
+    padding: 0 0.75rem;
+    scroll-snap-align: start;
+    scroll-margin-left: 44px;
+  }
+
+  .gutter {
+    position: sticky;
+    left: 0;
+    z-index: 4;
+  }
+
+  .head.gutter {
+    z-index: 5;
+    padding-left: 0.5rem;
+  }
+
+  .hours span {
+    left: 0.5rem;
+  }
+
+  .job {
+    padding: 0.55rem 0.7rem 0.55rem 0.8rem;
+  }
 }
 </style>

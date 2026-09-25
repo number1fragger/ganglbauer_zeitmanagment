@@ -1,6 +1,4 @@
-<script setup lang="ts">
-import { RouterLink } from 'vue-router'
-</script>
+<script setup></script>
 
 <template>
   <div class="card">

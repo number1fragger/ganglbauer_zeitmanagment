@@ -1,22 +1,19 @@
-<script setup lang="ts">
+<script setup>
 import { computed, onBeforeUnmount, onMounted, reactive, ref } from 'vue'
-import { errorMessage, http } from '@/api/client'
-import type { Role, User } from '@/api/types'
+import { api } from '@/api/client'
 import { useAuthStore } from '@/stores/auth'
 
-/**
- * Figma 06 – Benutzer & Rechte (nur Chef). Das Backend prueft das ebenfalls.
- */
+/** Benutzer & Rechte – nur fuer den Chef. Das Backend prueft das ebenfalls. */
 const auth = useAuthStore()
 
-const users = ref<User[]>([])
+const users = ref([])
 const error = ref('')
 const message = ref('')
 const busy = ref(false)
 const formOpen = ref(false)
-const menuFor = ref<number | null>(null)
+const menuFor = ref(null)
 
-const roles: { value: Role; label: string; color: string; description: string }[] = [
+const roles = [
   {
     value: 'ROLE_ADMIN',
     label: 'Chef',
@@ -40,7 +37,7 @@ const roles: { value: Role; label: string; color: string; description: string }[
 ]
 
 /** Dieselbe Matrix wie im Backend (JobVoter, access_control). */
-const permissions: { label: string; minRole: Role }[] = [
+const permissions = [
   { label: 'Planung', minRole: 'ROLE_FOREMAN' },
   { label: 'Eigene Arbeiten', minRole: 'ROLE_USER' },
   { label: 'Zeit ändern', minRole: 'ROLE_USER' },
@@ -48,16 +45,16 @@ const permissions: { label: string; minRole: Role }[] = [
   { label: 'Benutzer', minRole: 'ROLE_ADMIN' },
 ]
 
-const RANK: Record<Role, number> = { ROLE_USER: 0, ROLE_FOREMAN: 1, ROLE_ADMIN: 2 }
-const allowed = (role: Role, minRole: Role) => RANK[role] >= RANK[minRole]
-const roleOf = (value: Role) => roles.find((r) => r.value === value) ?? roles[2]!
+const RANK = { ROLE_USER: 0, ROLE_FOREMAN: 1, ROLE_ADMIN: 2 }
+const allowed = (role, minRole) => RANK[role] >= RANK[minRole]
+const roleOf = (value) => roles.find((r) => r.value === value) ?? roles[2]
 
 const emptyForm = () => ({
   firstName: '',
   lastName: '',
   email: '',
   password: '',
-  role: 'ROLE_USER' as Role,
+  role: 'ROLE_USER',
   weeklyHours: 38.5,
 })
 const form = reactive(emptyForm())
@@ -65,31 +62,26 @@ const form = reactive(emptyForm())
 const sorted = computed(() =>
   [...users.value].sort(
     (a, b) =>
-      Number(b.active) - Number(a.active) ||
-      RANK[b.role] - RANK[a.role] ||
-      a.lastName.localeCompare(b.lastName),
+      b.active - a.active || RANK[b.role] - RANK[a.role] || a.lastName.localeCompare(b.lastName),
   ),
 )
 
-async function load(): Promise<void> {
+async function load() {
   try {
-    users.value = (await http.get<User[]>('/api/users')).data
+    users.value = await api.get('/api/users')
   } catch (e) {
-    error.value = errorMessage(e)
+    error.value = e.message
   }
 }
 
-function closeMenu(): void {
-  menuFor.value = null
-}
-
+const closeMenu = () => (menuFor.value = null)
 onMounted(() => {
-  void load()
+  load()
   document.addEventListener('click', closeMenu)
 })
 onBeforeUnmount(() => document.removeEventListener('click', closeMenu))
 
-async function run(action: () => Promise<unknown>, success: string): Promise<void> {
+async function run(action, success) {
   error.value = ''
   message.value = ''
   busy.value = true
@@ -97,56 +89,52 @@ async function run(action: () => Promise<unknown>, success: string): Promise<voi
     await action()
     message.value = success
   } catch (e) {
-    error.value = errorMessage(e)
+    error.value = e.message
   } finally {
     busy.value = false
-    await load()
+    load()
   }
 }
 
-function create(): Promise<void> {
-  return run(async () => {
-    await http.post('/api/users', form)
+const create = () =>
+  run(async () => {
+    await api.post('/api/users', form)
     Object.assign(form, emptyForm())
     formOpen.value = false
   }, 'Benutzer angelegt.')
-}
 
-function changeRole(user: User, role: Role): Promise<void> {
-  return run(
-    () => http.patch(`/api/users/${user.id}`, { role }),
+const changeRole = (user, role) =>
+  run(
+    () => api.patch(`/api/users/${user.id}`, { role }),
     `${user.fullName} ist jetzt ${roleOf(role).label}.`,
   )
-}
 
-function toggleActive(user: User): Promise<void> {
-  return run(
-    () => http.patch(`/api/users/${user.id}`, { active: !user.active }),
+const toggleActive = (user) =>
+  run(
+    () => api.patch(`/api/users/${user.id}`, { active: !user.active }),
     user.active ? `${user.fullName} wurde deaktiviert.` : `${user.fullName} ist wieder aktiv.`,
   )
-}
 
-async function changeHours(user: User): Promise<void> {
+function changeHours(user) {
   const value = window.prompt(
     `Wochenstunden für ${user.fullName}:`,
     String(user.weeklyHours).replace('.', ','),
   )
-  if (!value) return
-
-  await run(
-    () => http.patch(`/api/users/${user.id}`, { weeklyHours: Number(value.replace(',', '.')) }),
-    'Wochenstunden gespeichert.',
-  )
+  if (value) {
+    run(
+      () => api.patch(`/api/users/${user.id}`, { weeklyHours: Number(value.replace(',', '.')) }),
+      'Wochenstunden gespeichert.',
+    )
+  }
 }
 
-async function resetPassword(user: User): Promise<void> {
+function resetPassword(user) {
   const password = window.prompt(`Neues Passwort für ${user.fullName} (mind. 8 Zeichen):`)
-  if (!password) return
-
-  await run(
-    () => http.patch(`/api/users/${user.id}`, { password }),
-    `Passwort für ${user.fullName} geändert.`,
-  )
+  if (password)
+    run(
+      () => api.patch(`/api/users/${user.id}`, { password }),
+      `Passwort für ${user.fullName} geändert.`,
+    )
 }
 </script>
 
@@ -200,7 +188,7 @@ async function resetPassword(user: User): Promise<void> {
                       ? 'Die eigene Rolle kann man nicht ändern'
                       : 'Rolle ändern'
                   "
-                  @change="changeRole(user, ($event.target as HTMLSelectElement).value as Role)"
+                  @change="changeRole(user, $event.target.value)"
                 >
                   <option v-for="r in roles" :key="r.value" :value="r.value">{{ r.label }}</option>
                 </select>

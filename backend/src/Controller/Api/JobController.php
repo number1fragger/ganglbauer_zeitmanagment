@@ -3,6 +3,7 @@
 namespace App\Controller\Api;
 
 use App\Entity\Job;
+use App\Entity\User;
 use App\Enum\JobStatus;
 use App\Enum\Priority;
 use App\Repository\JobRepository;
@@ -100,6 +101,36 @@ class JobController extends AbstractApiController
         return $this->item($job, ['job:read']);
     }
 
+    /** Drag & Drop im Kalender: neuer Beginn und optional ein anderer Arbeiter. */
+    #[Route('/{id}/move', name: 'api_jobs_move', methods: ['POST'], requirements: ['id' => '\d+'])]
+    #[IsGranted(JobVoter::EDIT, 'job', message: 'Nur Chef und Vorarbeiter duerfen Arbeiten verschieben.')]
+    public function move(Job $job, Request $request): JsonResponse
+    {
+        $data = $this->payload($request);
+
+        if (JobStatus::Done === $job->getStatus()) {
+            throw new BadRequestHttpException('Erledigte Arbeiten koennen nicht verschoben werden.');
+        }
+
+        $job->moveTo(
+            $this->parseDate(isset($data['startsAt']) ? (string) $data['startsAt'] : null, 'startsAt')
+            ?? throw new BadRequestHttpException('Bitte den neuen Beginn angeben.')
+        );
+
+        if (\array_key_exists('assigneeId', $data)) {
+            $job->setAssignee($this->assigneeFrom($data['assigneeId']));
+        }
+
+        $violations = $this->validator->validate($job);
+        if (\count($violations) > 0) {
+            return $this->violations($violations);
+        }
+
+        $this->em->flush();
+
+        return $this->item($job, ['job:read']);
+    }
+
     /** F5 – die geplante Arbeitszeit nachtraeglich erhoehen. */
     #[Route('/{id}/extend', name: 'api_jobs_extend', methods: ['POST'], requirements: ['id' => '\d+'])]
     #[IsGranted(JobVoter::WORK, 'job')]
@@ -178,14 +209,21 @@ class JobController extends AbstractApiController
             $job->setDueAt($this->parseDate(null !== $data['dueAt'] ? (string) $data['dueAt'] : null, 'dueAt'));
         }
         if (\array_key_exists('assigneeId', $data)) {
-            $assignee = null;
-            if (!empty($data['assigneeId'])) {
-                $assignee = $this->users->find((int) $data['assigneeId']);
-                if (null === $assignee || !$assignee->isActive()) {
-                    throw new BadRequestHttpException('Diesen Arbeiter gibt es nicht oder er ist deaktiviert.');
-                }
-            }
-            $job->setAssignee($assignee);
+            $job->setAssignee($this->assigneeFrom($data['assigneeId']));
         }
+    }
+
+    private function assigneeFrom(mixed $id): ?User
+    {
+        if (empty($id)) {
+            return null;
+        }
+
+        $user = $this->users->find((int) $id);
+        if (null === $user || !$user->isActive()) {
+            throw new BadRequestHttpException('Diesen Arbeiter gibt es nicht oder er ist deaktiviert.');
+        }
+
+        return $user;
     }
 }

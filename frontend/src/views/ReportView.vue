@@ -1,28 +1,21 @@
-<script setup lang="ts">
+<script setup>
 import { computed, onMounted, ref, watch } from 'vue'
-import { errorMessage, http } from '@/api/client'
-import type { SollIstReport } from '@/api/types'
-import { useWorkshopStore } from '@/stores/workshop'
+import { api } from '@/api/client'
 import { addDays, dayKey, isoWeek, startOfWeek } from '@/utils/calendar'
 import { decimalHours, formatDate, formatHours, formatWeekdayTime } from '@/utils/format'
 
-/**
- * Figma 04 – Auswertung: geplante gegenüber tatsächlich benötigter Zeit (A1).
- */
-const workshop = useWorkshopStore()
-
-type Period = 'week' | 'lastWeek' | 'month' | 'days30'
-
-const period = ref<Period>('week')
-const report = ref<SollIstReport | null>(null)
-const previous = ref<SollIstReport | null>(null)
+/** Auswertung: geplante gegenueber tatsaechlich benoetigter Zeit (A1). */
+const period = ref('week')
+const report = ref(null)
+const previous = ref(null)
+const overview = ref(null)
 const error = ref('')
 
 /** Zeitraum und der gleich lange Zeitraum davor (fuer den Vergleich). */
 const ranges = computed(() => {
   const today = new Date()
-  let from: Date
-  let to: Date
+  let from = addDays(today, -29)
+  let to = today
 
   if (period.value === 'week' || period.value === 'lastWeek') {
     from = addDays(startOfWeek(today), period.value === 'week' ? 0 : -7)
@@ -30,52 +23,38 @@ const ranges = computed(() => {
   } else if (period.value === 'month') {
     from = new Date(today.getFullYear(), today.getMonth(), 1)
     to = new Date(today.getFullYear(), today.getMonth() + 1, 0)
-  } else {
-    from = addDays(today, -29)
-    to = today
   }
 
-  const length = Math.round((to.getTime() - from.getTime()) / 86_400_000) + 1
-
+  const length = Math.round((to - from) / 86_400_000) + 1
   return { from, to, prevFrom: addDays(from, -length), prevTo: addDays(from, -1) }
 })
 
-const periodOptions = computed(() => {
-  const week = isoWeek(new Date())
+const week = isoWeek(new Date())
+const periodOptions = [
+  { value: 'week', label: `Zeitraum: KW ${week}` },
+  { value: 'lastWeek', label: `Zeitraum: KW ${week > 1 ? week - 1 : 52}` },
+  { value: 'month', label: 'Zeitraum: dieser Monat' },
+  { value: 'days30', label: 'Zeitraum: letzte 30 Tage' },
+]
 
-  return [
-    { value: 'week', label: `Zeitraum: KW ${week}` },
-    { value: 'lastWeek', label: `Zeitraum: KW ${week - 1 > 0 ? week - 1 : 52}` },
-    { value: 'month', label: 'Zeitraum: dieser Monat' },
-    { value: 'days30', label: 'Zeitraum: letzte 30 Tage' },
-  ]
-})
-
-async function load(): Promise<void> {
+async function load() {
   error.value = ''
   const r = ranges.value
-
   try {
-    const [current, before] = await Promise.all([
-      http.get<SollIstReport>('/api/reports/soll-ist', {
-        params: { from: dayKey(r.from), to: dayKey(r.to) },
-      }),
-      http.get<SollIstReport>('/api/reports/soll-ist', {
-        params: { from: dayKey(r.prevFrom), to: dayKey(r.prevTo) },
-      }),
-      workshop.loadOverview(),
+    ;[report.value, previous.value, overview.value] = await Promise.all([
+      api.get('/api/reports/soll-ist', { from: dayKey(r.from), to: dayKey(r.to) }),
+      api.get('/api/reports/soll-ist', { from: dayKey(r.prevFrom), to: dayKey(r.prevTo) }),
+      api.get('/api/overview'),
     ])
-    report.value = current.data
-    previous.value = before.data
   } catch (e) {
-    error.value = errorMessage(e)
+    error.value = e.message
   }
 }
 
 onMounted(load)
 watch(period, load)
 
-function totals(r: SollIstReport | null) {
+function totals(r) {
   const jobs = r?.jobs ?? []
   const planned = jobs.reduce((s, j) => s + j.plannedMinutes, 0)
   const actual = jobs.reduce((s, j) => s + j.actualMinutes, 0)
@@ -95,8 +74,8 @@ function totals(r: SollIstReport | null) {
 const now = computed(() => totals(report.value))
 const before = computed(() => totals(previous.value))
 
-const pct = (value: number) => `${value.toFixed(1).replace('.', ',')} %`
-const signed = (minutes: number) =>
+const pct = (value) => `${value.toFixed(1).replace('.', ',')} %`
+const signed = (minutes) =>
   `${minutes > 0 ? '+' : minutes < 0 ? '−' : '±'}${formatHours(Math.abs(minutes))}`
 
 const accuracyDelta = computed(() =>
@@ -121,9 +100,8 @@ const deviations = computed(() =>
 
 /** Auslastung: Restarbeit im Verhaeltnis zu einer Arbeitswoche. */
 const load7 = computed(() =>
-  (workshop.overview?.workers ?? []).map((w) => {
+  (overview.value?.workers ?? []).map((w) => {
     const share = Math.min(1, w.remainingMinutes / Math.max(1, w.user.dailyMinutes * 5))
-
     return {
       ...w,
       share,
@@ -132,15 +110,12 @@ const load7 = computed(() =>
   }),
 )
 
-function shortName(full: string): string {
+function shortName(full) {
   const [first, ...rest] = full.split(' ')
-
-  return rest.length ? `${first?.[0]}. ${rest.join(' ')}` : full
+  return rest.length ? `${first[0]}. ${rest.join(' ')}` : full
 }
 
-function exportCsv(): void {
-  if (!report.value) return
-
+function exportCsv() {
   const header = [
     'Arbeit',
     'Kunde',
@@ -163,12 +138,11 @@ function exportCsv(): void {
     .map((row) => row.map((cell) => `"${String(cell).replace(/"/g, '""')}"`).join(';'))
     .join('\n')
 
-  const url = URL.createObjectURL(new Blob([`\ufeff${csv}`], { type: 'text/csv;charset=utf-8' }))
   const link = document.createElement('a')
-  link.href = url
+  link.href = URL.createObjectURL(new Blob([`\ufeff${csv}`], { type: 'text/csv;charset=utf-8' }))
   link.download = `soll-ist_${report.value.from}_${report.value.to}.csv`
   link.click()
-  URL.revokeObjectURL(url)
+  URL.revokeObjectURL(link.href)
 }
 </script>
 

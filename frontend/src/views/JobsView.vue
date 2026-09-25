@@ -1,9 +1,7 @@
-<script setup lang="ts">
+<script setup>
 import { computed, onMounted, ref, watch } from 'vue'
-import { errorMessage } from '@/api/client'
-import type { Job } from '@/api/types'
+import { api } from '@/api/client'
 import { useJobDialogStore } from '@/stores/jobDialog'
-import { useWorkshopStore } from '@/stores/workshop'
 import {
   formatDateTime,
   formatHours,
@@ -13,51 +11,57 @@ import {
 } from '@/utils/format'
 
 /**
- * Alle Arbeiten als Liste (fuer Chef und Vorarbeiter). Anlegen und
- * Bearbeiten laufen ueber den Figma-Dialog "Arbeit anlegen".
+ * Alle Arbeiten als Liste – auch die noch nicht eingeplanten.
+ * Anlegen und Bearbeiten laufen ueber den Dialog.
  */
-const workshop = useWorkshopStore()
 const dialog = useJobDialogStore()
 
+const jobs = ref([])
+const workers = ref([])
 const showDone = ref(false)
-const worker = ref<number | 'all' | 'none'>('all')
+const worker = ref('all')
 const error = ref('')
 
 const visibleJobs = computed(() =>
-  workshop.jobs.filter((job) => {
+  jobs.value.filter((job) => {
     if (worker.value === 'none') return job.assignee === null
     if (worker.value !== 'all') return job.assignee?.id === worker.value
-
     return true
   }),
 )
 
-async function reload(): Promise<void> {
+async function load() {
   error.value = ''
   try {
-    await workshop.loadJobs({ includeDone: showDone.value })
+    jobs.value = await api.get('/api/jobs', { includeDone: showDone.value ? 1 : 0 })
   } catch (e) {
-    error.value = errorMessage(e)
+    error.value = e.message
   }
 }
 
-onMounted(() => Promise.all([reload(), workshop.loadWorkers()]))
-watch(showDone, reload)
-watch(() => dialog.version, reload)
+onMounted(async () => {
+  load()
+  workers.value = await api.get('/api/workers').catch(() => [])
+})
+watch(showDone, load)
+watch(() => dialog.version, load)
 
-async function act(action: () => Promise<unknown>): Promise<void> {
+async function act(action) {
   error.value = ''
   try {
     await action()
-    await reload()
+    await load()
   } catch (e) {
-    error.value = errorMessage(e)
+    error.value = e.message
   }
 }
 
-function state(job: Job): 'done' | 'over' | 'open' {
-  if (job.status === 'erledigt') return 'done'
+const extend = (job) => act(() => api.post(`/api/jobs/${job.id}/extend`, { minutes: 60 }))
+const toggleDone = (job) =>
+  act(() => api.post(`/api/jobs/${job.id}/complete`, { done: job.status !== 'erledigt' }))
 
+function state(job) {
+  if (job.status === 'erledigt') return 'done'
   return job.overrun ? 'over' : 'open'
 }
 </script>
@@ -72,7 +76,7 @@ function state(job: Job): 'done' | 'over' | 'open' {
       <select v-model="worker" aria-label="Arbeiter">
         <option value="all">Alle Arbeiter</option>
         <option value="none">Noch nicht zugeteilt</option>
-        <option v-for="w in workshop.workers" :key="w.id" :value="w.id">{{ w.fullName }}</option>
+        <option v-for="w in workers" :key="w.id" :value="w.id">{{ w.fullName }}</option>
       </select>
       <label class="check"><input v-model="showDone" type="checkbox" /> erledigte anzeigen</label>
     </div>
@@ -120,15 +124,11 @@ function state(job: Job): 'done' | 'over' | 'open' {
           v-if="job.status !== 'erledigt'"
           type="button"
           class="secondary small"
-          @click="act(() => workshop.extendJob(job.id, 60))"
+          @click="extend(job)"
         >
           + 1 Stunde
         </button>
-        <button
-          type="button"
-          class="secondary small"
-          @click="act(() => workshop.completeJob(job.id, job.status !== 'erledigt'))"
-        >
+        <button type="button" class="secondary small" @click="toggleDone(job)">
           {{ job.status === 'erledigt' ? 'Wieder öffnen' : 'Erledigt' }}
         </button>
         <button type="button" class="small" @click="dialog.edit(job.id)">Bearbeiten</button>

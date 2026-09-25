@@ -66,4 +66,16 @@ class JobTest extends TestCase
 
         return $job;
     }
+
+    public function testMoveKeepsTheDuration(): void
+    {
+        $job = (new Job())
+            ->setStartsAt(new \DateTimeImmutable('2026-01-07 08:00'))
+            ->setDueAt(new \DateTimeImmutable('2026-01-07 11:00'));
+
+        $job->moveTo(new \DateTimeImmutable('2026-01-08 13:30'));
+
+        self::assertSame('2026-01-08 13:30', $job->getStartsAt()?->format('Y-m-d H:i'));
+        self::assertSame('2026-01-08 16:30', $job->getDueAt()?->format('Y-m-d H:i'));
+    }
 }

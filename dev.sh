@@ -47,7 +47,7 @@ case "${1:-help}" in
   setup)
     cd backend
     php bin/console doctrine:database:create --if-not-exists
-    php bin/console doctrine:schema:update --force --complete
+    php bin/console doctrine:schema:update --force
     php bin/console doctrine:fixtures:load --no-interaction
     ;;
 
@@ -71,7 +71,7 @@ case "${1:-help}" in
 
   test)
     (cd backend && vendor/bin/phpunit)
-    (cd frontend && npm run type-check)
+    (cd frontend && npx eslint .)
     ;;
 
   *)
@@ -85,7 +85,7 @@ Verwendung: ./dev.sh <befehl>
   frontend   Vite-Devserver auf http://localhost:5173
   seed       Demodaten neu laden
   console    Symfony-Befehl, z. B. ./dev.sh console debug:router
-  test       PHPUnit und TypeScript-Check
+  test       PHPUnit und ESLint
   db-stop    Datenbank stoppen
   db-reset   Datenbank samt Inhalt loeschen
 USAGE

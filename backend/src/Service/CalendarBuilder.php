@@ -34,7 +34,7 @@ class CalendarBuilder
         $from = $from->setTime(0, 0);
         $to = $to->setTime(23, 59, 59);
 
-        $workers = null !== $onlyFor ? [$onlyFor] : $this->users->findActiveOrdered();
+        $workers = null !== $onlyFor ? [$onlyFor] : $this->users->findWorkforce();
 
         $segments = [];
         foreach ($this->jobs->findScheduledAround($from, $to, $onlyFor) as $job) {

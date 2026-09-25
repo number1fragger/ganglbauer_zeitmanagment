@@ -34,11 +34,6 @@ const form = reactive({
 
 const isEdit = computed(() => dialog.jobId !== null)
 
-/** Helle Hintergrundfarbe der gewaehlten Prioritaet (Figma: Hoch = #FEF2F2). */
-function softColor(color: string): string {
-  return `color-mix(in srgb, ${color} 9%, white)`
-}
-
 watch(
   () => dialog.open,
   async (open) => {
@@ -69,7 +64,7 @@ watch(
             Object.assign(form, {
               title: data.title,
               customer: data.customer ?? '',
-              priority: data.priority,
+              priority: data.priority === 'dringend' ? 'hoch' : data.priority,
               plannedMinutes: data.plannedMinutes,
               assigneeId: data.assignee?.id ?? null,
               startsAt: data.startsAt ? toDateTimeInput(data.startsAt) : '',
@@ -211,7 +206,7 @@ async function remove(): Promise<void> {
               type="button"
               class="prio"
               :class="{ active: form.priority === p.value }"
-              :style="form.priority === p.value ? { background: softColor(p.color) } : {}"
+              :style="form.priority === p.value ? { background: p.soft } : {}"
               @click="form.priority = p.value"
             >
               <span class="dot" :style="{ background: p.color }"></span>
@@ -340,8 +335,8 @@ hr {
 
 .prios {
   display: grid;
-  grid-template-columns: repeat(4, 1fr);
-  gap: 0.75rem;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 1rem;
 }
 
 .prio {

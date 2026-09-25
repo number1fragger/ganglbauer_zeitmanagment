@@ -31,10 +31,7 @@ class OverviewBuilder
         $now = new \DateTimeImmutable();
         $workers = [];
 
-        foreach ($this->users->findAllOrdered() as $user) {
-            if (!$user->isActive()) {
-                continue;
-            }
+        foreach ($this->users->findWorkforce() as $user) {
 
             $openJobs = $this->jobs->findOpenFor($user);
 

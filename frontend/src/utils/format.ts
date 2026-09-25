@@ -85,22 +85,26 @@ export function toDateTimeInput(value: string | Date): string {
 }
 
 /**
- * Prioritaeten mit den Figma-Farben: hoch rot, mittel orange, nieder gruen.
- * "Dringend" gibt es zusaetzlich (dunkelrot) fuer echte Notfaelle.
+ * Prioritaeten wie im Figma-Entwurf: Hoch (rot), Mittel (orange), Nieder (gruen).
+ * `soft` ist der helle Hintergrund der ausgewaehlten Prioritaet im Dialog.
  */
-export const priorities: { value: Priority; label: string; color: string }[] = [
-  { value: 'dringend', label: 'Dringend', color: '#991b1b' },
-  { value: 'hoch', label: 'Hoch', color: '#dc2626' },
-  { value: 'normal', label: 'Mittel', color: '#f59e0b' },
-  { value: 'niedrig', label: 'Nieder', color: '#16a34a' },
+export const priorities: { value: Priority; label: string; color: string; soft: string }[] = [
+  { value: 'hoch', label: 'Hoch', color: '#dc2626', soft: '#fef2f2' },
+  { value: 'normal', label: 'Mittel', color: '#f59e0b', soft: '#fff8e8' },
+  { value: 'niedrig', label: 'Nieder', color: '#16a34a', soft: '#e7f6ec' },
 ]
 
+/** Aeltere Arbeiten koennen noch "dringend" sein – die zaehlen als "Hoch". */
+function priorityInfo(priority: Priority) {
+  return priorities.find((p) => p.value === (priority === 'dringend' ? 'hoch' : priority))
+}
+
 export function priorityLabel(priority: Priority): string {
-  return priorities.find((p) => p.value === priority)?.label ?? priority
+  return priorityInfo(priority)?.label ?? priority
 }
 
 export function priorityColor(priority: Priority): string {
-  return priorities.find((p) => p.value === priority)?.color ?? '#64748b'
+  return priorityInfo(priority)?.color ?? '#9ca3af'
 }
 
 export const statusLabels: Record<string, string> = {

@@ -233,12 +233,12 @@ section {
 }
 
 .tag--now {
-  background: color-mix(in srgb, var(--success) 15%, transparent);
+  background: var(--success-soft);
   color: var(--success);
 }
 
 .tag--warn {
-  background: color-mix(in srgb, var(--danger) 15%, transparent);
+  background: var(--danger-soft);
   color: var(--danger);
 }
 

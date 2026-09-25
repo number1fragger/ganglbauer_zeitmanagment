@@ -100,16 +100,16 @@ export function minutesOfDay(date: Date): number {
   return date.getHours() * 60 + date.getMinutes()
 }
 
-/** Arbeiterfarben aus dem Figma-Entwurf (Balken und heller Hintergrund). */
+/**
+ * Arbeiterfarben aus dem Figma-Entwurf (Balken, heller Hintergrund).
+ * Figma kennt vier Arbeiter; ab dem fuenften wiederholen sich die Farben,
+ * das Kuerzel auf der Karte bleibt eindeutig.
+ */
 const WORKER_COLORS: [string, string][] = [
   ['#2563eb', '#eaf0fe'],
   ['#7c3aed', '#f1ebfe'],
   ['#0d9488', '#e6f6f4'],
   ['#db2777', '#fdebf3'],
-  ['#ea580c', '#fdf0e7'],
-  ['#0891b2', '#e5f5f9'],
-  ['#65a30d', '#eff6e6'],
-  ['#9333ea', '#f4ebfd'],
 ]
 
 export function workerColor(workerId: number, order: number[]): { color: string; soft: string } {

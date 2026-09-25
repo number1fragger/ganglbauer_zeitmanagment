@@ -2,29 +2,42 @@
 import { computed, onBeforeUnmount, ref } from 'vue'
 import type { CalendarSegment } from '@/api/types'
 import { layoutLanes, minutesOfDay } from '@/utils/calendar'
-import { formatDuration, formatTime, priorityColor, priorityLabel } from '@/utils/format'
+import { formatHours, formatTime, priorityColor, priorityLabel } from '@/utils/format'
 
 /**
- * Zeitraster fuer Tag und Woche: Spalten nebeneinander, Stunden untereinander.
- * In der Tagesansicht ist jede Spalte ein Arbeiter, in der Wochenansicht ein Tag.
+ * Zeitraster fuer Tag (Figma 01a) und Woche (Figma 01b).
+ *  - variant "day":  Spalte = Arbeiter, Karte mit Prioritaetsleiste, Kunde und Soll/Ist
+ *  - variant "week": Spalte = Tag, Karte in Arbeiterfarbe mit Kuerzel und Prioritaetspunkt
  */
 export interface GridColumn {
   key: string
+  /** Tag: Arbeitername · Woche: Tageszahl */
   title: string
+  /** Tag: "frei ab Mi 14:00" · Woche: "MO" */
   subtitle?: string
+  /** Tag: Kuerzel im Kreis */
   badge?: string
   today?: boolean
+  /** Woche: "frei: 2 Arbeiter" am Tagesende */
+  freeNote?: string
+}
+
+export interface GridItem {
+  key: string
+  segment: CalendarSegment
+  /** Arbeiterfarbe (Woche) */
+  color: string
+  /** helle Arbeiterfarbe (Woche) */
+  soft: string
 }
 
 const props = defineProps<{
+  variant: 'day' | 'week'
   columns: GridColumn[]
-  items: { key: string; segment: CalendarSegment; color: string }[]
+  items: GridItem[]
   startHour: number
   endHour: number
-  /** Spalten, in denen die aktuelle Uhrzeit als rote Linie erscheint. */
   nowColumns: string[]
-  /** true: Balken links in Arbeiterfarbe + Kuerzel (Woche). false: Prioritaetsfarbe (Tag). */
-  showWorker: boolean
 }>()
 
 const emit = defineEmits<{
@@ -32,7 +45,7 @@ const emit = defineEmits<{
   slot: [columnKey: string, minutes: number]
 }>()
 
-const HOUR_PX = 56
+const HOUR_PX = 58
 const hours = computed(() =>
   Array.from({ length: props.endHour - props.startHour + 1 }, (_, i) => props.startHour + i),
 )
@@ -44,11 +57,28 @@ function top(minutes: number): number {
   return ((clamped - props.startHour * 60) / 60) * HOUR_PX
 }
 
-const laidOut = computed(() => {
-  const byColumn = new Map<string, typeof props.items>()
-  for (const item of props.items) {
-    byColumn.set(item.key, [...(byColumn.get(item.key) ?? []), item])
+function place(entry: { item: GridItem; lane: number; lanes: number }) {
+  const y = top(minutesOfDay(new Date(entry.item.segment.start)))
+  const height = Math.max(24, top(minutesOfDay(new Date(entry.item.segment.end))) - y - 6)
+  const inset = props.variant === 'day' ? 8 : 3
+
+  return {
+    ...entry.item,
+    height,
+    // Ab vier parallelen Arbeiten ist fuer Text kein Platz – nur das Kuerzel (Details im Tooltip).
+    tiny: props.variant === 'week' && entry.lanes >= 4,
+    style: {
+      top: `${y + 3}px`,
+      height: `${height}px`,
+      left: `calc(${(entry.lane / entry.lanes) * 100}% + ${inset}px)`,
+      width: `calc(${100 / entry.lanes}% - ${inset * 2}px)`,
+    },
   }
+}
+
+const laidOut = computed(() => {
+  const byColumn = new Map<string, GridItem[]>()
+  for (const item of props.items) byColumn.set(item.key, [...(byColumn.get(item.key) ?? []), item])
 
   const result: Record<string, ReturnType<typeof place>[]> = {}
   for (const [key, list] of byColumn) {
@@ -60,28 +90,6 @@ const laidOut = computed(() => {
 
   return result
 })
-
-function place(entry: { item: (typeof props.items)[number]; lane: number; lanes: number }) {
-  const start = new Date(entry.item.segment.start)
-  const end = new Date(entry.item.segment.end)
-  const y = top(minutesOfDay(start))
-  const height = Math.max(22, top(minutesOfDay(end)) - y - 3)
-
-  return {
-    ...entry.item,
-    style: {
-      top: `${y + 1}px`,
-      height: `${height}px`,
-      left: `calc(${(entry.lane / entry.lanes) * 100}% + 3px)`,
-      width: `calc(${100 / entry.lanes}% - 6px)`,
-      '--accent': entry.item.color,
-    },
-    compact: height < 44,
-    // Bei drei und mehr parallelen Arbeiten ist die Karte schmal:
-    // Titel darf umbrechen, Kunde und Hinweise entfallen.
-    narrow: entry.lanes >= 3,
-  }
-}
 
 // Rote "Jetzt"-Linie, jede Minute aktualisiert.
 const now = ref(new Date())
@@ -95,42 +103,64 @@ const nowTop = computed(() => {
   return top(minutes)
 })
 
-/** Klick auf eine freie Stelle: Uhrzeit auf halbe Stunden runden und melden. */
+/** Klick auf eine freie Stelle: Uhrzeit auf halbe Stunden runden. */
 function onSlotClick(event: MouseEvent, columnKey: string): void {
-  const target = event.currentTarget as HTMLElement
-  const y = event.clientY - target.getBoundingClientRect().top
-  const minutes = props.startHour * 60 + Math.floor((y / HOUR_PX) * 2) * 30
-  emit('slot', columnKey, minutes)
+  const y = event.clientY - (event.currentTarget as HTMLElement).getBoundingClientRect().top
+  emit('slot', columnKey, props.startHour * 60 + Math.floor((y / HOUR_PX) * 2) * 30)
 }
 
-function tooltip(segment: CalendarSegment): string {
+function state(s: CalendarSegment): 'done' | 'over' | 'open' {
+  if (s.done) return 'done'
+  if (s.overrun || s.behind || s.late) return 'over'
+
+  return 'open'
+}
+
+/** "Soll 2,5 h · Ist 2,0 h" – Ist nur, wenn schon gearbeitet wurde. */
+function timeLine(s: CalendarSegment): string {
+  const soll = `Soll ${formatHours(s.plannedMinutes)}`
+
+  return s.actualMinutes > 0 ? `${soll} · Ist ${formatHours(s.actualMinutes)}` : soll
+}
+
+function tooltip(s: CalendarSegment): string {
   const lines = [
-    segment.title,
-    segment.customer ?? 'Ohne Kunde',
-    `${formatTime(segment.start)} – ${formatTime(segment.end)}`,
-    `Priorität: ${priorityLabel(segment.priority)}`,
-    `Soll ${formatDuration(segment.plannedMinutes)} · Ist ${formatDuration(segment.actualMinutes)}`,
+    s.title,
+    `Kunde: ${s.customer ?? '–'}`,
+    `${formatTime(s.start)} – ${formatTime(s.end)}`,
+    `Priorität: ${priorityLabel(s.priority)}`,
+    timeLine(s),
   ]
-  if (segment.parts > 1) lines.push(`Teil ${segment.part} von ${segment.parts}`)
-  if (segment.behind) lines.push('Überfällig: Plan ist vorbei, Arbeit noch nicht erledigt')
-  else if (segment.late) lines.push('Wird nicht bis zum geplanten Ende fertig')
+  if (s.parts > 1) lines.push(`Teil ${s.part} von ${s.parts}`)
+  if (s.behind) lines.push('Überfällig: Plan ist vorbei, Arbeit noch nicht erledigt')
+  else if (s.late) lines.push('Wird nicht bis zum geplanten Ende fertig')
 
   return lines.join('\n')
 }
 </script>
 
 <template>
-  <div class="grid" :style="{ '--cols': columns.length }">
-    <div class="head gutter"></div>
+  <div
+    class="tgrid"
+    :class="variant"
+    :style="{ '--cols': columns.length, '--hour': `${HOUR_PX}px` }"
+  >
+    <div class="head gutter"><span v-if="variant === 'day'">Zeit</span></div>
     <div v-for="col in columns" :key="col.key" class="head" :class="{ today: col.today }">
-      <span v-if="col.badge" class="badge-initials">{{ col.badge }}</span>
-      <span class="head__text">
-        <strong>{{ col.title }}</strong>
-        <span v-if="col.subtitle" class="muted">{{ col.subtitle }}</span>
-      </span>
+      <template v-if="variant === 'day'">
+        <span class="avatar">{{ col.badge }}</span>
+        <span class="head__text">
+          <strong>{{ col.title }}</strong>
+          <span>{{ col.subtitle }}</span>
+        </span>
+      </template>
+      <template v-else>
+        <span class="weekday">{{ col.subtitle }}</span>
+        <span class="daynum">{{ col.title }}</span>
+      </template>
     </div>
 
-    <div class="gutter hours" :style="{ height: `${gridHeight}px` }">
+    <div class="gutter hours" :style="{ height: `${gridHeight + 12}px` }">
       <span v-for="h in hours" :key="h" :style="{ top: `${(h - startHour) * HOUR_PX}px` }">
         {{ String(h).padStart(2, '0') }}:00
       </span>
@@ -140,8 +170,7 @@ function tooltip(segment: CalendarSegment): string {
       v-for="col in columns"
       :key="col.key"
       class="column"
-      :class="{ today: col.today }"
-      :style="{ height: `${gridHeight}px`, '--hour': `${HOUR_PX}px` }"
+      :style="{ height: `${gridHeight}px` }"
       title="Klicken, um hier eine Arbeit einzuplanen"
       @click.self="onSlotClick($event, col.key)"
     >
@@ -149,48 +178,52 @@ function tooltip(segment: CalendarSegment): string {
         v-for="item in laidOut[col.key] ?? []"
         :key="`${item.segment.jobId}-${item.segment.part}`"
         type="button"
-        class="block"
-        :class="{
-          done: item.segment.done,
-          overrun: item.segment.overrun && !item.segment.done,
-          late: (item.segment.late || item.segment.behind) && !item.segment.done,
-          compact: item.compact,
-          narrow: item.narrow,
-        }"
-        :style="item.style"
+        class="job"
+        :class="state(item.segment)"
+        :style="
+          variant === 'week'
+            ? { ...item.style, '--accent': item.color, '--fill': item.soft }
+            : { ...item.style, '--accent': priorityColor(item.segment.priority) }
+        "
         :title="tooltip(item.segment)"
         @click="emit('open', item.segment.jobId)"
       >
-        <span class="block__title">
-          <span
-            v-if="showWorker"
-            class="prio"
-            :style="{ background: priorityColor(item.segment.priority) }"
-          ></span>
-          {{ item.segment.title }}
-          <span v-if="item.segment.parts > 1" class="muted part">
-            {{ item.segment.part }}/{{ item.segment.parts }}
-          </span>
-        </span>
-        <span v-if="!item.compact && !item.narrow" class="block__meta">
-          {{ item.segment.customer ?? 'Ohne Kunde' }}
-        </span>
-        <span v-if="!item.compact" class="block__foot">
-          <span v-if="showWorker && item.segment.assignee" class="who">
+        <!-- Tagesansicht -->
+        <template v-if="variant === 'day'">
+          <strong class="title">
+            {{ item.segment.title }}
+            <span v-if="item.segment.parts > 1" class="part">
+              {{ item.segment.part }}/{{ item.segment.parts }}
+            </span>
+          </strong>
+          <span v-if="item.height > 40" class="customer"
+            >Kunde: {{ item.segment.customer ?? '–' }}</span
+          >
+          <span v-if="item.height > 60" class="times">{{ timeLine(item.segment) }}</span>
+
+          <span v-if="item.segment.done" class="mark mark--ok">OK</span>
+          <span v-else-if="state(item.segment) === 'over'" class="mark mark--warn">!</span>
+          <span v-else-if="item.segment.running" class="mark mark--run">läuft</span>
+        </template>
+
+        <!-- Wochenansicht -->
+        <template v-else-if="item.tiny">
+          <span v-if="item.segment.assignee" class="who who--top">{{
+            item.segment.assignee.initials
+          }}</span>
+        </template>
+        <template v-else>
+          <strong class="title">{{ item.segment.title }}</strong>
+          <span class="prio" :style="{ background: priorityColor(item.segment.priority) }"></span>
+          <span v-if="item.height > 44 && item.segment.assignee" class="who">
             {{ item.segment.assignee.initials }}
           </span>
-          <template v-if="!item.narrow">
-            <span v-if="item.segment.running" class="flag flag--run">läuft</span>
-            <span v-if="item.segment.done" class="flag flag--done">erledigt</span>
-            <span v-else-if="item.segment.overrun" class="flag flag--warn">Zeit überschritten</span>
-            <span v-else-if="item.segment.behind" class="flag flag--warn">überfällig</span>
-            <span v-else-if="item.segment.late" class="flag flag--warn">zu spät</span>
-          </template>
-          <span v-else-if="item.segment.overrun && !item.segment.done" class="flag flag--warn"
-            >!</span
-          >
-        </span>
+        </template>
       </button>
+
+      <div v-if="col.freeNote" class="free" :style="{ top: `${gridHeight - HOUR_PX + 3}px` }">
+        {{ col.freeNote }}
+      </div>
 
       <div
         v-if="nowTop !== null && nowColumns.includes(col.key)"
@@ -202,10 +235,11 @@ function tooltip(segment: CalendarSegment): string {
 </template>
 
 <style scoped>
-.grid {
+.tgrid {
   display: grid;
-  grid-template-columns: 56px repeat(var(--cols), minmax(180px, 1fr));
-  min-width: calc(56px + var(--cols) * 180px);
+  grid-template-columns: 64px repeat(var(--cols), minmax(170px, 1fr));
+  min-width: calc(64px + var(--cols) * 170px);
+  background: var(--surface);
 }
 
 .head {
@@ -215,47 +249,77 @@ function tooltip(segment: CalendarSegment): string {
   display: flex;
   align-items: center;
   gap: 0.6rem;
-  padding: 0.7rem 0.75rem;
+  height: 68px;
+  padding: 0 1rem;
   background: var(--surface);
   border-bottom: 1px solid var(--border);
   border-left: 1px solid var(--border);
-  min-height: 60px;
 }
 
 .head.gutter {
   border-left: none;
+  align-items: flex-end;
+  padding: 0 0 0.6rem 1rem;
+  font-size: 0.625rem;
+  font-weight: 500;
+  color: var(--muted);
 }
 
 .head__text {
   display: flex;
   flex-direction: column;
-  line-height: 1.25;
   min-width: 0;
+  line-height: 1.35;
 }
 
 .head__text strong {
-  font-size: 0.875rem;
+  font-size: 0.8125rem;
+  font-weight: 600;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
 
-.head__text .muted {
-  font-size: 0.75rem;
+.head__text span {
+  font-size: 0.6875rem;
+  color: var(--muted);
 }
 
-.head.today strong {
+/* Wochenkopf: "MO" klein, darunter die Tageszahl – heute blau im Kreis */
+.week .head {
+  flex-direction: column;
+  align-items: flex-start;
+  justify-content: center;
+  gap: 0.15rem;
+}
+
+.weekday {
+  font-size: 0.625rem;
+  font-weight: 600;
+  color: var(--muted);
+  text-transform: uppercase;
+}
+
+.daynum {
+  font-size: 1.125rem;
+  font-weight: 600;
+  line-height: 30px;
+}
+
+.head.today .weekday {
   color: var(--primary);
 }
 
-.badge-initials {
-  flex: none;
-  width: 30px;
-  height: 30px;
-  border-radius: 50%;
-  display: grid;
-  place-items: center;
-  background: var(--primary-soft);
-  color: var(--primary);
+.head.today .daynum {
+  background: var(--primary);
+  color: #fff;
   font-weight: 700;
-  font-size: 0.7rem;
+  font-size: 0.9375rem;
+  min-width: 34px;
+  height: 30px;
+  padding: 0 0.4rem;
+  border-radius: 15px;
+  text-align: center;
 }
 
 .hours {
@@ -264,161 +328,191 @@ function tooltip(segment: CalendarSegment): string {
 
 .hours span {
   position: absolute;
-  right: 8px;
-  transform: translateY(-50%);
-  font-size: 0.6875rem;
+  left: 1rem;
+  transform: translateY(-6px);
+  font-size: 0.625rem;
   color: var(--muted);
   font-variant-numeric: tabular-nums;
 }
 
-.hours span:first-child {
-  transform: none;
-}
-
 .column {
   position: relative;
-  border-left: 1px solid var(--border);
+  border-left: 1px solid var(--grid);
   background-image: repeating-linear-gradient(
     to bottom,
-    var(--border) 0,
-    var(--border) 1px,
+    var(--grid) 0,
+    var(--grid) 1px,
     transparent 1px,
     transparent var(--hour)
   );
+  border-bottom: 1px solid var(--grid);
   cursor: copy;
 }
 
-.column.today {
-  background-color: color-mix(in srgb, var(--primary) 4%, transparent);
-}
-
-.block {
+/* ---------- Karten ---------- */
+.job {
   position: absolute;
   z-index: 1;
   display: flex;
   flex-direction: column;
-  gap: 0.1rem;
+  align-items: flex-start;
   text-align: left;
-  padding: 0.35rem 0.5rem 0.35rem 0.65rem;
-  border-radius: 6px;
-  border: none;
+  height: auto;
+  padding: 0.6rem 0.75rem 0.6rem 0.875rem;
+  border-radius: 8px;
   border-left: 4px solid var(--accent);
-  background: color-mix(in srgb, var(--accent) 12%, var(--surface));
+  background: #f0f4fe;
   color: var(--text);
   font-weight: 400;
   overflow: hidden;
-  cursor: pointer;
-  box-shadow: 0 1px 2px rgba(16, 24, 40, 0.08);
-}
-
-.block:hover {
-  z-index: 2;
-  box-shadow: 0 4px 12px rgba(16, 24, 40, 0.18);
-}
-
-.block.compact {
-  padding-top: 0.15rem;
-  padding-bottom: 0.15rem;
-}
-
-.block.done {
-  background: var(--bg);
-  border-left-color: var(--muted);
-  opacity: 0.75;
-}
-
-.block.done .block__title {
-  text-decoration: line-through;
-}
-
-.block.narrow {
-  padding: 0.3rem 0.25rem 0.3rem 0.4rem;
-  border-left-width: 3px;
-}
-
-.block.narrow .block__title {
   white-space: normal;
-  word-break: break-word;
-  hyphens: auto;
-  display: -webkit-box;
-  -webkit-line-clamp: 4;
-  -webkit-box-orient: vertical;
-  font-size: 0.6875rem;
 }
 
-.block.narrow .prio {
-  display: none;
+.job:hover {
+  z-index: 2;
+  box-shadow: 0 4px 14px rgba(16, 24, 40, 0.14);
 }
 
-.block.overrun,
-.block.late {
-  box-shadow: inset 0 0 0 1px var(--danger);
+.job.over {
+  background: var(--danger-soft);
 }
 
-.block__title {
-  display: flex;
-  align-items: center;
-  gap: 0.35rem;
-  font-weight: 600;
+.job.done {
+  background: var(--button);
+  border-left-color: var(--faint);
+}
+
+.title {
   font-size: 0.75rem;
-  line-height: 1.25;
-  white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
+  font-weight: 600;
+  line-height: 1.3;
+  padding-right: 1.9rem;
 }
 
-.prio {
-  width: 7px;
-  height: 7px;
-  border-radius: 50%;
-  flex: none;
+.job.done .title {
+  color: var(--muted);
 }
 
 .part {
   font-weight: 500;
-}
-
-.block__meta {
-  font-size: 0.6875rem;
   color: var(--muted);
-  white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
 }
 
-.block__foot {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 0.25rem;
-  margin-top: auto;
-}
-
-.who,
-.flag {
+.customer {
   font-size: 0.625rem;
+  color: var(--muted);
+  margin-top: 0.15rem;
+}
+
+.times {
+  margin-top: auto;
+  font-size: 0.625rem;
+  font-weight: 500;
+  color: var(--muted);
+}
+
+.job.over .times {
+  color: var(--danger);
+}
+
+.mark {
+  position: absolute;
+  top: 10px;
+  right: 10px;
+  height: 18px;
+  min-width: 18px;
+  border-radius: 9px;
+  display: grid;
+  place-items: center;
+  color: #fff;
+  font-size: 0.5rem;
   font-weight: 700;
-  padding: 0.05rem 0.4rem;
-  border-radius: 999px;
+}
+
+.mark--ok {
+  background: var(--success);
+}
+
+.mark--warn {
+  background: var(--danger);
+  font-size: 0.6875rem;
+}
+
+.mark--run {
+  background: var(--primary);
+  padding: 0 0.5rem;
+}
+
+/* Wochenkarte: Arbeiterfarbe statt Prioritaet */
+.week .job {
+  background: var(--fill);
+  border-left-width: 3px;
+  border-radius: 6px;
+  padding: 0.45rem 0.4rem 0.4rem 0.55rem;
+}
+
+.week .job.done {
+  background: var(--button);
+  opacity: 0.75;
+}
+
+.week .job.over {
+  box-shadow: inset 0 0 0 1px var(--danger);
+}
+
+.week .title {
+  font-size: 0.625rem;
+  padding-right: 0.7rem;
+  display: -webkit-box;
+  -webkit-line-clamp: 3;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+  word-break: break-word;
+}
+
+.prio {
+  position: absolute;
+  top: 8px;
+  right: 6px;
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
 }
 
 .who {
+  margin-top: auto;
+  height: 15px;
+  padding: 0 0.35rem;
+  border-radius: 7px;
   background: var(--accent);
   color: #fff;
+  font-size: 0.5rem;
+  font-weight: 700;
+  line-height: 15px;
 }
 
-.flag--run {
-  background: var(--primary);
-  color: #fff;
+.who--top {
+  margin-top: 0;
+  align-self: center;
 }
 
-.flag--done {
-  background: var(--success);
-  color: #fff;
+.week .job:has(.who--top) {
+  padding: 0.35rem 0 0 0;
+  align-items: center;
 }
 
-.flag--warn {
-  background: var(--danger);
-  color: #fff;
+.free {
+  position: absolute;
+  left: 3px;
+  right: 3px;
+  height: calc(var(--hour) - 8px);
+  padding: 0.5rem 0.6rem;
+  border-radius: 6px;
+  background: var(--danger-soft);
+  color: var(--danger);
+  font-size: 0.625rem;
+  font-weight: 600;
+  pointer-events: none;
 }
 
 .now {
@@ -434,10 +528,10 @@ function tooltip(segment: CalendarSegment): string {
 .now::before {
   content: '';
   position: absolute;
-  left: -5px;
-  top: -4px;
-  width: 10px;
-  height: 10px;
+  left: -4px;
+  top: -3px;
+  width: 8px;
+  height: 8px;
   border-radius: 50%;
   background: var(--danger);
 }

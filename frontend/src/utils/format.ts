@@ -84,11 +84,15 @@ export function toDateTimeInput(value: string | Date): string {
   return new Date(date.getTime() - offset * 60_000).toISOString().slice(0, 16)
 }
 
+/**
+ * Prioritaeten mit den Figma-Farben: hoch rot, mittel orange, nieder gruen.
+ * "Dringend" gibt es zusaetzlich (dunkelrot) fuer echte Notfaelle.
+ */
 export const priorities: { value: Priority; label: string; color: string }[] = [
-  { value: 'dringend', label: 'Dringend', color: '#dc2626' },
-  { value: 'hoch', label: 'Hoch', color: '#ea580c' },
-  { value: 'normal', label: 'Normal', color: '#2563eb' },
-  { value: 'niedrig', label: 'Niedrig', color: '#64748b' },
+  { value: 'dringend', label: 'Dringend', color: '#991b1b' },
+  { value: 'hoch', label: 'Hoch', color: '#dc2626' },
+  { value: 'normal', label: 'Mittel', color: '#f59e0b' },
+  { value: 'niedrig', label: 'Nieder', color: '#16a34a' },
 ]
 
 export function priorityLabel(priority: Priority): string {
@@ -103,4 +107,26 @@ export const statusLabels: Record<string, string> = {
   offen: 'Offen',
   in_arbeit: 'In Arbeit',
   erledigt: 'Erledigt',
+}
+
+/** 150 -> "2,5 h" – Dezimalstunden wie im Figma-Entwurf. */
+export function formatHours(minutes: number, unit = 'h'): string {
+  return `${(minutes / 60).toFixed(1).replace('.', ',')} ${unit}`
+}
+
+/** "Montag, 07:00" bzw. "heute 11:00" – fuer "braucht Arbeit: …" */
+export function formatWeekdayTime(iso: string | null, short = false): string {
+  if (!iso) return '–'
+
+  const date = new Date(iso)
+  const time = date.toLocaleTimeString('de-AT', { hour: '2-digit', minute: '2-digit' })
+  const days = daysFromToday(date)
+
+  if (days === 0) return `heute ${time}`
+  if (days === 1) return `morgen ${time}`
+  if (days > 1 && days < 7) {
+    return `${date.toLocaleDateString('de-AT', { weekday: short ? 'short' : 'long' })}${short ? '' : ','} ${time}`
+  }
+
+  return `${date.toLocaleDateString('de-AT', { day: '2-digit', month: '2-digit' })}, ${time}`
 }

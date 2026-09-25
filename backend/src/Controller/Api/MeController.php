@@ -2,6 +2,8 @@
 
 namespace App\Controller\Api;
 
+use App\Repository\JobRepository;
+use App\Service\WorkloadCalculator;
 use Doctrine\ORM\EntityManagerInterface;
 use Symfony\Component\HttpFoundation\JsonResponse;
 use Symfony\Component\HttpFoundation\Request;
@@ -16,6 +18,26 @@ class MeController extends AbstractApiController
     public function me(): JsonResponse
     {
         return $this->item($this->currentUser(), ['user:read']);
+    }
+
+    /**
+     * Eigene Restarbeit und Prognose "voraussichtlich fertig" fuer die
+     * Arbeiter-Ansicht. Die Gesamtuebersicht (/api/overview) sehen nur
+     * Chef und Vorarbeiter.
+     */
+    #[Route('/workload', name: 'api_me_workload', methods: ['GET'])]
+    public function workload(JobRepository $jobs, WorkloadCalculator $calculator): JsonResponse
+    {
+        $user = $this->currentUser();
+        $remaining = 0;
+        foreach ($jobs->findOpenFor($user) as $job) {
+            $remaining += $job->getRemainingMinutes();
+        }
+
+        return $this->json([
+            'remainingMinutes' => $remaining,
+            'availableFrom' => $calculator->estimateAvailableFrom($user, $remaining)->format(\DATE_ATOM),
+        ]);
     }
 
     #[Route('', name: 'api_me_update', methods: ['PATCH'])]

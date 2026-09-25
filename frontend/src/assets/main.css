@@ -1,29 +1,28 @@
+/*
+ * Design-Tokens 1:1 aus dem Figma-Entwurf "Werkstatt-Planungs-App".
+ */
 :root {
-  --bg: #f6f7f9;
+  --bg: #f5f6f8;
   --surface: #ffffff;
-  --border: #e4e7ec;
-  --text: #16202c;
-  --muted: #64748b;
+  --surface-muted: #f7f8fa;
+  --side: #fbfbfc;
+  --border: #e3e6ea;
+  --grid: #eff1f4;
+  --text: #1f2430;
+  --muted: #6b7280;
+  --faint: #9ca3af;
   --primary: #2563eb;
-  --primary-soft: #e8efff;
+  --primary-soft: #eef3fe;
   --success: #16a34a;
+  --success-soft: #e7f6ec;
   --danger: #dc2626;
-  --warning: #d97706;
+  --danger-soft: #fef2f2;
+  --warning: #f59e0b;
+  --warning-text: #b45309;
+  --warning-soft: #fff8e8;
+  --button: #f3f4f6;
   --radius: 10px;
-  --shadow: 0 1px 2px rgba(16, 24, 40, 0.06), 0 1px 3px rgba(16, 24, 40, 0.1);
-}
-
-@media (prefers-color-scheme: dark) {
-  :root {
-    --bg: #0f151d;
-    --surface: #17202b;
-    --border: #273240;
-    --text: #e8eef6;
-    --muted: #94a3b8;
-    --primary: #60a5fa;
-    --primary-soft: #1c2c45;
-    --shadow: none;
-  }
+  --shadow: none;
 }
 
 * {
@@ -46,8 +45,8 @@ body {
     'Segoe UI',
     Roboto,
     sans-serif;
-  font-size: 15px;
-  line-height: 1.5;
+  font-size: 14px;
+  line-height: 1.45;
   -webkit-font-smoothing: antialiased;
 }
 
@@ -59,11 +58,13 @@ h3 {
 }
 
 h1 {
-  font-size: 1.5rem;
+  font-size: 1.25rem;
+  font-weight: 700;
 }
 
 h2 {
-  font-size: 1.125rem;
+  font-size: 0.8125rem;
+  font-weight: 700;
 }
 
 a {
@@ -72,9 +73,7 @@ a {
 
 .card {
   background: var(--surface);
-  border: 1px solid var(--border);
   border-radius: var(--radius);
-  box-shadow: var(--shadow);
   padding: 1.25rem;
 }
 
@@ -100,22 +99,30 @@ a {
 
 label {
   display: block;
-  font-size: 0.8125rem;
-  font-weight: 600;
+  font-size: 0.6875rem;
+  font-weight: 500;
   color: var(--muted);
-  margin-bottom: 0.25rem;
+  margin-bottom: 0.4rem;
 }
 
 input,
 select,
 textarea {
   width: 100%;
-  padding: 0.55rem 0.7rem;
-  border: 1px solid var(--border);
+  height: 40px;
+  padding: 0 0.875rem;
+  border: 1px solid transparent;
   border-radius: 8px;
-  background: var(--surface);
+  background: var(--surface-muted);
   color: var(--text);
   font: inherit;
+  font-size: 0.8125rem;
+  font-weight: 500;
+}
+
+textarea {
+  height: auto;
+  padding: 0.6rem 0.875rem;
 }
 
 input:focus,
@@ -123,17 +130,27 @@ select:focus,
 textarea:focus {
   outline: 2px solid var(--primary);
   outline-offset: -1px;
+  background: var(--surface);
+}
+
+input[type='checkbox'] {
+  width: 16px;
+  height: 16px;
+  accent-color: var(--primary);
 }
 
 button {
   font: inherit;
+  font-size: 0.75rem;
   font-weight: 600;
-  border: 1px solid transparent;
+  border: none;
   border-radius: 8px;
-  padding: 0.55rem 1rem;
+  height: 36px;
+  padding: 0 1rem;
   cursor: pointer;
   background: var(--primary);
   color: #fff;
+  white-space: nowrap;
 }
 
 button:disabled {
@@ -142,15 +159,21 @@ button:disabled {
 }
 
 button.secondary {
-  background: transparent;
-  border-color: var(--border);
+  background: var(--button);
   color: var(--text);
+  font-weight: 500;
 }
 
 button.danger {
-  background: transparent;
-  border-color: var(--border);
+  background: var(--danger-soft);
   color: var(--danger);
+}
+
+button.small {
+  height: 26px;
+  padding: 0 0.75rem;
+  font-size: 0.6875rem;
+  border-radius: 6px;
 }
 
 table {
@@ -160,17 +183,16 @@ table {
 
 th {
   text-align: left;
-  font-size: 0.75rem;
-  text-transform: uppercase;
-  letter-spacing: 0.04em;
+  font-size: 0.625rem;
+  font-weight: 600;
   color: var(--muted);
-  padding: 0.5rem 0.6rem;
+  padding: 0.75rem 0.6rem;
   border-bottom: 1px solid var(--border);
 }
 
 td {
-  padding: 0.6rem;
-  border-bottom: 1px solid var(--border);
+  padding: 0.75rem 0.6rem;
+  border-bottom: 1px solid var(--grid);
   vertical-align: middle;
 }
 
@@ -178,26 +200,73 @@ td {
   display: inline-flex;
   align-items: center;
   gap: 0.35rem;
-  font-size: 0.75rem;
+  font-size: 0.6875rem;
   font-weight: 600;
-  padding: 0.15rem 0.5rem;
+  padding: 0.2rem 0.6rem;
   border-radius: 999px;
   background: var(--primary-soft);
   color: var(--primary);
 }
 
 .dot {
-  width: 9px;
-  height: 9px;
-  border-radius: 50%;
+  width: 10px;
+  height: 10px;
+  border-radius: 3px;
   display: inline-block;
   flex: none;
 }
 
+.avatar {
+  flex: none;
+  width: 28px;
+  height: 28px;
+  border-radius: 50%;
+  display: grid;
+  place-items: center;
+  background: #e8edfb;
+  color: var(--primary);
+  font-size: 0.6875rem;
+  font-weight: 600;
+}
+
 .error {
-  background: color-mix(in srgb, var(--danger) 12%, transparent);
+  background: var(--danger-soft);
   color: var(--danger);
   border-radius: 8px;
   padding: 0.6rem 0.8rem;
-  font-size: 0.875rem;
+  font-size: 0.8125rem;
+}
+
+.success {
+  background: var(--success-soft);
+  color: var(--success);
+  border-radius: 8px;
+  padding: 0.6rem 0.8rem;
+  font-size: 0.8125rem;
+}
+
+/* Seitenkopf fuer alle Seiten ausser Kalender (Figma: Auswertung, Benutzer & Rechte) */
+.page-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 1rem;
+  padding: 1.5rem 2rem;
+  background: var(--surface);
+  border-bottom: 1px solid var(--border);
+}
+
+.page-head h1 {
+  margin: 0;
+}
+
+.page-head p {
+  margin: 0.2rem 0 0;
+  font-size: 0.75rem;
+  color: var(--muted);
+}
+
+.page-body {
+  padding: 1.75rem 2rem 3rem;
+  max-width: 1080px;
 }

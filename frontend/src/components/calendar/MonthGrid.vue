@@ -4,15 +4,13 @@ import type { CalendarSegment } from '@/api/types'
 import { addDays, dayKey, isWeekend } from '@/utils/calendar'
 
 /**
- * Monatsansicht: Raster Mo–So, pro Tag die ersten Arbeiten mit Kuerzel.
- * Freie Werktage sind markiert – dort lassen sich Kunden einplanen.
+ * Monatsansicht (Figma 01c): Raster Mo–So, pro Tag bis zu drei Arbeiten
+ * als "AH · Kupplung", freie Werktage mit "noch frei".
  */
 const props = defineProps<{
   from: Date
   month: number
-  items: { segment: CalendarSegment; color: string }[]
-  /** Anzahl sichtbarer Arbeiter – ist ein Werktag nicht voll, gibt es freie Kapazitaet. */
-  workerCount: number
+  items: { segment: CalendarSegment; color: string; soft: string }[]
 }>()
 
 const emit = defineEmits<{
@@ -36,7 +34,6 @@ const days = computed(() => {
     .map((date) => {
       const key = dayKey(date)
       const items = byDay.get(key) ?? []
-      const busyWorkers = new Set(items.map((i) => i.segment.workerId)).size
 
       return {
         date,
@@ -47,8 +44,7 @@ const days = computed(() => {
         weekend: isWeekend(date),
         today: key === todayKey,
         // Vergangene Tage sind nicht mehr "frei" – dort plant niemand mehr.
-        freeWorkers:
-          isWeekend(date) || key < todayKey ? 0 : Math.max(0, props.workerCount - busyWorkers),
+        free: items.length === 0 && !isWeekend(date) && key >= todayKey,
       }
     })
 })
@@ -65,16 +61,11 @@ const days = computed(() => {
       {{ d }}
     </div>
 
-    <div
-      v-for="day in days"
-      :key="day.key"
-      class="day"
-      :class="{ outside: !day.inMonth, weekend: day.weekend }"
-    >
+    <div v-for="day in days" :key="day.key" class="day" :class="{ weekend: day.weekend }">
       <button
         type="button"
-        class="day__num"
-        :class="{ today: day.today }"
+        class="num"
+        :class="{ today: day.today, outside: !day.inMonth || day.weekend }"
         @click="emit('day', day.date)"
       >
         {{ day.date.getDate() }}
@@ -91,21 +82,18 @@ const days = computed(() => {
             (item.segment.overrun || item.segment.late || item.segment.behind) &&
             !item.segment.done,
         }"
-        :style="{ '--accent': item.color }"
+        :style="{ '--accent': item.color, '--fill': item.soft }"
         :title="`${item.segment.title} – ${item.segment.assignee?.fullName ?? ''}`"
         @click="emit('open', item.segment.jobId)"
       >
-        <strong>{{ item.segment.assignee?.initials }}</strong>
-        <span>{{ item.segment.title }}</span>
+        {{ item.segment.assignee?.initials }} · {{ item.segment.title }}
       </button>
 
       <button v-if="day.more" type="button" class="more" @click="emit('day', day.date)">
         +{{ day.more }} weitere
       </button>
 
-      <span v-if="day.inMonth && !day.weekend && day.freeWorkers > 0" class="free">
-        {{ day.freeWorkers === workerCount ? 'noch frei' : `${day.freeWorkers} frei` }}
-      </span>
+      <span v-if="day.free" class="free">noch frei</span>
     </div>
   </div>
 </template>
@@ -114,82 +102,73 @@ const days = computed(() => {
 .month {
   display: grid;
   grid-template-columns: repeat(7, minmax(110px, 1fr));
+  grid-auto-rows: auto;
   min-width: 770px;
+  background: var(--surface);
 }
 
 .weekday {
-  padding: 0.6rem 0.75rem;
-  font-size: 0.75rem;
+  height: 40px;
+  padding: 0 0.875rem;
+  display: flex;
+  align-items: center;
+  font-size: 0.6875rem;
   font-weight: 600;
   color: var(--muted);
   border-bottom: 1px solid var(--border);
-  background: var(--surface);
 }
 
 .weekday.weekend {
-  color: color-mix(in srgb, var(--muted) 60%, transparent);
+  color: var(--faint);
 }
 
 .day {
-  min-height: 128px;
-  padding: 0.4rem;
+  min-height: 172px;
+  padding: 0.5rem;
   display: flex;
   flex-direction: column;
-  gap: 0.25rem;
-  border-right: 1px solid var(--border);
-  border-bottom: 1px solid var(--border);
-  background: var(--surface);
+  gap: 5px;
+  border-left: 1px solid var(--grid);
+  border-bottom: 1px solid var(--grid);
 }
 
 .day.weekend {
-  background: color-mix(in srgb, var(--bg) 70%, var(--surface));
+  background: #fafafb;
 }
 
-.day.outside {
-  background: var(--bg);
-}
-
-.day.outside .day__num {
-  color: var(--muted);
-  font-weight: 500;
-}
-
-.day__num {
+.num {
   align-self: flex-start;
-  background: transparent;
+  height: 24px;
+  min-width: 26px;
+  padding: 0 0.35rem;
+  margin-bottom: 0.3rem;
+  border-radius: 12px;
+  background: none;
   color: var(--text);
-  padding: 0.1rem 0.45rem;
-  border-radius: 999px;
-  font-size: 0.8125rem;
+  font-size: 0.75rem;
+  font-weight: 600;
 }
 
-.day__num:hover {
-  background: var(--bg);
+.num.outside {
+  color: var(--faint);
 }
 
-.day__num.today {
+.num.today {
   background: var(--primary);
   color: #fff;
+  font-weight: 700;
 }
 
 .entry {
-  display: flex;
-  gap: 0.35rem;
-  align-items: center;
-  padding: 0.15rem 0.4rem;
-  border: none;
+  height: 21px;
+  padding: 0 0.5rem;
+  border-radius: 5px;
   border-left: 3px solid var(--accent);
-  border-radius: 4px;
-  background: color-mix(in srgb, var(--accent) 12%, var(--surface));
+  background: var(--fill);
   color: var(--text);
-  font-size: 0.6875rem;
-  font-weight: 400;
+  font-size: 0.625rem;
+  font-weight: 500;
   text-align: left;
-  white-space: nowrap;
-  overflow: hidden;
-}
-
-.entry span {
   overflow: hidden;
   text-overflow: ellipsis;
 }
@@ -205,17 +184,16 @@ const days = computed(() => {
 
 .more {
   align-self: flex-start;
-  background: transparent;
+  height: auto;
+  padding: 0.1rem 0.35rem;
+  background: none;
   color: var(--primary);
-  padding: 0 0.4rem;
-  font-size: 0.6875rem;
+  font-size: 0.625rem;
 }
 
 .free {
-  margin-top: auto;
-  font-size: 0.6875rem;
-  color: var(--success);
-  font-weight: 600;
-  padding: 0 0.4rem;
+  padding: 0.1rem 0.35rem;
+  font-size: 0.625rem;
+  color: var(--faint);
 }
 </style>

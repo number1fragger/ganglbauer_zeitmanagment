@@ -8,8 +8,6 @@ declare module 'vue-router' {
     public?: boolean
     /** Mindestrolle; ohne Angabe reicht jede Anmeldung. */
     role?: Role
-    /** Seite nutzt die volle Bildschirmbreite (Kalender). */
-    wide?: boolean
   }
 }
 
@@ -32,7 +30,7 @@ const router = createRouter({
       path: '/kalender',
       name: 'calendar',
       component: () => import('@/views/CalendarView.vue'),
-      meta: { role: 'ROLE_FOREMAN', wide: true },
+      meta: { role: 'ROLE_FOREMAN' },
     },
     {
       path: '/kapazitaet',
@@ -41,15 +39,19 @@ const router = createRouter({
       meta: { role: 'ROLE_FOREMAN' },
     },
     {
+      // Figma 03: eigene Arbeiten, Restzeit und "Ich brauche neue Arbeit"
+      path: '/meine-arbeit',
+      name: 'my-work',
+      component: () => import('@/views/MyWorkView.vue'),
+    },
+    {
       path: '/arbeiten',
       name: 'jobs',
       component: () => import('@/views/JobsView.vue'),
+      meta: { role: 'ROLE_FOREMAN' },
     },
-    {
-      path: '/brauche-arbeit',
-      name: 'work-request',
-      component: () => import('@/views/WorkRequestView.vue'),
-    },
+    // Alte Adresse aus der ersten Version
+    { path: '/brauche-arbeit', redirect: '/meine-arbeit' },
     {
       path: '/auswertung',
       name: 'report',

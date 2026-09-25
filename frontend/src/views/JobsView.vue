@@ -1,61 +1,39 @@
 <script setup lang="ts">
-import { computed, onMounted, reactive, ref } from 'vue'
-import { useRoute, useRouter } from 'vue-router'
-import { errorMessage, http } from '@/api/client'
-import { useAuthStore } from '@/stores/auth'
+import { computed, onMounted, ref, watch } from 'vue'
+import { errorMessage } from '@/api/client'
+import type { Job } from '@/api/types'
+import { useJobDialogStore } from '@/stores/jobDialog'
 import { useWorkshopStore } from '@/stores/workshop'
-import type { Job, Priority } from '@/api/types'
 import {
   formatDateTime,
-  formatDuration,
-  priorities,
+  formatHours,
   priorityColor,
   priorityLabel,
   statusLabels,
-  toDateTimeInput,
 } from '@/utils/format'
 
 /**
- * F1–F6: Arbeiten anlegen, priorisieren, Beginn/Ende festlegen,
- * Zeit verlaengern und erledigte Arbeiten abhaken.
+ * Alle Arbeiten als Liste (fuer Chef und Vorarbeiter). Anlegen und
+ * Bearbeiten laufen ueber den Figma-Dialog "Arbeit anlegen".
  */
 const workshop = useWorkshopStore()
-const auth = useAuthStore()
-const route = useRoute()
-const router = useRouter()
-
-/** Kam der Aufruf aus dem Kalender (?neu=1 / ?bearbeiten=ID), geht es danach dorthin zurueck. */
-const fromCalendar = ref(false)
+const dialog = useJobDialogStore()
 
 const showDone = ref(false)
-const onlyMine = ref(false)
+const worker = ref<number | 'all' | 'none'>('all')
 const error = ref('')
-const busy = ref(false)
-const formOpen = ref(false)
-
-const emptyForm = () => ({
-  id: null as number | null,
-  title: '',
-  customer: '',
-  description: '',
-  priority: 'normal' as Priority,
-  plannedHours: 2,
-  assigneeId: null as number | null,
-  startsAt: toDateTimeInput(new Date()),
-  dueAt: '',
-})
-
-const form = reactive(emptyForm())
 
 const visibleJobs = computed(() =>
-  onlyMine.value
-    ? workshop.jobs.filter((job) => job.assignee?.id === auth.user?.id)
-    : workshop.jobs,
+  workshop.jobs.filter((job) => {
+    if (worker.value === 'none') return job.assignee === null
+    if (worker.value !== 'all') return job.assignee?.id === worker.value
+
+    return true
+  }),
 )
 
 async function reload(): Promise<void> {
   error.value = ''
-
   try {
     await workshop.loadJobs({ includeDone: showDone.value })
   } catch (e) {
@@ -63,468 +41,202 @@ async function reload(): Promise<void> {
   }
 }
 
-/** Uebersicht nur fuer Chef/Vorarbeiter neu laden – Arbeiter bekaemen 403. */
-function refreshOverview(): Promise<void> {
-  return auth.isForeman ? refreshOverview() : Promise.resolve()
-}
+onMounted(() => Promise.all([reload(), workshop.loadWorkers()]))
+watch(showDone, reload)
+watch(() => dialog.version, reload)
 
-onMounted(async () => {
-  await Promise.all([reload(), workshop.loadWorkers()])
-  await openFromQuery()
-})
-
-/** Vorbelegung aus dem Kalender: Klick auf eine Karte oder eine freie Stelle. */
-async function openFromQuery(): Promise<void> {
-  const { bearbeiten, neu, arbeiter, beginn } = route.query
-
-  if (typeof bearbeiten === 'string') {
-    let job = workshop.jobs.find((j) => j.id === Number(bearbeiten))
-
-    // Erledigte Arbeiten sind nicht in der Liste – einzeln nachladen.
-    if (!job) {
-      try {
-        job = (await http.get<Job>(`/api/jobs/${bearbeiten}`)).data
-      } catch (e) {
-        error.value = errorMessage(e)
-      }
-    }
-
-    if (job && auth.isForeman) {
-      fromCalendar.value = true
-      edit(job)
-    }
-  } else if (neu === '1' && auth.isForeman) {
-    fromCalendar.value = true
-    Object.assign(form, emptyForm())
-    if (typeof arbeiter === 'string') form.assigneeId = Number(arbeiter)
-    if (typeof beginn === 'string') form.startsAt = beginn.slice(0, 16)
-    formOpen.value = true
-  }
-}
-
-/** Nach Speichern oder Abbrechen zurueck in den Kalender, falls man von dort kam. */
-function leave(): void {
-  if (!fromCalendar.value) return
-
-  fromCalendar.value = false
-
-  if (router.options.history.state.back) {
-    router.back()
-  } else {
-    void router.push('/kalender')
-  }
-}
-
-function resetForm(): void {
-  Object.assign(form, emptyForm())
-  formOpen.value = false
-  leave()
-}
-
-function edit(job: Job): void {
-  form.id = job.id
-  form.title = job.title
-  form.customer = job.customer ?? ''
-  form.description = job.description ?? ''
-  form.priority = job.priority
-  form.plannedHours = Math.round((job.plannedMinutes / 60) * 100) / 100
-  form.assigneeId = job.assignee?.id ?? null
-  form.startsAt = job.startsAt ? toDateTimeInput(job.startsAt) : ''
-  form.dueAt = job.dueAt ? toDateTimeInput(job.dueAt) : ''
-  formOpen.value = true
-}
-
-async function submit(): Promise<void> {
+async function act(action: () => Promise<unknown>): Promise<void> {
   error.value = ''
-  busy.value = true
-
-  const payload = {
-    title: form.title,
-    customer: form.customer || null,
-    description: form.description || null,
-    priority: form.priority,
-    plannedMinutes: Math.max(1, Math.round(form.plannedHours * 60)),
-    assigneeId: form.assigneeId,
-    startsAt: form.startsAt ? new Date(form.startsAt).toISOString() : null,
-    dueAt: form.dueAt ? new Date(form.dueAt).toISOString() : null,
-  }
-
   try {
-    if (form.id === null) {
-      await workshop.createJob(payload)
-    } else {
-      await workshop.updateJob(form.id, payload)
-    }
-
-    resetForm()
-    await Promise.all([reload(), refreshOverview()])
-  } catch (e) {
-    error.value = errorMessage(e)
-  } finally {
-    busy.value = false
-  }
-}
-
-/** F5 – Zeit erhöhen ("dauert 2 Stunden länger"). */
-async function extend(job: Job, minutes: number): Promise<void> {
-  error.value = ''
-
-  try {
-    await workshop.extendJob(job.id, minutes)
-    await Promise.all([reload(), refreshOverview()])
+    await action()
+    await reload()
   } catch (e) {
     error.value = errorMessage(e)
   }
 }
 
-/** F4 – erledigte Arbeiten abhaken. */
-async function toggleDone(job: Job): Promise<void> {
-  error.value = ''
+function state(job: Job): 'done' | 'over' | 'open' {
+  if (job.status === 'erledigt') return 'done'
 
-  try {
-    await workshop.completeJob(job.id, job.status !== 'erledigt')
-    await Promise.all([reload(), refreshOverview()])
-  } catch (e) {
-    error.value = errorMessage(e)
-  }
-}
-
-async function remove(job: Job): Promise<void> {
-  if (
-    !window.confirm(`„${job.title}“ wirklich löschen? Die erfassten Zeiten gehen dabei verloren.`)
-  )
-    return
-
-  error.value = ''
-
-  try {
-    await workshop.deleteJob(job.id)
-    await refreshOverview()
-  } catch (e) {
-    error.value = errorMessage(e)
-  }
-}
-
-async function start(job: Job): Promise<void> {
-  error.value = ''
-
-  try {
-    await workshop.startWork(job.id)
-    await Promise.all([reload(), refreshOverview()])
-  } catch (e) {
-    error.value = errorMessage(e)
-  }
+  return job.overrun ? 'over' : 'open'
 }
 </script>
 
 <template>
-  <div>
-    <div class="head">
-      <div>
-        <h1>{{ auth.isForeman ? 'Arbeiten' : 'Meine Arbeiten' }}</h1>
-        <p class="muted">Nach Priorität sortiert – oben steht, was zuerst dran ist.</p>
-      </div>
-      <button
-        v-if="auth.isForeman"
-        type="button"
-        @click="formOpen ? resetForm() : (formOpen = true)"
-      >
-        {{ formOpen ? 'Formular schließen' : 'Neue Arbeit' }}
-      </button>
+  <div class="page-head">
+    <div>
+      <h1>Alle Arbeiten</h1>
+      <p>Nach Priorität sortiert – oben steht, was zuerst dran ist</p>
     </div>
+    <div class="filters">
+      <select v-model="worker" aria-label="Arbeiter">
+        <option value="all">Alle Arbeiter</option>
+        <option value="none">Noch nicht zugeteilt</option>
+        <option v-for="w in workshop.workers" :key="w.id" :value="w.id">{{ w.fullName }}</option>
+      </select>
+      <label class="check"><input v-model="showDone" type="checkbox" /> erledigte anzeigen</label>
+    </div>
+  </div>
 
+  <div class="page-body">
     <p v-if="error" class="error">{{ error }}</p>
 
-    <section v-if="formOpen && auth.isForeman" class="card">
-      <h2>{{ form.id === null ? 'Neue Arbeit anlegen' : 'Arbeit bearbeiten' }}</h2>
-
-      <form class="form" @submit.prevent="submit">
-        <div class="wide">
-          <label for="title">Was ist zu tun?</label>
-          <input id="title" v-model="form.title" type="text" required />
-        </div>
-
-        <div>
-          <label for="customer">Kunde</label>
-          <input id="customer" v-model="form.customer" type="text" />
-        </div>
-
-        <div>
-          <label for="priority">Priorität</label>
-          <select id="priority" v-model="form.priority">
-            <option v-for="p in priorities" :key="p.value" :value="p.value">{{ p.label }}</option>
-          </select>
-        </div>
-
-        <div>
-          <label for="hours">Geplante Zeit (Stunden)</label>
-          <input
-            id="hours"
-            v-model.number="form.plannedHours"
-            type="number"
-            step="0.25"
-            min="0.25"
-            required
-          />
-        </div>
-
-        <div>
-          <label for="assignee">Arbeiter</label>
-          <select id="assignee" v-model="form.assigneeId">
-            <option :value="null">Noch niemand</option>
-            <option v-for="worker in workshop.workers" :key="worker.id" :value="worker.id">
-              {{ worker.fullName }}
-            </option>
-          </select>
-        </div>
-
-        <div>
-          <label for="startsAt">Beginn</label>
-          <input id="startsAt" v-model="form.startsAt" type="datetime-local" />
-        </div>
-
-        <div>
-          <label for="dueAt">Ende</label>
-          <input id="dueAt" v-model="form.dueAt" type="datetime-local" />
-        </div>
-
-        <div class="wide">
-          <label for="description">Notiz</label>
-          <input id="description" v-model="form.description" type="text" />
-        </div>
-
-        <div class="actions wide">
-          <button type="submit" :disabled="busy">
-            {{ form.id === null ? 'Anlegen' : 'Speichern' }}
-          </button>
-          <button type="button" class="secondary" @click="resetForm">Abbrechen</button>
-        </div>
-      </form>
-    </section>
-
-    <section class="card filters">
-      <label v-if="auth.isForeman" class="check">
-        <input v-model="onlyMine" type="checkbox" />
-        nur meine Arbeiten
-      </label>
-      <label class="check">
-        <input v-model="showDone" type="checkbox" @change="reload" />
-        erledigte anzeigen
-      </label>
-    </section>
-
-    <section
+    <article
       v-for="job in visibleJobs"
       :key="job.id"
-      class="card job"
-      :class="{ done: job.status === 'erledigt' }"
+      class="job"
+      :class="state(job)"
+      :style="{
+        '--accent': job.status === 'erledigt' ? 'var(--faint)' : priorityColor(job.priority),
+      }"
     >
-      <div class="job__head">
-        <span class="dot" :style="{ background: priorityColor(job.priority) }"></span>
-        <div class="job__title">
-          <strong>{{ job.title }}</strong>
-          <span class="muted">
-            {{ job.customer ?? 'Ohne Kunde' }} · {{ priorityLabel(job.priority) }} ·
-            {{ statusLabels[job.status] }}
-            <template v-if="job.assignee"> · {{ job.assignee.fullName }}</template>
-          </span>
-        </div>
-
-        <div class="job__time mono">
-          <strong :class="{ over: job.overrun }">{{ formatDuration(job.actualMinutes) }}</strong>
-          <span class="muted">von {{ formatDuration(job.plannedMinutes) }}</span>
-        </div>
+      <div class="main">
+        <strong>{{ job.title }}</strong>
+        <span>
+          Kunde: {{ job.customer ?? '–' }} · {{ priorityLabel(job.priority) }} ·
+          {{ statusLabels[job.status] }} · {{ job.assignee?.fullName ?? 'noch niemand zugeteilt' }}
+        </span>
+        <span v-if="job.startsAt"
+          >Beginn {{ formatDateTime(job.startsAt)
+          }}<template v-if="job.dueAt"> · Ende {{ formatDateTime(job.dueAt) }}</template></span
+        >
       </div>
 
-      <div class="bar">
-        <span :style="{ width: `${job.progressPercent}%` }" :class="{ over: job.overrun }"></span>
+      <div class="times">
+        <strong :class="{ red: job.overrun }">
+          Soll {{ formatHours(job.plannedMinutes)
+          }}<template v-if="job.actualMinutes">
+            · Ist {{ formatHours(job.actualMinutes) }}</template
+          >
+        </strong>
+        <span v-if="job.overrun" class="red"
+          >Zeit überschritten um {{ formatHours(job.overrunMinutes) }}</span
+        >
+        <span v-else-if="job.running" class="blue">läuft gerade</span>
       </div>
 
-      <p v-if="job.overrun" class="warn">
-        Zeit überschritten um {{ formatDuration(job.overrunMinutes) }} – Zeit erhöhen oder abhaken.
-      </p>
-
-      <p v-if="job.extendedMinutes > 0" class="muted small">
-        Ursprünglich {{ formatDuration(job.originalPlannedMinutes) }} geplant, um
-        {{ formatDuration(job.extendedMinutes) }} verlängert.
-      </p>
-
-      <div class="job__meta muted small">
-        <span v-if="job.startsAt">Beginn {{ formatDateTime(job.startsAt) }}</span>
-        <span v-if="job.dueAt">Ende {{ formatDateTime(job.dueAt) }}</span>
-        <span v-if="job.description">{{ job.description }}</span>
-      </div>
-
-      <div class="job__actions">
+      <div class="actions">
         <button
-          v-if="job.status !== 'erledigt' && !job.running"
+          v-if="job.status !== 'erledigt'"
           type="button"
           class="secondary small"
-          @click="start(job)"
+          @click="act(() => workshop.extendJob(job.id, 60))"
         >
-          Zeit starten
-        </button>
-        <button type="button" class="secondary small" @click="extend(job, 30)">+30 min</button>
-        <button type="button" class="secondary small" @click="extend(job, 120)">+2 h</button>
-        <button v-if="auth.isForeman" type="button" class="secondary small" @click="edit(job)">
-          Bearbeiten
+          + 1 Stunde
         </button>
         <button
           type="button"
-          class="small"
-          :class="job.status === 'erledigt' ? 'secondary' : ''"
-          @click="toggleDone(job)"
+          class="secondary small"
+          @click="act(() => workshop.completeJob(job.id, job.status !== 'erledigt'))"
         >
           {{ job.status === 'erledigt' ? 'Wieder öffnen' : 'Erledigt' }}
         </button>
-        <button v-if="auth.isForeman" type="button" class="danger small" @click="remove(job)">
-          Löschen
-        </button>
+        <button type="button" class="small" @click="dialog.edit(job.id)">Bearbeiten</button>
       </div>
-    </section>
+    </article>
 
-    <p v-if="visibleJobs.length === 0" class="card muted">Keine Arbeiten in dieser Ansicht.</p>
+    <p v-if="visibleJobs.length === 0" class="empty">Keine Arbeiten in dieser Ansicht.</p>
   </div>
 </template>
 
 <style scoped>
-.head {
-  display: flex;
-  align-items: flex-start;
-  justify-content: space-between;
-  gap: 1rem;
-  margin-bottom: 1rem;
-}
-
-section {
-  margin-bottom: 1rem;
-}
-
-.form {
-  display: grid;
-  grid-template-columns: repeat(2, 1fr);
-  gap: 0.9rem;
-  align-items: end;
-}
-
-.wide {
-  grid-column: 1 / -1;
-}
-
-.actions {
-  display: flex;
-  gap: 0.6rem;
-}
-
 .filters {
   display: flex;
-  gap: 1.25rem;
-  padding: 0.75rem 1.25rem;
+  align-items: center;
+  gap: 20px;
+}
+
+.filters select {
+  width: 200px;
+  height: 36px;
+  background: var(--button);
+  font-size: 0.75rem;
 }
 
 .check {
   display: flex;
   align-items: center;
-  gap: 0.4rem;
-  font-size: 0.8125rem;
+  gap: 8px;
   margin: 0;
+  font-size: 0.75rem;
+  color: var(--text);
+  cursor: pointer;
 }
 
-.check input {
-  width: auto;
+.job {
+  display: flex;
+  align-items: center;
+  gap: 24px;
+  padding: 14px 18px 14px 20px;
+  margin-bottom: 10px;
+  border-radius: 10px;
+  background: var(--surface);
+  border-left: 4px solid var(--accent);
 }
 
 .job.done {
-  opacity: 0.6;
+  opacity: 0.65;
 }
 
-.job__head {
-  display: flex;
-  align-items: flex-start;
-  gap: 0.6rem;
-  margin-bottom: 0.6rem;
+.job.over {
+  background: var(--danger-soft);
 }
 
-.job__title {
+.main {
   display: flex;
   flex-direction: column;
-  min-width: 0;
+  gap: 3px;
   flex: 1;
+  min-width: 0;
 }
 
-.job__title span {
+.main strong {
   font-size: 0.8125rem;
+  font-weight: 600;
 }
 
-.job__time {
-  text-align: right;
+.main span {
+  font-size: 0.6875rem;
+  color: var(--muted);
+}
+
+.times {
   display: flex;
   flex-direction: column;
+  align-items: flex-end;
+  gap: 3px;
+  font-size: 0.6875rem;
   white-space: nowrap;
 }
 
-.job__time .over {
+.times strong {
+  font-weight: 500;
+}
+
+.red {
   color: var(--danger);
 }
 
-.job__time span {
-  font-size: 0.75rem;
+.blue {
+  color: var(--primary);
 }
 
-.bar {
-  background: var(--bg);
-  border-radius: 999px;
-  height: 6px;
-  overflow: hidden;
-}
-
-.bar span {
-  display: block;
-  height: 100%;
-  background: var(--primary);
-  border-radius: 999px;
-}
-
-.bar span.over {
-  background: var(--danger);
-}
-
-.warn {
-  margin: 0.6rem 0 0;
-  font-size: 0.8125rem;
-  font-weight: 600;
-  color: var(--danger);
-}
-
-.small {
-  font-size: 0.8125rem;
-}
-
-button.small {
-  padding: 0.3rem 0.6rem;
-}
-
-.job__meta {
+.actions {
   display: flex;
-  gap: 1rem;
-  flex-wrap: wrap;
-  margin-top: 0.5rem;
+  gap: 8px;
 }
 
-.job__actions {
-  display: flex;
-  gap: 0.5rem;
-  flex-wrap: wrap;
-  margin-top: 0.8rem;
+.empty {
+  color: var(--muted);
 }
 
-@media (max-width: 720px) {
-  .form {
-    grid-template-columns: 1fr;
+@media (max-width: 900px) {
+  .job {
+    flex-wrap: wrap;
   }
 
-  .head {
-    flex-direction: column;
+  .times {
+    align-items: flex-start;
   }
 }
 </style>

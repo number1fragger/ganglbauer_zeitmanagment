@@ -3,13 +3,21 @@ import type { ApiError } from './types'
 
 export const TOKEN_KEY = 'gz_token'
 
+/**
+ * "Angemeldet bleiben" speichert den Token dauerhaft (localStorage),
+ * sonst nur bis der Browser geschlossen wird (sessionStorage).
+ */
+export function readToken(): string | null {
+  return localStorage.getItem(TOKEN_KEY) ?? sessionStorage.getItem(TOKEN_KEY)
+}
+
 export const http = axios.create({
   baseURL: import.meta.env.VITE_API_BASE_URL || '',
   headers: { 'Content-Type': 'application/json' },
 })
 
 http.interceptors.request.use((config) => {
-  const token = localStorage.getItem(TOKEN_KEY)
+  const token = readToken()
 
   if (token) {
     config.headers.Authorization = `Bearer ${token}`

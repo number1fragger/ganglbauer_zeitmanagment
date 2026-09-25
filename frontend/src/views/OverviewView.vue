@@ -23,7 +23,7 @@ const maxRemaining = computed(() =>
 
 onMounted(async () => {
   try {
-    await Promise.all([workshop.loadOverview(), workshop.loadJobs()])
+    await Promise.all([workshop.loadOverview(), Promise.resolve()])
   } catch (e) {
     error.value = errorMessage(e)
   } finally {
@@ -33,10 +33,14 @@ onMounted(async () => {
 </script>
 
 <template>
-  <div>
-    <h1>Übersicht</h1>
-    <p class="muted">Wer ist wie lange ausgelastet und wann wird wieder Arbeit gebraucht.</p>
+  <div class="page-head">
+    <div>
+      <h1>Kapazität</h1>
+      <p>Wer ist wie lange ausgelastet und wann wird wieder Arbeit gebraucht</p>
+    </div>
+  </div>
 
+  <div class="page-body">
     <p v-if="error" class="error">{{ error }}</p>
 
     <section v-if="totals" class="tiles grid">

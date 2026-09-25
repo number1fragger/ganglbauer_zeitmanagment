@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import { reactive, ref, watch } from 'vue'
+import { RouterLink } from 'vue-router'
 import { errorMessage, http } from '@/api/client'
 import { useAuthStore } from '@/stores/auth'
 
@@ -61,8 +62,15 @@ async function changePassword(): Promise<void> {
 </script>
 
 <template>
-  <div>
-    <h1>Einstellungen</h1>
+  <div class="page-head">
+    <div>
+      <h1>Einstellungen</h1>
+      <p>Profil und Passwort</p>
+    </div>
+  </div>
+
+  <div class="page-body">
+    <p class="back"><RouterLink :to="auth.homeRoute">← zurück</RouterLink></p>
 
     <p v-if="error" class="error">{{ error }}</p>
 
@@ -164,5 +172,13 @@ section {
   .form {
     grid-template-columns: 1fr;
   }
+}
+.back {
+  margin: 0 0 1rem;
+  font-size: 0.75rem;
+}
+
+section + section {
+  margin-top: 1rem;
 }
 </style>

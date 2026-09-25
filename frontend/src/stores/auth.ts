@@ -1,13 +1,13 @@
 import { computed, ref } from 'vue'
 import { defineStore } from 'pinia'
-import { http, onUnauthorized, TOKEN_KEY } from '@/api/client'
+import { http, onUnauthorized, readToken, TOKEN_KEY } from '@/api/client'
 import type { Role, User } from '@/api/types'
 
 /** Rangfolge der Rollen – eine hoehere Rolle hat alle Rechte der niedrigeren. */
 const RANK: Record<Role, number> = { ROLE_USER: 0, ROLE_FOREMAN: 1, ROLE_ADMIN: 2 }
 
 export const useAuthStore = defineStore('auth', () => {
-  const token = ref<string | null>(localStorage.getItem(TOKEN_KEY))
+  const token = ref<string | null>(readToken())
   const user = ref<User | null>(null)
   const loading = ref(false)
 
@@ -19,7 +19,7 @@ export const useAuthStore = defineStore('auth', () => {
   const isForeman = computed(() => hasRole('ROLE_FOREMAN'))
 
   /** Die Startseite haengt von der Rolle ab. */
-  const homeRoute = computed(() => (isForeman.value ? '/kalender' : '/arbeiten'))
+  const homeRoute = computed(() => (isForeman.value ? '/kalender' : '/meine-arbeit'))
 
   function hasRole(required: Role): boolean {
     if (!user.value) return false
@@ -27,22 +27,22 @@ export const useAuthStore = defineStore('auth', () => {
     return RANK[user.value.role] >= RANK[required]
   }
 
-  function setToken(value: string | null): void {
+  function setToken(value: string | null, remember = true): void {
     token.value = value
+    localStorage.removeItem(TOKEN_KEY)
+    sessionStorage.removeItem(TOKEN_KEY)
 
     if (value) {
-      localStorage.setItem(TOKEN_KEY, value)
-    } else {
-      localStorage.removeItem(TOKEN_KEY)
+      ;(remember ? localStorage : sessionStorage).setItem(TOKEN_KEY, value)
     }
   }
 
-  async function login(email: string, password: string): Promise<void> {
+  async function login(email: string, password: string, remember = true): Promise<void> {
     loading.value = true
 
     try {
       const { data } = await http.post<{ token: string }>('/api/login', { email, password })
-      setToken(data.token)
+      setToken(data.token, remember)
       await loadUser()
     } finally {
       loading.value = false

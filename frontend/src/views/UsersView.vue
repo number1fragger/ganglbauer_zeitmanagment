@@ -1,50 +1,56 @@
 <script setup lang="ts">
-import { computed, onMounted, reactive, ref } from 'vue'
+import { computed, onBeforeUnmount, onMounted, reactive, ref } from 'vue'
 import { errorMessage, http } from '@/api/client'
 import type { Role, User } from '@/api/types'
 import { useAuthStore } from '@/stores/auth'
 
 /**
- * Benutzer & Rechte – nur fuer den Chef.
- * Das Backend prueft das ebenfalls (ROLE_ADMIN auf /api/users).
+ * Figma 06 – Benutzer & Rechte (nur Chef). Das Backend prueft das ebenfalls.
  */
 const auth = useAuthStore()
 
 const users = ref<User[]>([])
 const error = ref('')
 const message = ref('')
-const formOpen = ref(false)
 const busy = ref(false)
+const formOpen = ref(false)
+const menuFor = ref<number | null>(null)
 
-const roles: { value: Role; label: string; description: string }[] = [
+const roles: { value: Role; label: string; color: string; description: string }[] = [
   {
     value: 'ROLE_ADMIN',
     label: 'Chef',
-    description: 'Alles: planen, auswerten, Benutzer verwalten',
+    color: 'var(--primary)',
+    description:
+      'Alle Arbeiten planen und zuteilen, Zeiten ändern, Auswertung einsehen, Benutzer verwalten.',
   },
   {
     value: 'ROLE_FOREMAN',
     label: 'Vorarbeiter',
-    description: 'Planen, Zeiten ändern, Auswertung – keine Benutzer',
+    color: 'var(--warning)',
+    description:
+      'Arbeiten planen und Zeiten ändern, Auswertung einsehen – keine Benutzerverwaltung.',
   },
   {
     value: 'ROLE_USER',
     label: 'Arbeiter',
-    description: 'Nur eigene Arbeiten, abhaken, Arbeit anfordern',
+    color: 'var(--success)',
+    description: 'Nur eigene Arbeiten sehen, abhaken und Arbeit anfordern.',
   },
 ]
 
-/** Welche Rolle was darf – dieselbe Matrix wie im Backend (JobVoter, access_control). */
+/** Dieselbe Matrix wie im Backend (JobVoter, access_control). */
 const permissions: { label: string; minRole: Role }[] = [
-  { label: 'Eigene', minRole: 'ROLE_USER' },
-  { label: 'Anfordern', minRole: 'ROLE_USER' },
-  { label: 'Planen', minRole: 'ROLE_FOREMAN' },
+  { label: 'Planung', minRole: 'ROLE_FOREMAN' },
+  { label: 'Eigene Arbeiten', minRole: 'ROLE_USER' },
+  { label: 'Zeit ändern', minRole: 'ROLE_USER' },
   { label: 'Auswertung', minRole: 'ROLE_FOREMAN' },
   { label: 'Benutzer', minRole: 'ROLE_ADMIN' },
 ]
 
 const RANK: Record<Role, number> = { ROLE_USER: 0, ROLE_FOREMAN: 1, ROLE_ADMIN: 2 }
 const allowed = (role: Role, minRole: Role) => RANK[role] >= RANK[minRole]
+const roleOf = (value: Role) => roles.find((r) => r.value === value) ?? roles[2]!
 
 const emptyForm = () => ({
   firstName: '',
@@ -58,40 +64,48 @@ const form = reactive(emptyForm())
 
 const sorted = computed(() =>
   [...users.value].sort(
-    (a, b) => Number(b.active) - Number(a.active) || RANK[b.role] - RANK[a.role],
+    (a, b) =>
+      Number(b.active) - Number(a.active) ||
+      RANK[b.role] - RANK[a.role] ||
+      a.lastName.localeCompare(b.lastName),
   ),
 )
 
 async function load(): Promise<void> {
   try {
-    const { data } = await http.get<User[]>('/api/users')
-    users.value = data
+    users.value = (await http.get<User[]>('/api/users')).data
   } catch (e) {
     error.value = errorMessage(e)
   }
 }
 
-onMounted(load)
+function closeMenu(): void {
+  menuFor.value = null
+}
+
+onMounted(() => {
+  void load()
+  document.addEventListener('click', closeMenu)
+})
+onBeforeUnmount(() => document.removeEventListener('click', closeMenu))
 
 async function run(action: () => Promise<unknown>, success: string): Promise<void> {
   error.value = ''
   message.value = ''
   busy.value = true
-
   try {
     await action()
     message.value = success
-    await load()
   } catch (e) {
     error.value = errorMessage(e)
-    await load()
   } finally {
     busy.value = false
+    await load()
   }
 }
 
-async function create(): Promise<void> {
-  await run(async () => {
+function create(): Promise<void> {
+  return run(async () => {
     await http.post('/api/users', form)
     Object.assign(form, emptyForm())
     formOpen.value = false
@@ -101,7 +115,7 @@ async function create(): Promise<void> {
 function changeRole(user: User, role: Role): Promise<void> {
   return run(
     () => http.patch(`/api/users/${user.id}`, { role }),
-    `${user.fullName} ist jetzt ${roles.find((r) => r.value === role)?.label}.`,
+    `${user.fullName} ist jetzt ${roleOf(role).label}.`,
   )
 }
 
@@ -112,9 +126,15 @@ function toggleActive(user: User): Promise<void> {
   )
 }
 
-function changeHours(user: User, value: string): Promise<void> {
-  return run(
-    () => http.patch(`/api/users/${user.id}`, { weeklyHours: Number(value) }),
+async function changeHours(user: User): Promise<void> {
+  const value = window.prompt(
+    `Wochenstunden für ${user.fullName}:`,
+    String(user.weeklyHours).replace('.', ','),
+  )
+  if (!value) return
+
+  await run(
+    () => http.patch(`/api/users/${user.id}`, { weeklyHours: Number(value.replace(',', '.')) }),
     'Wochenstunden gespeichert.',
   )
 }
@@ -131,26 +151,112 @@ async function resetPassword(user: User): Promise<void> {
 </script>
 
 <template>
-  <div>
-    <div class="head">
-      <div>
-        <h1>Benutzer & Rechte</h1>
-        <p class="muted">
-          Die Rolle bestimmt, welche Seiten jemand sieht und was er ändern darf. „Planen“ heißt:
-          Arbeiten anlegen, bearbeiten, zuteilen und Anfragen erledigen.
-        </p>
-      </div>
-      <button type="button" @click="formOpen = !formOpen">
-        {{ formOpen ? 'Schließen' : '+ Benutzer anlegen' }}
-      </button>
+  <div class="page-head">
+    <div>
+      <h1>Benutzer &amp; Rechte</h1>
+      <p>Nur für die Werkstattleitung sichtbar</p>
     </div>
+    <div class="head-actions">
+      <span class="role-chip"><i></i>Rolle: {{ auth.user?.roleLabel }}</span>
+      <button type="button" @click="formOpen = true">+ Benutzer anlegen</button>
+    </div>
+  </div>
 
+  <div class="page-body">
     <p v-if="error" class="error">{{ error }}</p>
     <p v-if="message" class="success">{{ message }}</p>
 
-    <section v-if="formOpen" class="card">
-      <h2>Neuer Benutzer</h2>
-      <form class="form" @submit.prevent="create">
+    <section class="panel table-wrap">
+      <table>
+        <thead>
+          <tr>
+            <th>Benutzer</th>
+            <th>Rolle</th>
+            <th v-for="p in permissions" :key="p.label" class="center">{{ p.label }}</th>
+            <th></th>
+          </tr>
+        </thead>
+        <tbody>
+          <tr v-for="user in sorted" :key="user.id" :class="{ inactive: !user.active }">
+            <td>
+              <div class="who">
+                <span class="avatar grey">{{ user.initials }}</span>
+                <span>
+                  <strong>{{ user.fullName }}</strong>
+                  <small
+                    >{{ user.email }}<template v-if="!user.active"> · deaktiviert</template></small
+                  >
+                </span>
+              </div>
+            </td>
+            <td>
+              <label class="pill" :style="{ '--c': roleOf(user.role).color }">
+                <i></i>
+                <select
+                  :value="user.role"
+                  :disabled="busy || user.id === auth.user?.id"
+                  :title="
+                    user.id === auth.user?.id
+                      ? 'Die eigene Rolle kann man nicht ändern'
+                      : 'Rolle ändern'
+                  "
+                  @change="changeRole(user, ($event.target as HTMLSelectElement).value as Role)"
+                >
+                  <option v-for="r in roles" :key="r.value" :value="r.value">{{ r.label }}</option>
+                </select>
+              </label>
+            </td>
+            <td v-for="p in permissions" :key="p.label" class="center">
+              <span class="perm" :class="allowed(user.role, p.minRole) ? 'yes' : 'no'">
+                {{ allowed(user.role, p.minRole) ? '✓' : '–' }}
+              </span>
+            </td>
+            <td class="more-cell">
+              <button
+                type="button"
+                class="more"
+                aria-label="Weitere Aktionen"
+                @click.stop="menuFor = menuFor === user.id ? null : user.id"
+              >
+                ⋯
+              </button>
+              <div v-if="menuFor === user.id" class="menu" @click.stop="menuFor = null">
+                <button type="button" @click="changeHours(user)">
+                  Wochenstunden ({{ String(user.weeklyHours).replace('.', ',') }} h)
+                </button>
+                <button type="button" @click="resetPassword(user)">Passwort zurücksetzen</button>
+                <button
+                  v-if="user.id !== auth.user?.id"
+                  type="button"
+                  class="red"
+                  @click="toggleActive(user)"
+                >
+                  {{ user.active ? 'Deaktivieren' : 'Aktivieren' }}
+                </button>
+              </div>
+            </td>
+          </tr>
+        </tbody>
+      </table>
+    </section>
+
+    <section class="panel">
+      <h2>Was die Rollen dürfen</h2>
+      <div class="roles">
+        <div v-for="r in roles" :key="r.value" class="role" :style="{ '--c': r.color }">
+          <strong>{{ r.label }}</strong>
+          <span>{{ r.description }}</span>
+        </div>
+      </div>
+    </section>
+  </div>
+
+  <div v-if="formOpen" class="overlay" @click.self="formOpen = false">
+    <form class="dialog" @submit.prevent="create">
+      <h1>Benutzer anlegen</h1>
+      <p class="sub">Zugang für einen neuen Mitarbeiter</p>
+      <hr />
+      <div class="two">
         <div>
           <label for="u-first">Vorname</label>
           <input id="u-first" v-model="form.firstName" required />
@@ -164,7 +270,7 @@ async function resetPassword(user: User): Promise<void> {
           <input id="u-mail" v-model="form.email" type="email" required />
         </div>
         <div>
-          <label for="u-pass">Passwort</label>
+          <label for="u-pass">Passwort (mind. 8 Zeichen)</label>
           <input
             id="u-pass"
             v-model="form.password"
@@ -191,229 +297,298 @@ async function resetPassword(user: User): Promise<void> {
             required
           />
         </div>
-        <div class="actions wide">
-          <button type="submit" :disabled="busy">Anlegen</button>
-        </div>
-      </form>
-    </section>
-
-    <section class="card table-wrap">
-      <table>
-        <thead>
-          <tr>
-            <th>Benutzer</th>
-            <th>Rolle</th>
-            <th v-for="p in permissions" :key="p.label" class="center">{{ p.label }}</th>
-            <th title="Wochenstunden">Std.</th>
-            <th></th>
-          </tr>
-        </thead>
-        <tbody>
-          <tr v-for="user in sorted" :key="user.id" :class="{ inactive: !user.active }">
-            <td>
-              <div class="who">
-                <span class="avatar">{{ user.initials }}</span>
-                <span>
-                  <strong>{{ user.fullName }}</strong>
-                  <span class="muted small block">{{ user.email }}</span>
-                </span>
-              </div>
-            </td>
-            <td>
-              <select
-                :value="user.role"
-                :disabled="busy || user.id === auth.user?.id"
-                :title="user.id === auth.user?.id ? 'Die eigene Rolle kann man nicht ändern' : ''"
-                @change="changeRole(user, ($event.target as HTMLSelectElement).value as Role)"
-              >
-                <option v-for="r in roles" :key="r.value" :value="r.value">{{ r.label }}</option>
-              </select>
-            </td>
-            <td v-for="p in permissions" :key="p.label" class="center">
-              <span :class="allowed(user.role, p.minRole) ? 'yes' : 'no'">
-                {{ allowed(user.role, p.minRole) ? '✓' : '–' }}
-              </span>
-            </td>
-            <td>
-              <input
-                class="hours"
-                type="number"
-                step="0.5"
-                min="1"
-                :value="user.weeklyHours"
-                :disabled="busy"
-                @change="changeHours(user, ($event.target as HTMLInputElement).value)"
-              />
-            </td>
-            <td class="right">
-              <button
-                type="button"
-                class="secondary small"
-                :disabled="busy"
-                @click="resetPassword(user)"
-              >
-                Passwort
-              </button>
-              <button
-                v-if="user.id !== auth.user?.id"
-                type="button"
-                class="small"
-                :class="user.active ? 'danger' : 'secondary'"
-                :disabled="busy"
-                @click="toggleActive(user)"
-              >
-                {{ user.active ? 'Deaktivieren' : 'Aktivieren' }}
-              </button>
-            </td>
-          </tr>
-        </tbody>
-      </table>
-    </section>
-
-    <section class="card roles">
-      <div v-for="r in roles" :key="r.value" :class="`role role--${r.value}`">
-        <strong>{{ r.label }}</strong>
-        <span class="muted small">{{ r.description }}</span>
       </div>
-    </section>
+      <hr />
+      <div class="actions">
+        <button type="button" class="secondary" @click="formOpen = false">Abbrechen</button>
+        <button type="submit" :disabled="busy">Anlegen</button>
+      </div>
+    </form>
   </div>
 </template>
 
 <style scoped>
-.head {
+.head-actions {
   display: flex;
-  align-items: flex-start;
-  justify-content: space-between;
-  gap: 1rem;
-  margin-bottom: 1rem;
+  align-items: center;
+  gap: 20px;
 }
 
-section {
-  margin-bottom: 1rem;
+.role-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  height: 26px;
+  padding: 0 14px;
+  border-radius: 13px;
+  background: var(--primary-soft);
+  color: var(--primary);
+  font-size: 0.6875rem;
+  font-weight: 600;
 }
 
-.success {
-  background: color-mix(in srgb, var(--success) 12%, transparent);
-  color: var(--success);
-  border-radius: 8px;
-  padding: 0.6rem 0.8rem;
-  font-size: 0.875rem;
+.role-chip i {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: currentColor;
 }
 
-.form {
-  display: grid;
-  grid-template-columns: repeat(2, 1fr);
-  gap: 0.9rem;
+.page-body {
+  display: flex;
+  flex-direction: column;
+  gap: 24px;
 }
 
-.wide {
-  grid-column: 1 / -1;
+.panel {
+  background: var(--surface);
+  border-radius: 10px;
+  padding: 8px 20px 12px;
 }
 
 .table-wrap {
   overflow-x: auto;
-  padding: 0.5rem 1rem;
+}
+
+th {
+  padding-top: 20px;
+}
+
+tr:last-child td {
+  border-bottom: none;
 }
 
 .who {
   display: flex;
   align-items: center;
-  gap: 0.6rem;
+  gap: 12px;
 }
 
-.avatar {
+.avatar.grey {
   width: 32px;
   height: 32px;
-  flex: none;
-  border-radius: 50%;
-  display: grid;
-  place-items: center;
-  background: var(--bg);
-  font-weight: 700;
-  font-size: 0.75rem;
+  background: var(--button);
   color: var(--muted);
 }
 
-.block {
+.who strong {
   display: block;
+  font-size: 0.75rem;
+  font-weight: 600;
 }
 
-select {
-  min-width: 110px;
+.who small {
+  font-size: 0.625rem;
+  color: var(--muted);
 }
 
-.hours {
-  width: 68px;
+.pill {
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+  margin: 0;
+  width: 116px;
+  height: 24px;
+  border-radius: 12px;
+  background: var(--surface-muted);
 }
 
-td,
-th {
-  padding-left: 0.45rem;
-  padding-right: 0.45rem;
+.pill i {
+  position: absolute;
+  left: 12px;
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: var(--c);
+  pointer-events: none;
+}
+
+.pill select {
+  height: 24px;
+  padding: 0 8px 0 26px;
+  background: transparent;
+  color: var(--c);
+  font-size: 0.625rem;
+  font-weight: 600;
+  cursor: pointer;
+  appearance: none;
+}
+
+.pill select:disabled {
+  cursor: default;
+  opacity: 1;
 }
 
 .center {
   text-align: center;
 }
 
-.right {
-  text-align: right;
-  white-space: nowrap;
-}
-
-.right button + button {
-  margin-left: 0.4rem;
-}
-
-.yes {
-  color: var(--success);
+.perm {
+  display: inline-grid;
+  place-items: center;
+  width: 20px;
+  height: 20px;
+  border-radius: 50%;
+  font-size: 0.6875rem;
   font-weight: 700;
 }
 
-.no {
+.perm.yes {
+  background: var(--success-soft);
+  color: var(--success);
+}
+
+.perm.no {
+  background: var(--button);
+  color: var(--faint);
+}
+
+tr.inactive td {
+  opacity: 0.45;
+}
+
+tr.inactive td.more-cell {
+  opacity: 1;
+}
+
+.more-cell {
+  position: relative;
+  width: 40px;
+  text-align: right;
+}
+
+.more {
+  width: 28px;
+  height: 28px;
+  padding: 0;
+  background: none;
   color: var(--muted);
+  font-size: 1rem;
 }
 
-tr.inactive {
-  opacity: 0.5;
+.more:hover {
+  background: var(--button);
 }
 
-.small {
+.menu {
+  position: absolute;
+  right: 8px;
+  top: 44px;
+  z-index: 5;
+  min-width: 210px;
+  padding: 4px;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  box-shadow: 0 8px 24px rgba(16, 24, 40, 0.12);
+}
+
+.menu button {
+  display: block;
+  width: 100%;
+  height: auto;
+  padding: 8px 12px;
+  background: none;
+  color: var(--text);
+  font-weight: 500;
+  text-align: left;
+}
+
+.menu button:hover {
+  background: var(--button);
+}
+
+.menu .red {
+  color: var(--danger);
+}
+
+.panel h2 {
+  margin: 12px 0 16px;
   font-size: 0.75rem;
-}
-
-button.small {
-  padding: 0.3rem 0.6rem;
 }
 
 .roles {
   display: grid;
   grid-template-columns: repeat(3, 1fr);
-  gap: 1rem;
+  gap: 24px;
+  padding-bottom: 12px;
 }
 
 .role {
   display: flex;
   flex-direction: column;
-  padding-left: 0.75rem;
-  border-left: 3px solid;
+  gap: 4px;
+  padding-left: 14px;
+  border-left: 3px solid var(--c);
 }
 
-.role--ROLE_ADMIN {
-  border-color: var(--primary);
+.role strong {
+  font-size: 0.6875rem;
+  font-weight: 600;
+  color: var(--c);
 }
 
-.role--ROLE_FOREMAN {
-  border-color: var(--warning);
+.role span {
+  font-size: 0.625rem;
+  color: var(--muted);
 }
 
-.role--ROLE_USER {
-  border-color: var(--success);
+/* Dialog im Stil von "Arbeit anlegen" */
+.overlay {
+  position: fixed;
+  inset: 0;
+  z-index: 50;
+  background: rgba(31, 36, 48, 0.4);
+  display: flex;
+  justify-content: center;
+  align-items: flex-start;
+  padding: 4rem 1rem;
+}
+
+.dialog {
+  width: 560px;
+  max-width: 100%;
+  padding: 2rem;
+  border-radius: 12px;
+  background: var(--surface);
+}
+
+.dialog h1 {
+  margin: 0;
+}
+
+.sub {
+  margin: 2px 0 0;
+  font-size: 0.75rem;
+  color: var(--muted);
+}
+
+hr {
+  border: none;
+  border-top: 1px solid var(--border);
+  margin: 1.5rem 0;
+}
+
+.two {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 1.1rem 1.25rem;
+}
+
+.actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 12px;
+}
+
+.actions button {
+  height: 44px;
+  min-width: 104px;
 }
 
 @media (max-width: 720px) {
-  .form,
-  .roles {
+  .roles,
+  .two {
     grid-template-columns: 1fr;
   }
 }

@@ -6,21 +6,11 @@ services:
     App\:
         resource: '../src/'
         exclude:
-            - '../src/DataFixtures/'
             - '../src/Dto/'
             - '../src/Entity/'
             - '../src/Enum/'
             - '../src/Util/'
             - '../src/Kernel.php'
 
-# Demodaten gibt es nur in der Entwicklung – im Produktions-Image fehlt das Fixtures-Bundle.
-when@dev: &dev
-    services:
-        _defaults:
-            autowire: true
-            autoconfigure: true
-
-        App\DataFixtures\:
-            resource: '../src/DataFixtures/'
-
-when@test: *dev
+    App\DataFixtures\:
+        resource: '../src/DataFixtures/'

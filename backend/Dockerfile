@@ -20,6 +20,7 @@ COPY docker/entrypoint.sh /usr/local/bin/entrypoint
 
 WORKDIR /app
 COPY --from=vendor /app /app
+COPY docker/.env /app/.env
 RUN mkdir -p var config/jwt && chown -R www-data:www-data var config/jwt
 
 ENV APP_ENV=prod \

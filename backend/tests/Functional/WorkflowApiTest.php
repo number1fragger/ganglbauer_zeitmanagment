@@ -19,7 +19,7 @@ final class WorkflowApiTest extends ApiTestCase
         self::assertFalse($job['scheduled']);
         self::assertNull($job['startsAt']);
         self::assertNull($job['endsAt']);
-        self::assertNull($job['plannedMinutes']);
+        self::assertArrayNotHasKey('plannedMinutes', $job, 'Es gibt keine geplante Zeit mehr');
         self::assertSame('offen', $job['status']);
         self::assertSame(0, $job['actualSeconds']);
         self::assertSame('Alle Fächer neu', $job['description']);
@@ -36,7 +36,7 @@ final class WorkflowApiTest extends ApiTestCase
     /** 3: Eingeplante Arbeit erscheint zur richtigen Zeit im Kalender. */
     public function testScheduledJobAppearsAtTheRightTime(): void
     {
-        $job = $this->createJob(['startsAt' => '2026-09-29T07:30:00+02:00', 'plannedMinutes' => 90]);
+        $job = $this->createJob(['startsAt' => '2026-09-29T07:30:00+02:00', 'minutes' => 90]);
 
         $day = $this->api('GET', '/api/jobs?from=2026-09-28T22:00:00Z&to=2026-09-29T22:00:00Z', $this->chef);
         self::assertSame([$job['id']], array_column($day, 'id'));
@@ -50,7 +50,7 @@ final class WorkflowApiTest extends ApiTestCase
     /** 4 + 5 + 6: Starten, Pausieren, Fortsetzen, Abschliessen – Pausen zaehlen nicht. */
     public function testStartPauseResumeComplete(): void
     {
-        $job = $this->createJob(['plannedMinutes' => 180]);
+        $job = $this->createJob();
         $id = $job['id'];
 
         $this->at('2026-09-28 09:00');
@@ -86,7 +86,6 @@ final class WorkflowApiTest extends ApiTestCase
     public function testWorkAcrossSeveralDays(): void
     {
         $job = $this->createJob([
-            'plannedMinutes' => 480,
             'startsAt' => '2026-09-28T09:00:00+02:00',
             'endsAt' => '2026-09-29T16:00:00+02:00',
         ]);
@@ -151,7 +150,7 @@ final class WorkflowApiTest extends ApiTestCase
     /** Abschliessen ohne Start erzeugt keine kuenstliche Arbeitszeit. */
     public function testCompletingUnstartedJobCreatesNoTime(): void
     {
-        $id = $this->createJob(['plannedMinutes' => 120])['id'];
+        $id = $this->createJob()['id'];
 
         $done = $this->api('POST', "/api/jobs/$id/complete", $this->worker);
 
@@ -211,11 +210,11 @@ final class WorkflowApiTest extends ApiTestCase
     /** 10 + 11: Frueher fertig – Folgearbeiten ruecken nach Bestaetigung nach vorne. */
     public function testEarlyCompletionProposesAndAppliesRescheduling(): void
     {
-        $first = $this->createJob(['title' => 'Service', 'startsAt' => '2026-09-28T07:00:00+02:00', 'plannedMinutes' => 120])['id'];
-        $second = $this->createJob(['title' => 'Reifen', 'startsAt' => '2026-09-28T09:00:00+02:00', 'plannedMinutes' => 60])['id'];
-        $third = $this->createJob(['title' => 'Ölwechsel', 'startsAt' => '2026-09-28T10:00:00+02:00', 'plannedMinutes' => 60])['id'];
+        $first = $this->createJob(['title' => 'Service', 'startsAt' => '2026-09-28T07:00:00+02:00', 'minutes' => 120])['id'];
+        $second = $this->createJob(['title' => 'Reifen', 'startsAt' => '2026-09-28T09:00:00+02:00', 'minutes' => 60])['id'];
+        $third = $this->createJob(['title' => 'Ölwechsel', 'startsAt' => '2026-09-28T10:00:00+02:00', 'minutes' => 60])['id'];
         // Geplante Luecke: Kunde kommt erst um 13:00 – bleibt stehen.
-        $later = $this->createJob(['title' => 'Kundentermin', 'startsAt' => '2026-09-28T13:00:00+02:00', 'plannedMinutes' => 60])['id'];
+        $later = $this->createJob(['title' => 'Kundentermin', 'startsAt' => '2026-09-28T13:00:00+02:00', 'minutes' => 60])['id'];
 
         $this->at('2026-09-28 07:00');
         $this->api('POST', "/api/jobs/$first/start", $this->worker);
@@ -250,8 +249,8 @@ final class WorkflowApiTest extends ApiTestCase
 
     public function testStartedFollowersAreNeverMoved(): void
     {
-        $first = $this->createJob(['startsAt' => '2026-09-28T07:00:00+02:00', 'plannedMinutes' => 120])['id'];
-        $second = $this->createJob(['title' => 'Schon begonnen', 'startsAt' => '2026-09-28T09:00:00+02:00', 'plannedMinutes' => 60])['id'];
+        $first = $this->createJob(['startsAt' => '2026-09-28T07:00:00+02:00', 'minutes' => 120])['id'];
+        $second = $this->createJob(['title' => 'Schon begonnen', 'startsAt' => '2026-09-28T09:00:00+02:00', 'minutes' => 60])['id'];
 
         $this->at('2026-09-28 07:00');
         $this->api('POST', "/api/jobs/$second/start", $this->worker);
@@ -268,15 +267,14 @@ final class WorkflowApiTest extends ApiTestCase
     /** 12 + 13: Kalenderaenderungen werden gespeichert, Konflikte erkannt. */
     public function testCalendarChangesPersistAndConflictsAreReported(): void
     {
-        $a = $this->createJob(['title' => 'A', 'startsAt' => '2026-09-28T09:00:00+02:00', 'plannedMinutes' => 120])['id'];
-        $b = $this->createJob(['title' => 'B', 'startsAt' => '2026-09-28T13:00:00+02:00', 'plannedMinutes' => 60])['id'];
+        $a = $this->createJob(['title' => 'A', 'startsAt' => '2026-09-28T09:00:00+02:00', 'minutes' => 120])['id'];
+        $b = $this->createJob(['title' => 'B', 'startsAt' => '2026-09-28T13:00:00+02:00', 'minutes' => 60])['id'];
 
         // Per Drag & Drop auf 10:00 gezogen -> ueberschneidet sich mit A.
         $this->api('PUT', "/api/jobs/$b", $this->chef, [
             'title' => 'B',
             'startsAt' => '2026-09-28T10:00:00+02:00',
             'endsAt' => '2026-09-28T11:00:00+02:00',
-            'plannedMinutes' => 60,
             'assigneeId' => $this->worker->getId(),
         ]);
         self::assertSame('10:00', $this->reload($b)->getStartsAt()?->format('H:i'));
@@ -289,11 +287,11 @@ final class WorkflowApiTest extends ApiTestCase
     /** Begonnene und abgeschlossene Arbeiten werden nicht versehentlich verschoben. */
     public function testStartedAndDoneJobsAreProtected(): void
     {
-        $id = $this->createJob(['title' => 'A', 'startsAt' => '2026-09-28T09:00:00+02:00', 'plannedMinutes' => 60])['id'];
+        $id = $this->createJob(['title' => 'A', 'startsAt' => '2026-09-28T09:00:00+02:00', 'minutes' => 60])['id'];
         $move = [
             'title' => 'A',
             'startsAt' => '2026-09-28T11:00:00+02:00',
-            'plannedMinutes' => 60,
+            'endsAt' => '2026-09-28T12:00:00+02:00',
             'assigneeId' => $this->worker->getId(),
         ];
 
@@ -304,7 +302,7 @@ final class WorkflowApiTest extends ApiTestCase
         $this->api('PUT', "/api/jobs/$id", $this->chef, $move + ['confirmStartedChange' => true]);
 
         $this->api('POST', "/api/jobs/$id/complete", $this->worker);
-        $this->api('PUT', "/api/jobs/$id", $this->chef, ['startsAt' => '2026-09-28T12:00:00+02:00'] + $move + ['confirmStartedChange' => true], 409);
+        $this->api('PUT', "/api/jobs/$id", $this->chef, ['startsAt' => '2026-09-28T12:00:00+02:00', 'endsAt' => '2026-09-28T13:00:00+02:00'] + $move + ['confirmStartedChange' => true], 409);
 
         // Titel aendern ohne Terminaenderung bleibt moeglich.
         $this->api('PUT', "/api/jobs/$id", $this->chef, ['title' => 'A (Kunde informiert)'] + $move);
@@ -323,7 +321,8 @@ final class WorkflowApiTest extends ApiTestCase
             'assigneeId' => $this->worker->getId(),
         ]);
         self::assertTrue($this->reload($id)->isScheduled());
-        self::assertNull($this->reload($id)->getPlannedMinutes(), 'Kalenderdauer ist nicht automatisch Arbeitszeit');
+        self::assertSame(120, $this->reload($id)->getCalendarMinutes());
+        self::assertSame(0, $this->reload($id)->getActualSeconds(), 'Einplanen startet keine Zeit');
 
         $this->api('PUT', "/api/jobs/$id", $this->chef, ['title' => 'Bremsen hinten', 'assigneeId' => $this->worker->getId()]);
         self::assertFalse($this->reload($id)->isScheduled());
@@ -331,8 +330,8 @@ final class WorkflowApiTest extends ApiTestCase
 
     public function testInvalidScheduleIsRejected(): void
     {
-        $error = $this->api('POST', '/api/jobs', $this->chef, ['title' => 'X', 'startsAt' => '2026-09-30T07:00:00+02:00'], 422);
-        self::assertStringContainsString('Ende oder die geplante Arbeitszeit', $error['title'].json_encode($error['errors'] ?? []));
+        $error = $this->api('POST', '/api/jobs', $this->chef, ['title' => 'X', 'endsAt' => '2026-09-30T07:00:00+02:00'], 422);
+        self::assertStringContainsString('Arbeitsbeginn', $error['title'].json_encode($error['errors'] ?? [], \JSON_UNESCAPED_UNICODE));
 
         $this->api('POST', '/api/jobs', $this->chef, [
             'title' => 'X',
@@ -363,5 +362,104 @@ final class WorkflowApiTest extends ApiTestCase
         self::assertSame('dark', $this->api('GET', '/api/me', $this->worker)['theme']);
         self::assertSame('system', $this->api('GET', '/api/me', $this->chef)['theme']);
         $this->api('PUT', '/api/me/preferences', $this->worker, ['theme' => 'pink'], 422);
+    }
+
+    /**
+     * To-do -> Kalender per Drag & Drop (PUT /schedule) und zurueck
+     * (DELETE /schedule). Dauerhaft gespeichert, nie doppelt, startet keine Zeit.
+     */
+    public function testScheduleFromTodoAndBack(): void
+    {
+        $id = $this->createJob(['title' => 'Kompressor prüfen', 'assigneeId' => null])['id'];
+        $todo = fn (): array => array_column(array_filter(
+            $this->api('GET', '/api/jobs/board?doneDays=0', $this->chef),
+            static fn (array $j): bool => !$j['scheduled'],
+        ), 'id');
+        self::assertContains($id, $todo());
+
+        // Auf Di 10:00 in die Spalte von Anton gezogen
+        $job = $this->api('PUT', "/api/jobs/$id/schedule", $this->chef, [
+            'startsAt' => '2026-09-29T10:00:00+02:00',
+            'assigneeId' => $this->worker->getId(),
+            'changeAssignee' => true,
+        ]);
+        self::assertTrue($job['scheduled']);
+        self::assertSame('2026-09-29T11:00:00+02:00', $job['endsAt'], 'technischer Standardblock von 60 Minuten');
+        self::assertSame($this->worker->getId(), $job['assignee']['id']);
+        self::assertSame('offen', $job['status'], 'Einplanen startet keine Arbeit');
+        self::assertSame(0, $job['actualSeconds']);
+        self::assertNotContains($id, $todo());
+
+        // Nochmal einplanen verschiebt nur – es entsteht kein zweiter Eintrag.
+        $this->api('PUT', "/api/jobs/$id/schedule", $this->chef, ['startsAt' => '2026-09-29T13:00:00+02:00', 'endsAt' => '2026-09-29T15:00:00+02:00']);
+        $calendar = $this->api('GET', '/api/jobs?from=2026-09-28T22:00:00Z&to=2026-09-29T22:00:00Z', $this->chef);
+        self::assertSame([$id], array_column($calendar, 'id'));
+        self::assertSame('13:00', $this->reload($id)->getStartsAt()?->format('H:i'));
+        self::assertSame($this->worker->getId(), $this->reload($id)->getAssignee()?->getId(), 'Zuteilung bleibt ohne changeAssignee');
+
+        // Mit erfasster Zeit wieder aus dem Kalender nehmen: Zeit bleibt, Aufgabe kehrt zurueck.
+        $this->at('2026-09-29 13:00');
+        $this->api('POST', "/api/jobs/$id/start", $this->worker);
+        $this->at('2026-09-29 13:45');
+        $this->api('POST', "/api/jobs/$id/pause", $this->worker);
+        $back = $this->api('DELETE', "/api/jobs/$id/schedule", $this->chef);
+        self::assertFalse($back['scheduled']);
+        self::assertSame(45, $back['actualMinutes']);
+        self::assertContains($id, $todo());
+        self::assertSame(45 * 60, $this->reload($id)->getActualSeconds());
+
+        // Abgeschlossen: weder in der To-do-Liste noch einplanbar.
+        $this->api('POST', "/api/jobs/$id/complete", $this->worker);
+        self::assertNotContains($id, $todo());
+        $this->api('PUT', "/api/jobs/$id/schedule", $this->chef, ['startsAt' => '2026-09-30T08:00:00+02:00'], 409);
+        $this->api('DELETE', "/api/jobs/$id/schedule", $this->chef, expected: 409);
+    }
+
+    public function testSchedulingRequiresPlannerAndValidTimes(): void
+    {
+        $id = $this->createJob()['id'];
+
+        $this->api('PUT', "/api/jobs/$id/schedule", $this->worker, ['startsAt' => '2026-09-29T10:00:00+02:00'], 403);
+        $this->api('PUT', "/api/jobs/$id/schedule", $this->chef, [], 422);
+        $this->api('PUT', "/api/jobs/$id/schedule", $this->chef, [
+            'startsAt' => '2026-09-29T10:00:00+02:00',
+            'endsAt' => '2026-09-29T09:00:00+02:00',
+        ], 422);
+
+        // Begonnene Arbeit nur mit Bestaetigung verschieben
+        $this->api('PUT', "/api/jobs/$id/schedule", $this->chef, ['startsAt' => '2026-09-28T08:00:00+02:00']);
+        $this->api('POST', "/api/jobs/$id/start", $this->worker);
+        $this->api('PUT', "/api/jobs/$id/schedule", $this->chef, ['startsAt' => '2026-09-28T09:00:00+02:00'], 409);
+        $this->api('PUT', "/api/jobs/$id/schedule", $this->chef, ['startsAt' => '2026-09-28T09:00:00+02:00', 'confirmStartedChange' => true]);
+    }
+
+    /** Auswertung der Ist-Zeit: nur erfasste Abschnitte, auf den Zeitraum beschnitten. */
+    public function testActualTimeReport(): void
+    {
+        $id = $this->createJob(['title' => 'Mähdrescher'])['id'];
+        $this->at('2026-09-28 09:00');
+        $this->api('POST', "/api/jobs/$id/start", $this->worker);
+        $this->at('2026-09-28 12:00');
+        $this->api('POST', "/api/jobs/$id/pause", $this->worker);
+        $this->at('2026-09-29 08:00');
+        $this->api('POST', "/api/jobs/$id/start", $this->worker);
+        $this->at('2026-09-29 11:00');
+        $this->api('POST', "/api/jobs/$id/complete", $this->worker);
+
+        $report = $this->api('GET', '/api/reports/ist-zeit?from=2026-09-28&to=2026-10-04', $this->chef);
+        self::assertSame(360, $report['totals']['actualMinutes']);
+        self::assertSame(1, $report['totals']['jobsCompleted']);
+        self::assertSame(1, $report['totals']['multiDayJobs']);
+        self::assertSame('Anton Huber', $report['perWorker'][0]['worker']);
+        self::assertSame(2, $report['perWorker'][0]['days']);
+        self::assertSame([180, 180, 0, 0, 0, 0, 0], array_column($report['perDay'], 'actualMinutes'));
+        self::assertSame('Mähdrescher', $report['topJobs'][0]['title']);
+        self::assertArrayNotHasKey('plannedMinutes', $report['totals']);
+
+        // Nur der Dienstag: der Montags-Abschnitt zaehlt nicht mit.
+        $tuesday = $this->api('GET', '/api/reports/ist-zeit?from=2026-09-29&to=2026-09-29', $this->chef);
+        self::assertSame(180, $tuesday['totals']['actualMinutes']);
+
+        $this->api('GET', '/api/reports/ist-zeit', $this->worker, expected: 403);
     }
 }

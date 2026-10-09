@@ -91,6 +91,12 @@ abstract class ApiTestCase extends WebTestCase
      */
     protected function createJob(array $extra = []): array
     {
+        // Bequemlichkeit fuer Tests: 'minutes' = Laenge des Kalenderblocks ab startsAt.
+        if (isset($extra['minutes'], $extra['startsAt'])) {
+            $extra['endsAt'] = (new \DateTimeImmutable($extra['startsAt']))->modify(sprintf('+%d minutes', $extra['minutes']))->format(\DATE_ATOM);
+        }
+        unset($extra['minutes']);
+
         return $this->api('POST', '/api/jobs', $this->chef, $extra + [
             'title' => 'Bremsen hinten',
             'assigneeId' => $this->worker->getId(),

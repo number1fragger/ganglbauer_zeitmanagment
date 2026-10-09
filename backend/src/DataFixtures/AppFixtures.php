@@ -22,7 +22,7 @@ final class AppFixtures extends Fixture
 {
     public const PASSWORD = 'werkstatt';
 
-    /** [Tag ab Montag, Beginn, Stunden geplant, Stunden tatsaechlich, Arbeiter, Titel, Kunde, Prioritaet] */
+    /** [Tag ab Montag, Beginn, Stunden im Kalender, Stunden tatsaechlich, Arbeiter, Titel, Kunde, Prioritaet] */
     private const CURRENT_WEEK = [
         [0, '07:00', 2.5, 2.0, 'a.huber', 'Bremsen hinten', 'Fam. Wagner', Priority::High],
         [0, '09:30', 2.0, 2.0, 'a.huber', 'Service 60.000 km', 'M. Berger', Priority::Medium],
@@ -50,7 +50,7 @@ final class AppFixtures extends Fixture
         [8, '07:00', 3.0, 3.0, 'd.gruber', 'Service', 'K. Sturm', Priority::Medium],
     ];
 
-    /** Titel fuer die erledigten Arbeiten der Vorwochen (Soll/Ist-Auswertung). */
+    /** Titel fuer die erledigten Arbeiten der Vorwochen (Ist-Zeit-Auswertung). */
     private const HISTORY_TITLES = [
         'Hydraulikschlauch tauschen', 'Service Traktor', 'Mähwerk Messerwechsel', 'Anhänger Bremsen prüfen',
         'Kabine Elektrik', 'Ölwechsel', 'Zapfwelle instandsetzen', 'Beleuchtung Anhänger',
@@ -75,9 +75,9 @@ final class AppFixtures extends Fixture
         $monday = new \DateTimeImmutable('monday this week');
         $running = [];
 
-        foreach (self::CURRENT_WEEK as [$day, $time, $plannedHours, $actualHours, $worker, $title, $customer, $priority]) {
+        foreach (self::CURRENT_WEEK as [$day, $time, $slotHours, $actualHours, $worker, $title, $customer, $priority]) {
             $start = $monday->modify(sprintf('+%d days %s', $day, $time));
-            $job = $this->job($manager, $users[$worker], $title, $customer, $priority, $start, (int) ($plannedHours * 60));
+            $job = $this->job($manager, $users[$worker], $title, $customer, $priority, $start, (int) ($slotHours * 60));
             $actualEnd = $start->modify(sprintf('+%d minutes', (int) ($actualHours * 60)));
 
             if ($actualEnd <= $now) {
@@ -115,8 +115,7 @@ final class AppFixtures extends Fixture
             ->setCustomer('Gut Ebersdorf')
             ->setPriority(Priority::High)
             ->setAssignee($worker)
-            ->setPlannedMinutes(12 * 60)
-            ->schedule($start, null, $monday->modify('+3 days 15:00'));
+            ->schedule($start, $monday->modify('+3 days 15:00'));
         $manager->persist($job);
 
         $sections = [['+2 days 07:00', '+2 days 11:30'], ['+2 days 12:00', '+2 days 15:30'], ['+3 days 07:00', '+3 days 10:00']];
@@ -169,17 +168,17 @@ final class AppFixtures extends Fixture
                 for ($day = 0; $day < 5; ++$day) {
                     $start = $monday->modify(sprintf('-%d days 07:00', 7 * $week - $day));
 
-                    foreach ([4, 3.5] as $plannedHours) {
-                        $planned = (int) ($plannedHours * 60);
-                        $actual = $planned + 15 * mt_rand(-3, 5);
+                    foreach ([4, 3.5] as $slotHours) {
+                        $slot = (int) ($slotHours * 60);
+                        $actual = $slot + 15 * mt_rand(-3, 5);
                         $title = self::HISTORY_TITLES[mt_rand(0, \count(self::HISTORY_TITLES) - 1)];
 
-                        $job = $this->job($manager, $user, $title, 'Werkstattauftrag', Priority::Medium, $start, $planned);
+                        $job = $this->job($manager, $user, $title, 'Werkstattauftrag', Priority::Medium, $start, $slot);
                         $end = $start->modify(sprintf('+%d minutes', $actual));
                         $this->track($manager, $job, $start, $end);
                         $job->complete($end);
 
-                        $start = $start->modify(sprintf('+%d minutes', $planned + 30));
+                        $start = $start->modify(sprintf('+%d minutes', $slot + 30));
                     }
                 }
             }
@@ -199,14 +198,14 @@ final class AppFixtures extends Fixture
         return $user;
     }
 
-    private function job(ObjectManager $manager, User $assignee, string $title, string $customer, Priority $priority, \DateTimeImmutable $start, int $plannedMinutes): Job
+    private function job(ObjectManager $manager, User $assignee, string $title, string $customer, Priority $priority, \DateTimeImmutable $start, int $slotMinutes): Job
     {
         $job = (new Job())
             ->setTitle($title)
             ->setCustomer($customer)
             ->setPriority($priority)
             ->setAssignee($assignee)
-            ->schedule($start, $plannedMinutes);
+            ->schedule($start, $start->modify(sprintf('+%d minutes', $slotMinutes)));
         $manager->persist($job);
 
         return $job;

@@ -7,7 +7,10 @@ export const DAY_END_HOUR = 17
 export const HOUR_PX = 58
 export const DAY_HEIGHT = (DAY_END_HOUR - DAY_START_HOUR) * HOUR_PX
 
-export const hours = Array.from({ length: DAY_END_HOUR - DAY_START_HOUR + 1 }, (_, i) => DAY_START_HOUR + i)
+export const hours = Array.from(
+  { length: DAY_END_HOUR - DAY_START_HOUR + 1 },
+  (_, i) => DAY_START_HOUR + i,
+)
 
 export interface Segment {
   job: Job
@@ -16,11 +19,19 @@ export interface Segment {
   to: number
 }
 
-export interface MoveEvent {
-  job: Job
-  startsAt: Date
-  assigneeId: number | null
-}
+/**
+ * Ergebnis eines Drag & Drop: entweder ein Platz im Kalender (Tag, Uhrzeit,
+ * ggf. Arbeiter-Spalte) oder zurueck in die To-do-Liste (Termin entfernen).
+ */
+export type MoveEvent =
+  | { kind: 'slot'; job: Job; startsAt: Date; assigneeId: number | null }
+  | { kind: 'unschedule'; job: Job }
+
+/**
+ * Rein technische Standardlaenge eines Kalenderblocks beim Einplanen ohne
+ * Ende (wie Job::DEFAULT_SLOT_MINUTES im Backend) – keine geplante Arbeitszeit.
+ */
+export const DEFAULT_SLOT_MINUTES = 60
 
 /** Teil einer Arbeit, der auf einen Tag faellt – oder null, wenn nichts davon sichtbar ist. */
 export function segmentOn(job: Job, day: Date): Segment | null {
@@ -100,10 +111,11 @@ export function layoutByWorker(segments: Segment[], workerOrder: number[]): Plac
   )
 }
 
-/** Dauer im Kalender; Aufgaben ohne Termin nehmen die geplante Zeit (sonst 1 h). */
+/** Laenge des Kalenderblocks; Aufgaben ohne Termin bekommen den technischen Standardblock. */
 export function jobDurationMs(job: Job): number {
-  if (job.startsAt && job.endsAt) return new Date(job.endsAt).getTime() - new Date(job.startsAt).getTime()
-  return (job.plannedMinutes ?? 60) * 60_000
+  if (job.startsAt && job.endsAt)
+    return new Date(job.endsAt).getTime() - new Date(job.startsAt).getTime()
+  return DEFAULT_SLOT_MINUTES * 60_000
 }
 
 /** Stunde am Tag -> Abstand von oben in Pixel */

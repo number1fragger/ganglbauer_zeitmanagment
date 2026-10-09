@@ -2,7 +2,7 @@
 
 namespace App\Controller\Api;
 
-use App\Service\SollIstReport;
+use App\Service\ActualTimeReport;
 use Symfony\Component\HttpFoundation\JsonResponse;
 use Symfony\Component\HttpFoundation\Request;
 use Symfony\Component\HttpKernel\Exception\BadRequestHttpException;
@@ -10,14 +10,14 @@ use Symfony\Component\Routing\Attribute\Route;
 use Symfony\Component\Security\Http\Attribute\IsGranted;
 
 /**
- * A1 – Soll/Ist-Vergleich. Zeitraum als ?from=JJJJ-MM-TT&to=JJJJ-MM-TT
+ * Auswertung der Ist-Zeit (tatsaechlich geleistete Arbeit). Zeitraum als ?from=JJJJ-MM-TT&to=JJJJ-MM-TT
  * (beide inklusive), Standard ist die laufende Woche.
  */
 final class ReportController extends AbstractApiController
 {
-    #[Route('/api/reports/soll-ist', name: 'api_report_soll_ist', methods: ['GET'])]
+    #[Route('/api/reports/ist-zeit', name: 'api_report_actual_time', methods: ['GET'])]
     #[IsGranted('ROLE_VORARBEITER')]
-    public function sollIst(Request $request, SollIstReport $report): JsonResponse
+    public function actualTime(Request $request, ActualTimeReport $report): JsonResponse
     {
         $from = $this->parseDate($request->query->getString('from'), 'from') ?? new \DateTimeImmutable('monday this week');
         $to = $this->parseDate($request->query->getString('to'), 'to') ?? $from->modify('+6 days');

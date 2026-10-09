@@ -23,9 +23,9 @@ export interface User extends UserRef {
 export type ThemePreference = 'light' | 'dark' | 'system'
 
 /**
- * Eine Arbeit bzw. Aufgabe. Drei Zeitangaben sind strikt getrennt:
- * geplante Arbeitszeit (plannedMinutes), Termin im Kalender (startsAt/endsAt,
- * optional, auch mehrtaegig) und Ist-Zeit (actualSeconds = Summe der Abschnitte).
+ * Eine Arbeit bzw. Aufgabe. Termin im Kalender (startsAt/endsAt, optional,
+ * auch mehrtaegig) und Ist-Zeit (actualSeconds = Summe der Arbeitsabschnitte)
+ * sind strikt getrennt. Eine geplante Arbeitsdauer gibt es nicht.
  */
 export interface Job {
   id: number
@@ -34,8 +34,6 @@ export interface Job {
   customer: string | null
   priority: Priority
   status: JobStatus
-  plannedMinutes: number | null
-  originalPlannedMinutes: number | null
   scheduled: boolean
   startsAt: string | null
   endsAt: string | null
@@ -45,9 +43,6 @@ export interface Job {
   createdAt: string
   actualSeconds: number
   actualMinutes: number
-  remainingMinutes: number | null
-  overrun: boolean
-  overrunMinutes: number
   started: boolean
   running: boolean
   paused: boolean
@@ -79,8 +74,16 @@ export interface JobInput {
   priority: Priority
   startsAt: string | null
   endsAt: string | null
-  plannedMinutes: number | null
   assigneeId: number | null
+  confirmStartedChange?: boolean
+}
+
+/** Einplanen per Drag & Drop oder "Einplanen"-Dialog. Ohne Ende: technischer Standardblock. */
+export interface ScheduleInput {
+  startsAt: string
+  endsAt?: string | null
+  assigneeId?: number | null
+  changeAssignee?: boolean
   confirmStartedChange?: boolean
 }
 
@@ -98,7 +101,7 @@ export interface FollowUp {
   jobId: number
   direction: 'earlier' | 'later'
   shiftMinutes: number
-  plannedEnd: string
+  scheduledEnd: string
   actualEnd: string
   moves: FollowUpMove[]
   warnings: string[]
@@ -116,8 +119,8 @@ export interface WorkRequest {
 }
 
 export interface WorkerStatus {
-  remainingMinutes: number
   openJobs: number
+  unscheduledJobs: number
   availableFrom: string
 }
 
@@ -136,25 +139,38 @@ export interface Overview {
   generatedAt: string
   workers: OverviewWorker[]
   requests: { id: number; user: UserRef; neededAt: string }[]
-  warnings: { jobId: number; title: string; worker: string | null; overrunMinutes: number }[]
   conflicts: Conflict[]
   followUps: FollowUp[]
 }
 
-export interface SollIstReport {
+export interface ActualTimeReport {
   from: string
   to: string
   totals: {
-    plannedMinutes: number
+    actualMinutes: number
+    previousActualMinutes: number
+    workers: number
+    jobsWorkedOn: number
+    jobsCompleted: number
+    multiDayJobs: number
+    autoClosedEntries: number
+  }
+  perWorker: {
+    workerId: number
+    worker: string
     actualMinutes: number
     jobs: number
-    workers: number
-    accuracyPercent: number | null
-    accuracyDelta: number | null
-    overruns: number
-  }
-  perWorker: { workerId: number | null; worker: string; plannedMinutes: number; actualMinutes: number }[]
-  deviations: { jobId: number; title: string; worker: string; diffMinutes: number }[]
+    days: number
+  }[]
+  perDay: { date: string; actualMinutes: number }[]
+  topJobs: {
+    jobId: number
+    title: string
+    worker: string
+    status: JobStatus
+    actualMinutes: number
+    workedDays: number
+  }[]
 }
 
 export interface UserInput {

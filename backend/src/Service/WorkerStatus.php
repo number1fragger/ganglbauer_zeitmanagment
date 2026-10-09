@@ -6,8 +6,7 @@ use App\Entity\User;
 use App\Repository\JobRepository;
 
 /**
- * F9 – wie lange ist ein Arbeiter noch ausgelastet und ab wann braucht
- * er wieder neue Arbeit?
+ * F9 – ab wann braucht ein Arbeiter wieder neue Arbeit?
  */
 class WorkerStatus
 {
@@ -18,29 +17,30 @@ class WorkerStatus
     }
 
     /**
-     * @return array{remainingMinutes: int, openJobs: int, availableFrom: string}
+     * Frei ist ein Arbeiter, sobald sein letzter offener Termin im Kalender
+     * vorbei ist (naechste Arbeitszeit danach). Aufgaben ohne Termin werden
+     * nur gezaehlt – eine geplante Dauer gibt es nicht.
+     *
+     * @return array{openJobs: int, unscheduledJobs: int, availableFrom: string}
      */
     public function of(User $user, \DateTimeImmutable $now): array
     {
-        $remaining = 0;
         $lastEnd = $now;
+        $unscheduled = 0;
         $openJobs = $this->jobs->findOpen($user);
 
         foreach ($openJobs as $job) {
-            // Ohne geplante Zeit ist die Restarbeit unbekannt und zaehlt nicht.
-            $remaining += $job->getRemainingMinutes() ?? 0;
-            if (null !== $job->getEndsAt()) {
-                $lastEnd = max($lastEnd, $job->getEndsAt());
+            if (null === $job->getEndsAt()) {
+                ++$unscheduled;
+                continue;
             }
+            $lastEnd = max($lastEnd, $job->getEndsAt());
         }
 
-        // Frei ist er erst, wenn die Restarbeit getan UND der letzte Termin vorbei ist.
-        $availableFrom = max($this->workload->estimateAvailableFrom($user, $remaining, $now), $lastEnd);
-
         return [
-            'remainingMinutes' => $remaining,
             'openJobs' => \count($openJobs),
-            'availableFrom' => $availableFrom->format(\DATE_ATOM),
+            'unscheduledJobs' => $unscheduled,
+            'availableFrom' => $this->workload->estimateAvailableFrom($user, 0, $lastEnd)->format(\DATE_ATOM),
         ];
     }
 }

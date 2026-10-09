@@ -77,26 +77,45 @@ Tests: `./dev.sh test`
 | Ansicht        | Wer          | Inhalt                                                                 |
 | -------------- | ------------ | ---------------------------------------------------------------------- |
 | Dashboard      | Vorarbeiter+ | Wer arbeitet gerade woran, heute geplant, Hinweise (Konflikte, Umplanung, Anfragen) |
-| Kalender       | alle¹        | Tag/Woche/Monat, Drag & Drop, Aufgaben ohne Termin einplanen, mobil als Liste |
+| Kalender       | alle¹        | Links die To-do-Liste (Aufträge ohne Termin), rechts Tag/Woche/Monat. Drag & Drop zum Einplanen, mobil als Liste |
 | Aufgaben       | alle¹        | Kanban (Offen / In Bearbeitung / Abgeschlossen), Suche und Filter      |
 | Meine Arbeiten | Arbeiter, Vorarbeiter | Starten, Pausieren, Fortsetzen, Abschließen, „Brauche Arbeit“ |
-| Auswertung     | Vorarbeiter+ | Soll/Ist-Vergleich                                                     |
+| Auswertung     | Vorarbeiter+ | Ist-Zeit je Arbeiter, je Tag und aufwändigste Aufträge                 |
 
 Hell/Dunkel/System lässt sich unten in der Seitenleiste (mobil oben) umschalten. Die Wahl
 wird im Browser und im Benutzerkonto gespeichert.
 
 ## Aufgaben, Termine und Ist-Zeit
 
-Eine Arbeit hat drei voneinander unabhängige Zeitangaben:
+Ein Auftrag hat zwei voneinander unabhängige Zeitangaben – eine geplante Arbeitsdauer gibt es nicht:
 
 | Angabe                | Feld(er)                 | Pflicht | Bedeutung                                              |
 | --------------------- | ------------------------ | :-----: | ------------------------------------------------------ |
-| Geplante Arbeitszeit  | `plannedMinutes`         |  nein   | Wie lange gearbeitet werden soll (Soll)                 |
-| Termin im Kalender    | `startsAt`, `endsAt`     |  nein   | Wann die Arbeit eingeplant ist – darf mehrere Tage umfassen |
+| Termin im Kalender    | `startsAt`, `endsAt`     |  nein   | Wann der Auftrag eingeplant ist – darf mehrere Tage umfassen |
 | Ist-Zeit              | Summe der `time_entry`   |    –    | Wie lange tatsächlich gearbeitet wurde                  |
 
-Ohne Termin ist eine Arbeit eine reine Aufgabe (To-do): sie steht in der Aufgabenverwaltung,
-aber nicht im Kalender.
+Status (offen / in Bearbeitung / abgeschlossen) und Einplanung sind getrennt: ein offener Auftrag
+kann einen Termin haben oder nicht.
+
+### To-do-Liste und Einplanen
+
+- Ein neuer Auftrag braucht nur einen Titel. Ohne Termin steht er in der **To-do-Liste** links neben
+  dem Kalender (offene und laufende Aufträge ohne Termin; abgeschlossene nicht).
+- **Einplanen:** Auftrag aus der Liste in die Tages- oder Wochenansicht ziehen. Tag und Position auf
+  der Zeitachse (15-Minuten-Raster) bestimmen den Beginn; in der Tagesansicht bestimmt die Spalte auch
+  den zuständigen Arbeiter. Während des Ziehens zeigt die App Ziel-Tag und -Uhrzeit bzw. „Hier nicht
+  möglich“. Gespeichert wird über `PUT /api/jobs/{id}/schedule`.
+- Ohne angegebenes Ende bekommt der Kalendereintrag eine rein **technische Standardlänge** von
+  60 Minuten (`Job::DEFAULT_SLOT_MINUTES`), damit er im Kalender sichtbar ist. Das ist keine geplante
+  Arbeitszeit; das Ende lässt sich im Auftrag ändern (auch mehrtägig).
+- Ein Auftrag hat genau einen Termin – erneutes Einplanen verschiebt ihn, es entsteht nie ein zweiter.
+- **Zurück in die To-do-Liste:** Termin aus dem Kalender auf die Liste ziehen oder im Auftrag „Aus dem
+  Kalender nehmen“ (`DELETE /api/jobs/{id}/schedule`). Erfasste Ist-Zeit bleibt erhalten.
+- Einplanen startet keine Zeiterfassung. Begonnene Aufträge lassen sich nicht versehentlich ziehen,
+  abgeschlossene gar nicht verschieben.
+- Auf Touch-Geräten und ohne Maus: Knopf „Einplanen“ an jedem Eintrag (Tag, Uhrzeit, optional Ende).
+- Die Seitenleiste lässt sich einklappen (wird gemerkt); auf Tablet/Handy öffnet sie der Knopf „To-do“
+  als Schublade.
 
 ### So wird die Ist-Zeit berechnet
 
@@ -132,9 +151,14 @@ mit Warnung vorgeschlagen. Die Ist-Zeit abgeschlossener Arbeiten wird dabei nie 
 
 ## Datenbank
 
-Migrationen liegen in `backend/migrations/`. `Version20261009150000` macht Termin und geplante Zeit
-optional, ergänzt `job.description`, `time_entry.auto_closed` (+ Index) und `user.theme`. Bestehende
-Daten bleiben unverändert erhalten. Beim Docker-Start läuft die Migration automatisch, lokal:
+Migrationen liegen in `backend/migrations/`:
+
+- `Version20261009150000` macht den Termin optional, ergänzt `job.description`,
+  `time_entry.auto_closed` (+ Index) und `user.theme`.
+- `Version20261010090000` entfernt die geplante Arbeitszeit (`job.planned_minutes`,
+  `job.original_planned_minutes`). Termine, Auftragsdaten und Ist-Zeiten bleiben unverändert.
+
+Beim Docker-Start läuft die Migration automatisch, lokal:
 
 ```bash
 ./dev.sh console doctrine:migrations:migrate
@@ -156,7 +180,7 @@ JWT-Schlüssel selbst unter `backend/var/jwt-test/`.
 | GET         | `/api/jobs/mine`                          | alle            | Meine offenen Arbeiten + heute erledigt |
 | GET         | `/api/jobs/{id}`                          | Zuständige²     | Details inkl. Arbeitsabschnitte        |
 | POST        | `/api/jobs`, PUT/DELETE `/api/jobs/{id}`  | Vorarbeiter+    | Arbeiten anlegen/planen (nur Titel Pflicht) |
-| POST        | `/api/jobs/{id}/extend`                   | Zuständige²     | Zeit erhöhen, Folgetermine rücken (F5) |
+| PUT/DELETE  | `/api/jobs/{id}/schedule`                 | Vorarbeiter+    | Einplanen/verschieben bzw. aus dem Kalender nehmen |
 | POST        | `/api/jobs/{id}/start`                    | zugeteilter Arbeiter | Starten bzw. Fortsetzen           |
 | POST        | `/api/jobs/{id}/pause`                    | Zuständige²     | Pausieren                              |
 | POST        | `/api/jobs/{id}/complete`, `/reopen`      | Zuständige²     | Abschließen bzw. wieder öffnen         |
@@ -164,8 +188,8 @@ JWT-Schlüssel selbst unter `backend/var/jwt-test/`.
 | POST        | `/api/time/stop`                          | alle            | Eigene laufende Zeiterfassung stoppen  |
 | PUT         | `/api/me/preferences`                     | alle            | Farbschema (light/dark/system)         |
 | POST        | `/api/work-requests`                      | alle            | „Brauche Arbeit“ ab morgen (F7, F8)    |
-| GET         | `/api/overview`                           | Vorarbeiter+    | Kapazität, Anfragen, Warnungen, Konflikte, Umplanung |
-| GET         | `/api/reports/soll-ist?from=&to=`         | Vorarbeiter+    | Soll/Ist-Vergleich (A1)                |
+| GET         | `/api/overview`                           | Vorarbeiter+    | Frei ab (laut Kalender), Anfragen, Konflikte, Umplanung |
+| GET         | `/api/reports/ist-zeit?from=&to=`         | Vorarbeiter+    | Auswertung der Ist-Zeit                |
 | GET/POST/PUT | `/api/users`                             | Chef            | Benutzer & Rechte                      |
 
 ¹ Arbeiter sehen nur ihre eigenen Arbeiten.

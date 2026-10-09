@@ -2,19 +2,38 @@
 import { computed, ref, watch } from 'vue'
 import { planningApi } from '@/api'
 import { errorMessage } from '@/api/http'
-import type { Overview, SollIstReport } from '@/api/types'
-import { addDays, describeShort, formatHours, formatSignedHours, isoWeek, startOfWeek, toDateKey } from '@/utils/time'
+import type { ActualTimeReport, Overview } from '@/api/types'
+import {
+  addDays,
+  describeShort,
+  formatDuration,
+  formatSignedHours,
+  fromDateKey,
+  isoWeek,
+  startOfWeek,
+  toDateKey,
+  weekdayName,
+} from '@/utils/time'
 
+/**
+ * Auswertung der tatsaechlich geleisteten Arbeitszeit (Ist-Zeit). Es gibt
+ * keine geplante Dauer mehr – verglichen wird mit der Vorwoche.
+ */
 const WEEKS_TO_CHOOSE = 8
 
 /** Die laufende und die letzten Wochen zur Auswahl. */
 const weeks = Array.from({ length: WEEKS_TO_CHOOSE }, (_, i) => {
   const monday = addDays(startOfWeek(new Date()), -7 * i)
-  return { key: toDateKey(monday), label: `KW ${isoWeek(monday)}`, from: monday, to: addDays(monday, 6) }
+  return {
+    key: toDateKey(monday),
+    label: `KW ${isoWeek(monday)}`,
+    from: monday,
+    to: addDays(monday, 6),
+  }
 })
 
 const selected = ref(weeks[0]!.key)
-const report = ref<SollIstReport | null>(null)
+const report = ref<ActualTimeReport | null>(null)
 const overview = ref<Overview | null>(null)
 const error = ref('')
 
@@ -33,57 +52,73 @@ async function load(): Promise<void> {
 
 watch(selected, load, { immediate: true })
 
-const kpis = computed(() => {
-  const totals = report.value?.totals
-  if (!totals) return []
-  const diff = totals.actualMinutes - totals.plannedMinutes
-  const percent = (value: number | null) =>
-    value === null ? '–' : `${value.toLocaleString('de-AT', { minimumFractionDigits: 1 })} %`
+const hours = (minutes: number) => formatDuration(minutes * 60)
 
+const kpis = computed(() => {
+  const t = report.value?.totals
+  if (!t) return []
+  const diff = t.actualMinutes - t.previousActualMinutes
   return [
     {
-      label: 'Geplante Zeit gesamt',
-      value: formatHours(totals.plannedMinutes),
-      note: `${totals.workers} Arbeiter · ${totals.jobs} Arbeiten`,
-      tone: 'neutral',
+      label: 'Ist-Zeit gesamt',
+      value: hours(t.actualMinutes),
+      note: t.previousActualMinutes
+        ? `${formatSignedHours(diff)} zur Vorwoche`
+        : 'kein Vergleich zur Vorwoche',
     },
     {
-      label: 'Tatsächliche Zeit',
-      value: formatHours(totals.actualMinutes),
-      note: `${formatSignedHours(diff)} gegenüber Plan`,
-      tone: diff > 0 ? 'bad' : 'good',
+      label: 'Bearbeitete Aufträge',
+      value: String(t.jobsWorkedOn),
+      note: `${t.workers} Arbeiter mit erfasster Zeit`,
     },
+    { label: 'Abgeschlossen', value: String(t.jobsCompleted), note: 'Aufträge in diesem Zeitraum' },
     {
-      label: 'Planungsgenauigkeit',
-      value: percent(totals.accuracyPercent),
-      note:
-        totals.accuracyDelta === null
-          ? 'kein Vergleich zur Vorwoche'
-          : `${totals.accuracyDelta > 0 ? '+' : ''}${totals.accuracyDelta.toLocaleString('de-AT')} % zur Vorwoche`,
-      tone: (totals.accuracyPercent ?? 0) >= 90 ? 'good' : 'warn',
+      label: 'Mehrtägige Arbeiten',
+      value: String(t.multiDayJobs),
+      note: t.autoClosedEntries
+        ? `${t.autoClosedEntries} Abschnitt(e) automatisch beendet`
+        : 'alle Abschnitte selbst beendet',
     },
-    { label: 'Zeitüberschreitungen', value: String(totals.overruns), note: `von ${totals.jobs} Arbeiten`, tone: 'warn' },
   ]
 })
 
-/** Laengster Balken = groesster Wert ueber alle Arbeiter. */
-const scale = computed(() =>
-  Math.max(1, ...(report.value?.perWorker ?? []).flatMap((w) => [w.plannedMinutes, w.actualMinutes])),
+/** Laengster Balken = groesster Wert. */
+const workerScale = computed(() =>
+  Math.max(1, ...(report.value?.perWorker ?? []).map((w) => w.actualMinutes)),
+)
+const dayScale = computed(() =>
+  Math.max(60, ...(report.value?.perDay ?? []).map((d) => d.actualMinutes)),
 )
 
-/** Auslastung: Restarbeit relativ zum am laengsten ausgelasteten Arbeiter (mindestens ein Tag). */
+const dayLabel = (key: string) => {
+  const day = fromDateKey(key)
+  return day ? weekdayName(day, 'short') : key
+}
+
+/** Wann braucht wer wieder Arbeit – laut den Terminen im Kalender. */
 const utilisation = computed(() => {
   const workers = overview.value?.workers ?? []
-  const max = Math.max(8 * 60, ...workers.map((w) => w.remainingMinutes))
+  const now = Date.now()
+  const ahead = (w: (typeof workers)[number]) =>
+    Math.max(0, new Date(w.availableFrom).getTime() - now)
+  const max = Math.max(24 * 3_600_000, ...workers.map(ahead))
 
   return [...workers]
     .sort((a, b) => a.availableFrom.localeCompare(b.availableFrom))
-    .map((w) => ({
-      name: w.user.fullName,
-      percent: Math.max(2, (w.remainingMinutes / max) * 100),
-      color: w.remainingMinutes < 4 * 60 ? 'var(--danger)' : w.remainingMinutes < 8 * 60 ? 'var(--warning)' : 'var(--success)',
-      freeFrom: `frei ab ${describeShort(new Date(w.availableFrom))}`,
-    }))
+    .map((w) => {
+      const ms = ahead(w)
+      return {
+        name: w.user.fullName,
+        percent: Math.max(2, (ms / max) * 100),
+        color:
+          ms < 4 * 3_600_000
+            ? 'var(--danger)'
+            : ms < 24 * 3_600_000
+              ? 'var(--warning)'
+              : 'var(--success)',
+        freeFrom: `frei ab ${describeShort(new Date(w.availableFrom))}`,
+      }
+    })
 })
 </script>
 
@@ -92,7 +127,7 @@ const utilisation = computed(() => {
     <header class="report__header">
       <div>
         <h1 class="page-title">Auswertung</h1>
-        <p class="page-sub">Geplante gegenüber tatsächlich benötigter Zeit</p>
+        <p class="page-sub">Tatsächlich geleistete Arbeitszeit (Ist-Zeit) aus der Zeiterfassung</p>
       </div>
       <label class="report__period">
         <span>Zeitraum:</span>
@@ -106,7 +141,7 @@ const utilisation = computed(() => {
       <p v-if="error" class="form-error" role="alert">{{ error }}</p>
 
       <section v-if="report" class="kpis">
-        <article v-for="kpi in kpis" :key="kpi.label" class="card kpi" :class="`kpi--${kpi.tone}`">
+        <article v-for="kpi in kpis" :key="kpi.label" class="card kpi">
           <span class="kpi__label">{{ kpi.label }}</span>
           <strong class="kpi__value">{{ kpi.value }}</strong>
           <span class="kpi__note">{{ kpi.note }}</span>
@@ -115,49 +150,76 @@ const utilisation = computed(() => {
 
       <div v-if="report" class="report__row">
         <section class="card panel">
-          <h2 class="section-title">Soll/Ist je Arbeiter</h2>
-          <p class="section-sub">blau = geplant · grün/orange = tatsächlich (orange heißt länger als geplant)</p>
+          <h2 class="section-title">Ist-Zeit je Arbeiter</h2>
+          <p class="section-sub">Summe aller Arbeitsabschnitte im Zeitraum</p>
 
           <div v-if="report.perWorker.length" class="bars">
-            <div v-for="row in report.perWorker" :key="row.worker" class="bars__worker">
+            <div v-for="row in report.perWorker" :key="row.workerId" class="bars__worker">
               <strong>{{ row.worker }}</strong>
               <div class="bars__line">
-                <span class="bars__bar" :style="{ width: `${(row.plannedMinutes / scale) * 75}%` }" />
-                <small>{{ formatHours(row.plannedMinutes) }}</small>
-              </div>
-              <div class="bars__line" :class="row.actualMinutes > row.plannedMinutes ? 'bars--over' : 'bars--ok'">
-                <span class="bars__bar" :style="{ width: `${(row.actualMinutes / scale) * 75}%` }" />
-                <small>{{ formatHours(row.actualMinutes) }}</small>
+                <span
+                  class="bars__bar"
+                  :style="{ width: `${(row.actualMinutes / workerScale) * 75}%` }"
+                />
+                <small
+                  >{{ hours(row.actualMinutes) }} · {{ row.jobs }} Auftr. ·
+                  {{ row.days }} Tag(e)</small
+                >
               </div>
             </div>
           </div>
-          <p v-else class="empty report__empty">In dieser Woche wurden keine Arbeiten mit erfasster Zeit abgeschlossen.</p>
+          <p v-else class="empty report__empty">
+            In diesem Zeitraum wurde keine Arbeitszeit erfasst.
+          </p>
         </section>
 
         <section class="card panel">
-          <h2 class="section-title">Größte Abweichungen</h2>
-          <ul v-if="report.deviations.length" class="deviations">
-            <li v-for="d in report.deviations" :key="d.jobId">
+          <h2 class="section-title">Aufwändigste Aufträge</h2>
+          <ul v-if="report.topJobs.length" class="deviations">
+            <li v-for="j in report.topJobs" :key="j.jobId">
               <span>
-                <strong>{{ d.title }}</strong>
-                <small>{{ d.worker }}</small>
+                <strong>{{ j.title }}</strong>
+                <small
+                  >{{ j.worker
+                  }}<template v-if="j.workedDays > 1">
+                    · an {{ j.workedDays }} Tagen</template
+                  ></small
+                >
               </span>
-              <b :class="d.diffMinutes > 0 ? 'deviations--over' : 'deviations--under'">
-                {{ formatSignedHours(d.diffMinutes) }}
-              </b>
+              <b class="tabular">{{ hours(j.actualMinutes) }}</b>
             </li>
           </ul>
-          <p v-else class="empty report__empty">Keine Abweichungen – alles wie geplant.</p>
+          <p v-else class="empty report__empty">Noch keine erfasste Arbeitszeit.</p>
         </section>
       </div>
 
+      <section v-if="report" class="card panel">
+        <h2 class="section-title">Ist-Zeit je Tag</h2>
+        <div class="days" role="list">
+          <div v-for="d in report.perDay" :key="d.date" class="days__col" role="listitem">
+            <span class="days__track">
+              <span
+                class="days__bar"
+                :style="{ height: `${(d.actualMinutes / dayScale) * 100}%` }"
+              />
+            </span>
+            <small class="tabular">{{ d.actualMinutes ? hours(d.actualMinutes) : '–' }}</small>
+            <b>{{ dayLabel(d.date) }}</b>
+          </div>
+        </div>
+      </section>
+
       <section v-if="utilisation.length" class="card panel">
-        <h2 class="section-title">Auslastung – wann wird wieder Arbeit gebraucht?</h2>
+        <h2 class="section-title">Wann wird wieder Arbeit gebraucht?</h2>
+        <p class="section-sub">Laut den Terminen im Kalender</p>
         <ul class="utilisation">
           <li v-for="row in utilisation" :key="row.name">
             <span>{{ row.name }}</span>
             <span class="utilisation__track">
-              <span class="utilisation__bar" :style="{ width: `${row.percent}%`, background: row.color }" />
+              <span
+                class="utilisation__bar"
+                :style="{ width: `${row.percent}%`, background: row.color }"
+              />
             </span>
             <small>{{ row.freeFrom }}</small>
           </li>
@@ -354,6 +416,47 @@ const utilisation = computed(() => {
 
 .deviations--under {
   color: var(--success);
+}
+
+.days {
+  display: grid;
+  grid-template-columns: repeat(7, minmax(0, 1fr));
+  gap: 10px;
+  margin-top: 18px;
+}
+
+.days__col {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 6px;
+}
+
+.days__track {
+  display: flex;
+  align-items: flex-end;
+  width: 100%;
+  max-width: 44px;
+  height: 120px;
+  border-radius: var(--radius-sm);
+  background: var(--grid);
+}
+
+.days__bar {
+  display: block;
+  width: 100%;
+  min-height: 2px;
+  border-radius: var(--radius-sm);
+  background: var(--primary);
+}
+
+.days__col small {
+  color: var(--muted);
+  font-size: 10px;
+}
+
+.days__col b {
+  font-size: 11px;
 }
 
 .utilisation {

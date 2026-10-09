@@ -45,7 +45,7 @@ class FollowUpPlanner
      *     jobId: int,
      *     direction: 'earlier'|'later',
      *     shiftMinutes: int,
-     *     plannedEnd: string,
+     *     scheduledEnd: string,
      *     actualEnd: string,
      *     moves: list<array<string, mixed>>,
      *     warnings: list<string>,
@@ -63,7 +63,7 @@ class FollowUpPlanner
             'jobId' => (int) $done->getId(),
             'direction' => $plan['shift'] < 0 ? 'earlier' : 'later',
             'shiftMinutes' => $plan['shift'],
-            'plannedEnd' => $plan['plannedEnd']->format(\DATE_ATOM),
+            'scheduledEnd' => $plan['scheduledEnd']->format(\DATE_ATOM),
             'actualEnd' => $plan['anchor']->format(\DATE_ATOM),
             'moves' => array_map(static fn (array $move): array => [
                 'jobId' => $move['job']->getId(),
@@ -108,12 +108,12 @@ class FollowUpPlanner
                     break; // inzwischen begonnen – nicht mehr verschieben
                 }
 
-                $job->schedule($move['startsAt'], null, $move['endsAt']);
+                $job->schedule($move['startsAt'], $move['endsAt']);
                 $moved[] = $job;
             }
 
             // Die abgeschlossene Arbeit belegt im Kalender nur noch die tatsaechliche Zeit.
-            $done->schedule($done->getStartsAt(), null, $plan['anchor']);
+            $done->schedule($done->getStartsAt(), $plan['anchor']);
 
             return $moved;
         });
@@ -123,7 +123,7 @@ class FollowUpPlanner
      * @return array{
      *     shift: int,
      *     anchor: \DateTimeImmutable,
-     *     plannedEnd: \DateTimeImmutable,
+     *     scheduledEnd: \DateTimeImmutable,
      *     moves: list<array{job: Job, startsAt: \DateTimeImmutable, endsAt: \DateTimeImmutable, recommended: bool, warning: ?string}>,
      *     warnings: list<string>,
      * }|null
@@ -131,17 +131,17 @@ class FollowUpPlanner
     private function plan(Job $done): ?array
     {
         $completedAt = $done->getCompletedAt();
-        $plannedEnd = $done->getEndsAt();
+        $scheduledEnd = $done->getEndsAt();
         $startsAt = $done->getStartsAt();
         $assignee = $done->getAssignee();
 
-        if (!$done->isDone() || null === $completedAt || null === $plannedEnd || null === $startsAt || null === $assignee) {
+        if (!$done->isDone() || null === $completedAt || null === $scheduledEnd || null === $startsAt || null === $assignee) {
             return null;
         }
 
         // Tatsaechliches Ende, auf 15 Minuten aufgerundet; ein Termin belegt mindestens 15 Minuten.
         $anchor = max($this->roundUp($completedAt), $startsAt->modify('+'.self::ROUND_MINUTES.' minutes'));
-        $shift = intdiv($anchor->getTimestamp() - $plannedEnd->getTimestamp(), 60);
+        $shift = intdiv($anchor->getTimestamp() - $scheduledEnd->getTimestamp(), 60);
 
         if (abs($shift) < self::ROUND_MINUTES) {
             return null;
@@ -149,16 +149,16 @@ class FollowUpPlanner
 
         $moves = [];
         $warnings = [];
-        $dayEnd = $this->dayEnd($plannedEnd, $assignee->getDailyMinutes());
+        $dayEnd = $this->dayEnd($scheduledEnd, $assignee->getDailyMinutes());
         // Frueher fertig: die Kette ab dem geplanten Ende. Spaeter fertig: alles, was jetzt kollidiert.
-        $previousEnd = $shift < 0 ? $plannedEnd : $anchor;
+        $previousEnd = $shift < 0 ? $scheduledEnd : $anchor;
 
-        foreach ($this->jobs->findFollowing($done, min($plannedEnd, $startsAt)) as $next) {
+        foreach ($this->jobs->findFollowing($done, min($scheduledEnd, $startsAt)) as $next) {
             $nextStart = $next->getStartsAt();
             $nextEnd = $next->getEndsAt();
             \assert(null !== $nextStart && null !== $nextEnd);
 
-            if ($nextStart < $plannedEnd) {
+            if ($nextStart < $scheduledEnd) {
                 continue; // lag schon vorher parallel – nicht Teil der Kette
             }
 
@@ -204,7 +204,7 @@ class FollowUpPlanner
             $previousEnd = $shift < 0 ? $nextEnd : $newEnd;
         }
 
-        return ['shift' => $shift, 'anchor' => $anchor, 'plannedEnd' => $plannedEnd, 'moves' => $moves, 'warnings' => $warnings];
+        return ['shift' => $shift, 'anchor' => $anchor, 'scheduledEnd' => $scheduledEnd, 'moves' => $moves, 'warnings' => $warnings];
     }
 
     private function roundUp(\DateTimeImmutable $moment): \DateTimeImmutable

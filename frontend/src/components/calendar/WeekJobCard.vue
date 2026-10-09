@@ -12,7 +12,6 @@ defineEmits<{ open: [job: Job] }>()
     class="week-job accent tinted"
     :class="{
       'week-job--done': isDone(job),
-      'week-job--overrun': job.overrun && !isDone(job),
       'week-job--conflict': conflict?.length,
       'week-job--running': job.running,
     }"
@@ -56,9 +55,6 @@ defineEmits<{ open: [job: Job] }>()
   opacity: 0.55;
 }
 
-.week-job--overrun {
-  box-shadow: inset 0 0 0 1.5px var(--danger);
-}
 
 .week-job--conflict {
   box-shadow: inset 0 0 0 1.5px var(--danger);

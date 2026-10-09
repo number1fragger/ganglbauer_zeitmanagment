@@ -54,10 +54,10 @@ function freeWorkers(day: Date, segments: Segment[]): number {
 
   return props.workers.filter((w) => {
     if (!props.visible.includes(w.user.id)) return false
-    const plannedHours = segments
+    const bookedHours = segments
       .filter((s) => s.job.assignee?.id === w.user.id)
       .reduce((sum, s) => sum + (s.to - s.from), 0)
-    return plannedHours < w.user.weeklyHours / 10
+    return bookedHours < w.user.weeklyHours / 10
   }).length
 }
 </script>

@@ -9,19 +9,14 @@ const props = defineProps<{ job: Job; conflict?: string[] }>()
 defineEmits<{ open: [job: Job] }>()
 
 const done = computed(() => isDone(props.job))
-const state = computed(() =>
-  done.value ? 'done' : props.job.overrun ? 'overrun' : workState(props.job),
-)
+const state = computed(() => (done.value ? 'done' : workState(props.job)))
 
-/** Soll, Ist und Kalenderdauer sind verschiedene Dinge – hier kurz zusammengefasst. */
-const effort = computed(() => {
-  const soll = props.job.plannedMinutes
-    ? `Soll ${formatDuration(props.job.plannedMinutes * 60)}`
-    : 'ohne Soll'
-  return props.job.actualSeconds > 0
-    ? `${soll} · Ist ${formatDuration(props.job.actualSeconds)}`
-    : soll
-})
+/** Nur die tatsaechlich erfasste Zeit – eine geplante Dauer gibt es nicht. */
+const effort = computed(() =>
+  props.job.actualSeconds > 0
+    ? `Ist ${formatDuration(props.job.actualSeconds)}`
+    : (props.job.assignee?.shortName ?? 'Nicht zugeteilt'),
+)
 </script>
 
 <template>
@@ -49,13 +44,6 @@ const effort = computed(() => {
         title="Terminkonflikt"
         ><AppIcon name="layers" :size="10"
       /></span>
-      <span
-        v-else-if="job.overrun"
-        class="badge day-job__badge"
-        style="--b: var(--danger)"
-        title="Zeit überschritten"
-        >!</span
-      >
       <span v-else-if="job.running" class="badge day-job__badge" style="--b: var(--primary)"
         >läuft</span
       >
@@ -96,10 +84,6 @@ const effort = computed(() => {
 
 .day-job--done {
   background: var(--surface-muted);
-}
-
-.day-job--overrun {
-  background: var(--danger-soft);
 }
 
 .day-job--running {
@@ -153,9 +137,5 @@ const effort = computed(() => {
 .day-job__effort {
   margin-top: auto;
   font-weight: 500;
-}
-
-.day-job--overrun .day-job__effort {
-  color: var(--danger);
 }
 </style>

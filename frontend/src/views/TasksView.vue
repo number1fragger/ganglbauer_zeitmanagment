@@ -174,7 +174,6 @@ async function quickAdd(): Promise<void> {
       priority: 'mittel',
       startsAt: null,
       endsAt: null,
-      plannedMinutes: null,
       assigneeId: assignee.value,
     })
     quickTitle.value = ''

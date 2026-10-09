@@ -17,8 +17,6 @@ import {
   addDays,
   describeMoment,
   formatDayMonth,
-  formatDuration,
-  formatHours,
   formatRange,
   isWeekend,
   nextWorkday,
@@ -86,7 +84,7 @@ const groups = computed(() => {
   return [
     {
       key: 'today',
-      title: 'Heute geplant',
+      title: 'Heute im Kalender',
       hint: 'inkl. überfälliger und begonnener Arbeiten',
       jobs: open
         .filter(
@@ -102,7 +100,7 @@ const groups = computed(() => {
     },
     {
       key: 'later',
-      title: 'Später geplant',
+      title: 'Später im Kalender',
       hint: '',
       jobs: open
         .filter((job) => job.scheduled && !isToday(job) && !overdue(job))
@@ -128,7 +126,7 @@ const todayLabel = computed(() =>
 
 const finishText = computed(() =>
   status.value
-    ? `Voraussichtlich fertig: ${describeMoment(new Date(status.value.availableFrom))}`
+    ? `Kalender frei ab ${describeMoment(new Date(status.value.availableFrom))}`
     : '',
 )
 
@@ -232,9 +230,7 @@ const withdraw = () =>
           <p v-if="running.customer" class="muted">{{ running.customer }}</p>
           <div class="now__clock">
             <LiveDuration :job="running" clock />
-            <small v-if="running.plannedMinutes"
-              >von {{ formatDuration(running.plannedMinutes * 60) }} geplant</small
-            >
+            <small>Ist-Zeit gesamt<template v-if="running.workedDays > 1"> · an {{ running.workedDays }} Tagen</template></small>
           </div>
           <div class="now__actions">
             <button
@@ -295,9 +291,11 @@ const withdraw = () =>
 
       <aside class="my-work__side">
         <section v-if="status" class="remaining card">
-          <span class="remaining__label">Verbleibende Arbeit (laut Plan)</span>
-          <strong>{{ formatHours(status.remainingMinutes).replace(' h', ' Stunden') }}</strong>
-          <span class="muted">{{ status.openJobs }} offene Arbeit(en) · {{ finishText }}</span>
+          <span class="remaining__label">Offene Arbeiten</span>
+          <strong>{{ status.openJobs }}</strong>
+          <span class="muted"
+            >{{ status.unscheduledJobs }} davon ohne Termin · {{ finishText }}</span
+          >
         </section>
 
         <section class="card request">

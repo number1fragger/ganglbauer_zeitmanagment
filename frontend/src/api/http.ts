@@ -90,7 +90,7 @@ export const http = {
   get: <T>(path: string) => request<T>('GET', path),
   post: <T>(path: string, body?: unknown) => once<T>('POST', path, body),
   put: <T>(path: string, body?: unknown) => once<T>('PUT', path, body),
-  delete: (path: string) => once<void>('DELETE', path),
+  delete: <T = void>(path: string) => once<T>('DELETE', path),
 }
 
 export function errorMessage(error: unknown): string {

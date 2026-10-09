@@ -1,11 +1,11 @@
 <script setup lang="ts">
 import { computed } from 'vue'
 import type { Overview } from '@/api/types'
-import { describeMoment, describeSlot, formatHours, formatSignedHours } from '@/utils/time'
+import { DAY_MS, describeMoment, describeSlot } from '@/utils/time'
 import PriorityLegend from '../PriorityLegend.vue'
 
-/** Unter einem halben Arbeitstag Restarbeit gilt "braucht bald Arbeit". */
-const SOON_MINUTES = 4 * 60
+/** Wer innerhalb eines Tages frei wird, braucht bald neue Arbeit. */
+const soon = (availableFrom: string) => new Date(availableFrom).getTime() - Date.now() < DAY_MS
 
 const props = defineProps<{ overview: Overview }>()
 defineEmits<{ assign: [request: Overview['requests'][number]]; openJob: [id: number] }>()
@@ -14,25 +14,25 @@ const capacity = computed(() =>
   [...props.overview.workers].sort((a, b) => a.availableFrom.localeCompare(b.availableFrom)),
 )
 
-const remainingText = (minutes: number) =>
-  minutes <= 2 * 60 ? `in ${formatHours(minutes)} fertig` : `noch ${formatHours(minutes)} Arbeit`
+const openText = (worker: Overview['workers'][number]) =>
+  `${worker.openJobs} offen` + (worker.unscheduledJobs ? ` · ${worker.unscheduledJobs} ohne Termin` : '')
 </script>
 
 <template>
   <aside class="sidebar">
     <section>
       <h2 class="section-title">Kapazität</h2>
-      <p class="section-sub">Wann ist welcher Arbeiter wieder frei?</p>
+      <p class="section-sub">Wann ist welcher Arbeiter laut Kalender wieder frei?</p>
       <ul class="sidebar__list">
         <li
           v-for="worker in capacity"
           :key="worker.user.id"
           class="card accent capacity"
-          :class="{ 'capacity--soon': worker.remainingMinutes < SOON_MINUTES }"
+          :class="{ 'capacity--soon': soon(worker.availableFrom) }"
         >
           <strong>{{ worker.user.fullName }}</strong>
           <span class="capacity__when">braucht Arbeit: {{ describeMoment(new Date(worker.availableFrom)) }}</span>
-          <small>{{ remainingText(worker.remainingMinutes) }}</small>
+          <small>{{ openText(worker) }}</small>
         </li>
       </ul>
     </section>
@@ -50,25 +50,6 @@ const remainingText = (minutes: number) =>
         </li>
       </ul>
       <p v-else class="empty sidebar__empty">Gerade wartet niemand auf neue Arbeit.</p>
-    </section>
-
-    <section>
-      <h2 class="section-title">Warnungen</h2>
-      <ul v-if="overview.warnings.length" class="sidebar__list">
-        <li v-for="warning in overview.warnings" :key="warning.jobId">
-          <button class="card warning" @click="$emit('openJob', warning.jobId)">
-            <span class="badge warning__icon">!</span>
-            <span>
-              <strong>Zeit überschritten</strong>
-              <small>
-                {{ warning.title }}<template v-if="warning.worker"> · {{ warning.worker }}</template>
-                · {{ formatSignedHours(warning.overrunMinutes) }}
-              </small>
-            </span>
-          </button>
-        </li>
-      </ul>
-      <p v-else class="empty sidebar__empty">Alle Arbeiten liegen im Plan.</p>
     </section>
 
     <PriorityLegend with-done />
@@ -157,33 +138,7 @@ const remainingText = (minutes: number) =>
   font-size: 10px;
 }
 
-.warning {
-  display: flex;
-  align-items: flex-start;
-  gap: 10px;
-  width: 100%;
-  padding: 12px 16px;
-  border: 0;
-  background: var(--danger-soft);
-  text-align: left;
-}
 
-.warning__icon {
-  background: var(--danger);
-  font-size: 11px;
-}
 
-.warning strong {
-  display: block;
-  color: var(--danger);
-  font-size: 12px;
-  font-weight: 600;
-}
 
-.warning small {
-  display: block;
-  margin-top: 4px;
-  color: var(--muted);
-  font-size: 10px;
-}
 </style>

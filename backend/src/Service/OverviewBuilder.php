@@ -9,9 +9,9 @@ use App\Repository\UserRepository;
 use App\Repository\WorkRequestRepository;
 
 /**
- * Daten fuer Dashboard und Seitenleiste der Planung (F9): Kapazitaet je
- * Arbeiter, offene "Brauche Arbeit"-Anfragen, Warnungen bei
- * Zeitueberschreitung, Terminkonflikte und Umplanungsvorschlaege.
+ * Daten fuer Dashboard und Seitenleiste der Planung (F9): wann ist welcher
+ * Arbeiter frei, offene "Brauche Arbeit"-Anfragen, Terminkonflikte und
+ * Umplanungsvorschlaege.
  */
 class OverviewBuilder
 {
@@ -51,23 +51,10 @@ class OverviewBuilder
             ];
         }
 
-        $warnings = [];
-        foreach ($openJobs as $job) {
-            if ($job->isOverrun()) {
-                $warnings[] = [
-                    'jobId' => $job->getId(),
-                    'title' => $job->getTitle(),
-                    'worker' => $job->getAssignee()?->getShortName(),
-                    'overrunMinutes' => $job->getOverrunMinutes(),
-                ];
-            }
-        }
-
         return [
             'generatedAt' => $now->format(\DATE_ATOM),
             'workers' => $workers,
             'requests' => $requests,
-            'warnings' => $warnings,
             'conflicts' => $this->conflicts($now),
             'followUps' => $this->followUps($now),
         ];

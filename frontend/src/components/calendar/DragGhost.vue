@@ -3,10 +3,18 @@ import { computed } from 'vue'
 import { drag } from '@/composables/useJobDrag'
 import { priorityColor } from '@/utils/domain'
 
-const time = (date: Date) => date.toLocaleTimeString('de-AT', { hour: '2-digit', minute: '2-digit' })
-const label = computed(() =>
-  drag.target ? `${time(drag.target.startsAt)} – ${time(drag.target.endsAt)}` : 'Hier nicht möglich',
-)
+const time = (date: Date) =>
+  date.toLocaleTimeString('de-AT', { hour: '2-digit', minute: '2-digit' })
+const day = (date: Date) =>
+  date.toLocaleDateString('de-AT', { weekday: 'short', day: '2-digit', month: '2-digit' })
+
+/** Rueckmeldung waehrend des Ziehens: wohin die Arbeit kommt – oder dass es hier nicht geht. */
+const label = computed(() => {
+  const target = drag.target
+  if (!target) return 'Hier nicht möglich – in Tag oder Woche ablegen'
+  if (target.kind === 'unschedule') return 'Zurück in die To-do-Liste'
+  return `${day(target.startsAt)}, ${time(target.startsAt)} Uhr`
+})
 
 const style = computed(() => {
   const target = drag.target
@@ -24,7 +32,12 @@ const style = computed(() => {
 
 <template>
   <Teleport to="body">
-    <div v-if="drag.active && drag.job" class="ghost" :class="{ 'ghost--landing': drag.dropping }" :style="style">
+    <div
+      v-if="drag.active && drag.job"
+      class="ghost"
+      :class="{ 'ghost--landing': drag.dropping }"
+      :style="style"
+    >
       <strong>{{ drag.job.title }}</strong>
       <span class="ghost__time" :class="{ 'ghost__time--none': !drag.target }">{{ label }}</span>
     </div>
@@ -52,7 +65,10 @@ const style = computed(() => {
 
 .ghost--landing {
   box-shadow: 0 2px 6px rgb(15 23 42 / 15%);
-  transition: transform 0.18s cubic-bezier(0.2, 0.8, 0.2, 1), width 0.18s, box-shadow 0.18s;
+  transition:
+    transform 0.18s cubic-bezier(0.2, 0.8, 0.2, 1),
+    width 0.18s,
+    box-shadow 0.18s;
 }
 
 .ghost strong {

@@ -7,14 +7,13 @@ import { confirmAction } from '@/composables/useConfirm'
 import { useJobActions } from '@/composables/useJobActions'
 import { toast } from '@/composables/useToast'
 import { useAuthStore } from '@/stores/auth'
+import { DEFAULT_SLOT_MINUTES } from '@/utils/calendar'
 import { canStart, canWorkOn, isDone, priorities } from '@/utils/domain'
 import {
   addMinutes,
   formatDateTimeShort,
   formatDuration,
-  formatHours,
   formatTime,
-  minutesFrom,
   sameDay,
   spanDays,
   toLocalInput,
@@ -27,8 +26,8 @@ import StatusChip from './StatusChip.vue'
 
 /**
  * Detail-, Anlege- und Bearbeitungsdialog einer Arbeit (wie eine
- * Trello-Karte). Nur der Titel ist Pflicht – Termin und geplante Zeit
- * sind optional. Arbeiter sehen die Karte, koennen aber nur arbeiten
+ * Trello-Karte). Nur der Titel ist Pflicht – ein Termin ist optional, eine
+ * geplante Arbeitsdauer gibt es nicht. Arbeiter sehen die Karte, koennen aber nur arbeiten
  * (starten, pausieren, abschliessen), nicht planen.
  */
 const props = defineProps<{
@@ -53,9 +52,8 @@ const initialStart = props.job?.startsAt
 const initialEnd = props.job?.endsAt
   ? new Date(props.job.endsAt)
   : initialStart
-    ? addMinutes(initialStart, props.job?.plannedMinutes ?? 120)
+    ? addMinutes(initialStart, DEFAULT_SLOT_MINUTES)
     : null
-const planned = props.job ? props.job.plannedMinutes : props.defaults?.startsAt ? 120 : null
 
 const form = reactive({
   title: props.job?.title ?? '',
@@ -66,8 +64,6 @@ const form = reactive({
   scheduled: initialStart !== null,
   startsAt: initialStart ? toLocalInput(initialStart) : '',
   endsAt: initialEnd ? toLocalInput(initialEnd) : '',
-  plannedHours: planned ? Math.floor(planned / 60) : ('' as number | ''),
-  plannedRest: planned ? planned % 60 : ('' as number | ''),
   unlockSchedule: false,
 })
 
@@ -83,9 +79,7 @@ const scheduleLocked = computed(() => done.value || (started.value && !form.unlo
 const error = ref('')
 const busy = ref(false)
 
-const plannedMinutes = computed(() => minutesFrom(form.plannedHours, form.plannedRest))
-
-/** Kalenderdauer – getrennt von der Arbeitszeit, kann mehrere Tage umfassen. */
+/** Laenge des Kalendereintrags – keine Arbeitszeit, kann mehrere Tage umfassen. */
 const calendarInfo = computed(() => {
   if (!form.scheduled || !form.startsAt || !form.endsAt) return null
   const start = new Date(form.startsAt)
@@ -93,7 +87,7 @@ const calendarInfo = computed(() => {
   if (!(end > start)) return 'Das Ende muss nach dem Beginn liegen.'
   const days = spanDays(start, end)
   const length = formatDuration((end.getTime() - start.getTime()) / 1000)
-  return days > 1 ? `Mehrtägig: ${days} Tage (${length} Kalenderzeit)` : `Kalenderzeit: ${length}`
+  return days > 1 ? `Mehrtägiger Termin über ${days} Tage` : `Termin im Kalender: ${length}`
 })
 
 function toggleSchedule(on: boolean): void {
@@ -101,7 +95,7 @@ function toggleSchedule(on: boolean): void {
   if (on && !form.startsAt) {
     const start = props.defaults?.startsAt ?? nextHalfHour()
     form.startsAt = toLocalInput(start)
-    form.endsAt = toLocalInput(addMinutes(start, plannedMinutes.value ?? 120))
+    form.endsAt = toLocalInput(addMinutes(start, DEFAULT_SLOT_MINUTES))
   }
 }
 
@@ -120,7 +114,7 @@ function onStartChange(): void {
   const duration =
     previous && end && end > previous
       ? end.getTime() - previous.getTime()
-      : (plannedMinutes.value ?? 60) * 60_000
+      : DEFAULT_SLOT_MINUTES * 60_000
   form.endsAt = toLocalInput(new Date(new Date(form.startsAt).getTime() + duration))
   lastStart = form.startsAt
 }
@@ -133,7 +127,6 @@ function payload(): JobInput {
     customer: form.customer || null,
     priority: form.priority,
     assigneeId: form.assigneeId,
-    plannedMinutes: plannedMinutes.value,
     startsAt: scheduled ? new Date(form.startsAt).toISOString() : null,
     endsAt: scheduled && form.endsAt ? new Date(form.endsAt).toISOString() : null,
     confirmStartedChange: form.unlockSchedule,
@@ -152,8 +145,8 @@ async function save(): Promise<void> {
       current.value
         ? 'Änderungen gespeichert.'
         : job.scheduled
-          ? 'Arbeit eingeplant.'
-          : 'Aufgabe angelegt.',
+          ? 'Auftrag eingeplant.'
+          : 'Auftrag angelegt.',
       'success',
     )
     emit('saved', job)
@@ -164,17 +157,14 @@ async function save(): Promise<void> {
   }
 }
 
-/** F5 – sofort speichern, damit die Folgetermine im Backend nachruecken. */
-async function extendByHour(): Promise<void> {
+/** Termin entfernen – der Auftrag kehrt in die To-do-Liste zurueck, Ist-Zeit bleibt. */
+async function unschedule(): Promise<void> {
   if (!current.value) return
   busy.value = true
   try {
-    const job = await jobsApi.extend(current.value.id, 60)
-    current.value = { ...current.value, ...job }
-    form.plannedHours = Math.floor((job.plannedMinutes ?? 0) / 60)
-    form.plannedRest = (job.plannedMinutes ?? 0) % 60
-    if (job.endsAt) form.endsAt = toLocalInput(new Date(job.endsAt))
-    toast('Geplante Zeit um 1 Stunde erhöht. Folgetermine wurden nachgerückt.', 'success')
+    current.value = { ...current.value, ...(await jobsApi.unschedule(current.value.id)) }
+    form.scheduled = false
+    toast('Termin entfernt – der Auftrag steht wieder in der To-do-Liste.', 'success')
     emit('changed')
   } catch (e) {
     error.value = errorMessage(e)
@@ -239,11 +229,11 @@ function entryLabel(startedAt: string, endedAt: string | null): string {
 
 <template>
   <BaseModal
-    :title="editing ? (canEdit ? 'Arbeit bearbeiten' : 'Arbeit') : 'Neue Arbeit'"
+    :title="editing ? (canEdit ? 'Auftrag bearbeiten' : 'Auftrag') : 'Neuer Auftrag'"
     :subtitle="
       editing
         ? undefined
-        : 'Nur der Titel ist Pflicht. Termin und Zeit können später ergänzt werden.'
+        : 'Nur der Titel ist Pflicht. Ohne Termin landet der Auftrag in der To-do-Liste neben dem Kalender.'
     "
     :width="860"
     @close="emit('close')"
@@ -251,8 +241,11 @@ function entryLabel(startedAt: string, endedAt: string | null): string {
     <template v-if="current" #header>
       <div class="job-head">
         <StatusChip :job="current" />
-        <span v-if="current.overrun && !done" class="chip" style="--chip: var(--danger)">
-          <AppIcon name="alert" :size="11" /> {{ formatHours(current.overrunMinutes) }} über Plan
+        <span v-if="current.scheduled" class="chip chip--plain">
+          <AppIcon name="calendar" :size="11" /> Im Kalender
+        </span>
+        <span v-else-if="!done" class="chip chip--plain">
+          <AppIcon name="list" :size="11" /> In der To-do-Liste
         </span>
       </div>
     </template>
@@ -284,20 +277,24 @@ function entryLabel(startedAt: string, endedAt: string | null): string {
           />
         </label>
 
-        <!-- Ist-Zeit: getrennt von Plan und Kalender -->
+        <!-- Ist-Zeit: nur die erfassten Arbeitsabschnitte, unabhaengig vom Kalender -->
         <section v-if="current" class="time-box">
           <h3 class="section-title">Zeiterfassung</h3>
           <dl class="time-box__stats">
             <div>
               <dt>Ist-Zeit</dt>
-              <dd :class="{ 'time-box__over': current.overrun }">
+              <dd>
                 <LiveDuration :job="current" />
               </dd>
             </div>
             <div>
-              <dt>Geplant</dt>
-              <dd>
-                {{ current.plannedMinutes ? formatDuration(current.plannedMinutes * 60) : '–' }}
+              <dt>Erster Start</dt>
+              <dd class="time-box__small">
+                {{
+                  current.firstStartedAt
+                    ? formatDateTimeShort(new Date(current.firstStartedAt))
+                    : '–'
+                }}
               </dd>
             </div>
             <div>
@@ -372,16 +369,6 @@ function entryLabel(startedAt: string, endedAt: string | null): string {
             >
               <AppIcon name="reopen" :size="14" /> Wieder öffnen
             </button>
-            <button
-              v-if="!done && canWorkOn(current, auth.user)"
-              type="button"
-              class="btn btn--ghost"
-              :disabled="busy"
-              title="Geplante Zeit erhöhen – Folgetermine rücken nach"
-              @click="extendByHour"
-            >
-              <AppIcon name="plus" :size="14" /> 1 Stunde mehr
-            </button>
           </div>
         </section>
       </div>
@@ -424,39 +411,6 @@ function entryLabel(startedAt: string, endedAt: string | null): string {
           />
         </label>
 
-        <div class="field">
-          <span class="field__label" id="planned-label"
-            >Geplante Arbeitszeit <small>(optional)</small></span
-          >
-          <div class="duration" role="group" aria-labelledby="planned-label">
-            <input
-              v-model.number="form.plannedHours"
-              class="input"
-              type="number"
-              min="0"
-              max="168"
-              inputmode="numeric"
-              aria-label="Stunden"
-              placeholder="–"
-              :disabled="!canEdit"
-            />
-            <span>h</span>
-            <input
-              v-model.number="form.plannedRest"
-              class="input"
-              type="number"
-              min="0"
-              max="59"
-              step="5"
-              inputmode="numeric"
-              aria-label="Minuten"
-              placeholder="–"
-              :disabled="!canEdit"
-            />
-            <span>min</span>
-          </div>
-        </div>
-
         <div class="field schedule">
           <label class="checkbox schedule__toggle">
             <input
@@ -495,7 +449,20 @@ function entryLabel(startedAt: string, endedAt: string | null): string {
             </label>
             <p v-if="calendarInfo" class="field__hint">{{ calendarInfo }}</p>
           </template>
-          <p v-else class="field__hint">Ohne Termin bleibt die Arbeit in der Aufgabenliste.</p>
+          <p v-else class="field__hint">
+            Ohne Termin steht der Auftrag in der To-do-Liste und kann in den Kalender gezogen
+            werden.
+          </p>
+          <button
+            v-if="current?.scheduled && !done && canEdit"
+            type="button"
+            class="link schedule__remove"
+            :disabled="busy"
+            @click="unschedule"
+          >
+            <AppIcon name="calendar-off" :size="13" /> Aus dem Kalender nehmen (zurück in die
+            To-do-Liste)
+          </button>
 
           <p v-if="done && canEdit" class="field__hint schedule__lock">
             <AppIcon name="info" :size="13" /> Abgeschlossen – Termin ist gesperrt.
@@ -523,7 +490,7 @@ function entryLabel(startedAt: string, endedAt: string | null): string {
           {{ canEdit ? 'Abbrechen' : 'Schließen' }}
         </button>
         <button v-if="canEdit" class="btn btn--primary" :disabled="busy">
-          {{ editing ? 'Speichern' : form.scheduled ? 'Einplanen' : 'Aufgabe anlegen' }}
+          {{ editing ? 'Speichern' : form.scheduled ? 'Einplanen' : 'In To-do-Liste anlegen' }}
         </button>
       </footer>
     </form>
@@ -598,15 +565,6 @@ function entryLabel(startedAt: string, endedAt: string | null): string {
   font-weight: 500;
 }
 
-.duration {
-  display: grid;
-  grid-template-columns: 1fr auto 1fr auto;
-  align-items: center;
-  gap: 6px;
-  color: var(--muted);
-  font-size: 12px;
-}
-
 .schedule {
   gap: 10px;
   padding: 12px;
@@ -621,6 +579,15 @@ function entryLabel(startedAt: string, endedAt: string | null): string {
 
 .schedule .input[type='datetime-local'] {
   font-size: 12px;
+}
+
+.schedule__remove {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  align-self: flex-start;
+  font-size: 12px;
+  text-align: left;
 }
 
 .schedule__lock {
@@ -666,8 +633,9 @@ function entryLabel(startedAt: string, endedAt: string | null): string {
   font-weight: 500;
 }
 
-.time-box__over {
-  color: var(--danger);
+.time-box__small {
+  font-size: 13px !important;
+  font-weight: 600 !important;
 }
 
 .time-box__empty {

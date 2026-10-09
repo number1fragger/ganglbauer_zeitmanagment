@@ -53,4 +53,25 @@ class TimeEntryRepository extends ServiceEntityRepository
             ->getQuery()
             ->getResult();
     }
+
+    /**
+     * Abschnitte, die sich mit dem Zeitraum ueberschneiden – fuer die
+     * Ist-Zeit-Auswertung. Laufende Abschnitte zaehlen mit.
+     *
+     * @return list<TimeEntry>
+     */
+    public function findInRange(\DateTimeImmutable $from, \DateTimeImmutable $to): array
+    {
+        return $this->createQueryBuilder('e')
+            ->addSelect('j', 'u')
+            ->join('e.job', 'j')
+            ->join('e.user', 'u')
+            ->andWhere('e.startedAt < :to')
+            ->andWhere('e.endedAt IS NULL OR e.endedAt > :from')
+            ->setParameter('from', $from)
+            ->setParameter('to', $to)
+            ->orderBy('e.startedAt', 'ASC')
+            ->getQuery()
+            ->getResult();
+    }
 }

@@ -124,7 +124,7 @@ function createAt(day: Date): Date {
           </button>
         </li>
       </ul>
-      <p v-else class="agenda__free">Nichts geplant</p>
+      <p v-else class="agenda__free">Nichts eingeplant</p>
     </section>
   </div>
 </template>

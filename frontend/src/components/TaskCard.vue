@@ -2,14 +2,7 @@
 import { computed } from 'vue'
 import type { Job, User } from '@/api/types'
 import { canStart, canWorkOn, isDone, isOverdue, priorityColor, workState } from '@/utils/domain'
-import {
-  formatDayMonth,
-  formatDuration,
-  formatRange,
-  formatTime,
-  sameDay,
-  spanDays,
-} from '@/utils/time'
+import { formatDayMonth, formatRange, formatTime, sameDay, spanDays } from '@/utils/time'
 import AppIcon from './AppIcon.vue'
 import LiveDuration from './LiveDuration.vue'
 import PriorityChip from './PriorityChip.vue'
@@ -99,23 +92,11 @@ const when = computed(() => {
       </span>
     </div>
 
-    <footer v-if="job.started || job.plannedMinutes" class="task__foot">
-      <span
-        v-if="job.started"
-        class="task__time"
-        :class="{ 'task__time--over': job.overrun && !isDone(job) }"
-        title="Ist-Zeit / geplante Zeit"
-      >
+    <footer v-if="job.started" class="task__foot">
+      <span class="task__time" title="Tatsächlich erfasste Arbeitszeit (Ist-Zeit)">
         <span v-if="state === 'running'" class="task__live" aria-hidden="true" />
         <AppIcon v-else name="clock" :size="12" />
-        <LiveDuration :job="job" />
-        <template v-if="job.plannedMinutes">
-          / {{ formatDuration(job.plannedMinutes * 60) }}</template
-        >
-      </span>
-      <span v-else class="task__time" title="Geplante Arbeitszeit">
-        <AppIcon name="timer" :size="12" />
-        {{ formatDuration((job.plannedMinutes ?? 0) * 60) }} geplant
+        <LiveDuration :job="job" /> erfasst
       </span>
       <span v-if="state === 'paused'" class="task__state">pausiert</span>
     </footer>

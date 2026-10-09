@@ -17,7 +17,6 @@ import {
   describeMoment,
   describeShort,
   formatClock,
-  formatHours,
   formatTime,
   startOfDay,
 } from '@/utils/time'
@@ -95,7 +94,7 @@ const backlogTop = computed(() =>
 const notices = computed(() => {
   const o = overview.value
   if (!o) return 0
-  return o.followUps.length + o.conflicts.length + o.warnings.length + o.requests.length
+  return o.followUps.length + o.conflicts.length + o.requests.length
 })
 
 // ---- Dialoge ---------------------------------------------------------------
@@ -201,7 +200,7 @@ async function onSaved(): Promise<void> {
 
         <section class="card panel">
           <header class="panel__head">
-            <h2 class="section-title">Heute geplant</h2>
+            <h2 class="section-title">Heute im Kalender</h2>
             <RouterLink class="link" :to="{ name: 'planning', query: { ansicht: 'tag' } }"
               >Tagesansicht</RouterLink
             >
@@ -269,22 +268,6 @@ async function onSaved(): Promise<void> {
               <button class="btn btn--small btn--outline" @click="openJob(c.jobs[1]!.id)">
                 Lösen
               </button>
-            </li>
-            <li
-              v-for="w in overview.warnings"
-              :key="`w${w.jobId}`"
-              class="notice"
-              style="--tone: var(--warning)"
-            >
-              <AppIcon name="alert" :size="16" />
-              <span>
-                <strong>Zeit überschritten: {{ w.title }}</strong>
-                <small
-                  >{{ w.worker ?? 'Nicht zugeteilt' }} · {{ formatHours(w.overrunMinutes) }} über
-                  Plan</small
-                >
-              </span>
-              <button class="btn btn--small btn--outline" @click="openJob(w.jobId)">Öffnen</button>
             </li>
             <li
               v-for="r in overview.requests"

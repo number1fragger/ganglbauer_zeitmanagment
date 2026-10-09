@@ -2,15 +2,14 @@
 
 namespace App\Controller\Api;
 
-use App\Dto\ExtendInput;
 use App\Dto\JobInput;
+use App\Dto\ScheduleInput;
 use App\Entity\Job;
 use App\Enum\Priority;
 use App\Exception\WorkflowException;
 use App\Repository\JobRepository;
 use App\Repository\UserRepository;
 use App\Security\JobVoter;
-use App\Service\JobScheduler;
 use App\Service\TimeTracker;
 use App\Util\LocalTime;
 use Doctrine\ORM\EntityManagerInterface;
@@ -148,16 +147,47 @@ final class JobController extends AbstractApiController
         return $this->noContent();
     }
 
-    /** F5 – geplante Zeit erhoehen, noch nicht begonnene Folgetermine ruecken nach. */
-    #[Route('/{id}/extend', name: 'api_jobs_extend', methods: ['POST'], requirements: ['id' => '\d+'])]
-    #[IsGranted(JobVoter::WORK, 'job')]
-    public function extend(Job $job, JobScheduler $scheduler, #[MapRequestPayload] ExtendInput $input): JsonResponse
+    /**
+     * Einplanen bzw. Termin verschieben (Drag & Drop aus der To-do-Liste oder
+     * im Kalender). Eine Arbeit hat genau einen Termin – erneutes Einplanen
+     * verschiebt ihn, es entsteht nie ein zweiter Eintrag. Startet keine Zeit.
+     */
+    #[Route('/{id}/schedule', name: 'api_jobs_schedule', methods: ['PUT'], requirements: ['id' => '\d+'])]
+    #[IsGranted('ROLE_VORARBEITER')]
+    public function schedule(Job $job, #[MapRequestPayload] ScheduleInput $input): JsonResponse
     {
-        if ($job->isDone()) {
-            throw new WorkflowException('Diese Arbeit ist bereits abgeschlossen.');
+        \assert(null !== $input->startsAt);
+
+        if ($input->changeAssignee) {
+            $assignee = null !== $input->assigneeId
+                ? ($this->users->find($input->assigneeId) ?? throw new BadRequestHttpException('Diesen Arbeiter gibt es nicht.'))
+                : null;
+            if ($job->isRunning() && $assignee?->getId() !== $job->getAssignee()?->getId()) {
+                throw new WorkflowException('Während die Zeiterfassung läuft, kann die Zuständigkeit nicht geändert werden.');
+            }
+            $job->setAssignee($assignee);
         }
 
-        $scheduler->extend($job, $input->minutes);
+        $this->guardSchedule($job, $input->startsAt, $input->endsAt ?? $input->startsAt->modify(sprintf('+%d minutes', Job::DEFAULT_SLOT_MINUTES)), $input->confirmStartedChange);
+        $job->schedule($input->startsAt, $input->endsAt);
+        $this->em->flush();
+
+        return $this->serialized($job, self::GROUPS);
+    }
+
+    /**
+     * Aus dem Kalender nehmen: die Arbeit kehrt in die To-do-Liste zurueck.
+     * Erfasste Ist-Zeit bleibt vollstaendig erhalten.
+     */
+    #[Route('/{id}/schedule', name: 'api_jobs_unschedule', methods: ['DELETE'], requirements: ['id' => '\d+'])]
+    #[IsGranted('ROLE_VORARBEITER')]
+    public function unschedule(Job $job): JsonResponse
+    {
+        if ($job->isDone()) {
+            throw new WorkflowException('Der Termin einer abgeschlossenen Arbeit kann nicht mehr geändert werden. Bitte die Arbeit zuerst wieder öffnen.');
+        }
+
+        $job->unschedule();
         $this->em->flush();
 
         return $this->serialized($job, self::GROUPS);
@@ -175,19 +205,18 @@ final class JobController extends AbstractApiController
             throw new WorkflowException('Während die Zeiterfassung läuft, kann die Zuständigkeit nicht geändert werden.');
         }
 
-        $this->guardSchedule($job, $input);
+        $this->guardSchedule($job, $input->startsAt, $input->endsAt, $input->confirmStartedChange);
 
         $job->setTitle($input->title)
             ->setDescription($input->description)
             ->setCustomer($input->customer)
             ->setPriority($input->priority)
-            ->setAssignee($assignee)
-            ->setPlannedMinutes($input->plannedMinutes);
+            ->setAssignee($assignee);
 
         if (null === $input->startsAt) {
             $job->unschedule();
         } else {
-            $job->schedule($input->startsAt, $input->plannedMinutes, $input->endsAt);
+            $job->schedule($input->startsAt, $input->endsAt);
         }
     }
 
@@ -196,17 +225,16 @@ final class JobController extends AbstractApiController
      * Arbeiten nur mit ausdruecklicher Bestaetigung aenderbar – damit nichts
      * versehentlich (z. B. per Drag & Drop) verschoben wird.
      */
-    private function guardSchedule(Job $job, JobInput $input): void
+    private function guardSchedule(Job $job, ?\DateTimeImmutable $startsAt, ?\DateTimeImmutable $endsAt, bool $confirmed): void
     {
         $same = static fn (?\DateTimeImmutable $a, ?\DateTimeImmutable $b): bool => (null === $a && null === $b)
             || (null !== $a && null !== $b && LocalTime::of($a) == $b);
 
-        $endsAt = $input->endsAt;
-        if (null === $endsAt && null !== $input->startsAt && null !== $input->plannedMinutes) {
-            $endsAt = $input->startsAt->modify(sprintf('+%d minutes', $input->plannedMinutes));
+        if (null === $endsAt && null !== $startsAt) {
+            $endsAt = $startsAt->modify(sprintf('+%d minutes', Job::DEFAULT_SLOT_MINUTES));
         }
 
-        if ($same($input->startsAt, $job->getStartsAt()) && $same($endsAt, $job->getEndsAt())) {
+        if ($same($startsAt, $job->getStartsAt()) && $same($endsAt, $job->getEndsAt())) {
             return;
         }
 
@@ -214,7 +242,7 @@ final class JobController extends AbstractApiController
             throw new WorkflowException('Der Termin einer abgeschlossenen Arbeit kann nicht mehr geändert werden. Bitte die Arbeit zuerst wieder öffnen.');
         }
 
-        if ($job->isStarted() && !$input->confirmStartedChange) {
+        if ($job->isStarted() && !$confirmed) {
             throw new WorkflowException('Diese Arbeit wurde bereits begonnen. Den Termin bitte bewusst im Dialog ändern.');
         }
     }

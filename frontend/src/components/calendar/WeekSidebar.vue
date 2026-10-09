@@ -13,10 +13,10 @@ function toggle(id: number): void {
   visible.value = visible.value.includes(id) ? visible.value.filter((v) => v !== id) : [...visible.value, id]
 }
 
-/** Geplante Stunden in der Woche (Mo–Fr) gegenueber der Wochenarbeitszeit. */
+/** Im Kalender belegte Stunden (Mo–Fr) gegenueber der Wochenarbeitszeit – keine Arbeitszeit-Planung. */
 const load = computed(() =>
   props.workers.map((worker, index) => {
-    const planned = Array.from({ length: 5 }, (_, i) => addDays(props.weekStart, i)).reduce((sum, day) => {
+    const booked = Array.from({ length: 5 }, (_, i) => addDays(props.weekStart, i)).reduce((sum, day) => {
       const hours = props.jobs
         .filter((job) => job.assignee?.id === worker.user.id)
         .map((job) => segmentOn(job, day))
@@ -27,8 +27,8 @@ const load = computed(() =>
     return {
       worker,
       color: workerColor(index),
-      plannedMinutes: planned * 60,
-      percent: Math.min(100, (planned / worker.user.weeklyHours) * 100),
+      bookedMinutes: booked * 60,
+      percent: Math.min(100, (booked / worker.user.weeklyHours) * 100),
     }
   }),
 )
@@ -57,13 +57,13 @@ const needWorkSoon = computed(() => {
     </section>
 
     <section>
-      <h2 class="section-title">Wochenauslastung</h2>
+      <h2 class="section-title">Kalender-Belegung</h2>
       <ul class="load">
         <li v-for="row in load" :key="row.worker.user.id">
           <span class="load__label">
             <span>{{ row.worker.user.fullName }}</span>
             <small>
-              {{ formatHours(row.plannedMinutes).replace(' h', '') }} /
+              {{ formatHours(row.bookedMinutes).replace(' h', '') }} /
               {{ formatHours(row.worker.user.weeklyHours * 60) }}
             </small>
           </span>

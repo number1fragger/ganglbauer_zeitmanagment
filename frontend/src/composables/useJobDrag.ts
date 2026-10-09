@@ -1,6 +1,12 @@
 import { reactive } from 'vue'
 import type { Job } from '@/api/types'
-import { DAY_END_HOUR, DAY_START_HOUR, HOUR_PX, jobDurationMs, type MoveEvent } from '@/utils/calendar'
+import {
+  DAY_END_HOUR,
+  DAY_START_HOUR,
+  HOUR_PX,
+  jobDurationMs,
+  type MoveEvent,
+} from '@/utils/calendar'
 import { fromDateKey, startOfDay } from '@/utils/time'
 
 const SNAP = 15
@@ -8,6 +14,8 @@ const THRESHOLD = 5
 const PAD = 3
 
 export interface DropTarget {
+  /** slot = Platz im Kalender, unschedule = zurueck in die To-do-Liste */
+  kind: 'slot' | 'unschedule'
   key: string
   assigneeId: number | null
   startsAt: Date
@@ -33,7 +41,11 @@ export const drag = reactive({
 let origin = { x: 0, y: 0 }
 let onDrop: ((event: MoveEvent) => void) | null = null
 
-export function beginDrag(event: PointerEvent, job: Job, callback: (event: MoveEvent) => void): void {
+export function beginDrag(
+  event: PointerEvent,
+  job: Job,
+  callback: (event: MoveEvent) => void,
+): void {
   if (event.button !== 0 || drag.job) return
   const rect = (event.currentTarget as HTMLElement).getBoundingClientRect()
 
@@ -59,7 +71,28 @@ export function beginDrag(event: PointerEvent, job: Job, callback: (event: MoveE
 
 function updateTarget(event: PointerEvent): void {
   const job = drag.job
-  const column = document.elementFromPoint(event.clientX, event.clientY)?.closest<HTMLElement>('[data-drop-day]')
+  const under = document.elementFromPoint(event.clientX, event.clientY)
+
+  // Zurueck in die To-do-Liste: nur fuer eingeplante Arbeiten sinnvoll.
+  const todo = under?.closest<HTMLElement>('[data-drop-unschedule]')
+  if (job && todo) {
+    const rect = todo.getBoundingClientRect()
+    drag.target = job.scheduled
+      ? {
+          kind: 'unschedule',
+          key: 'unschedule',
+          assigneeId: null,
+          startsAt: new Date(),
+          endsAt: new Date(),
+          left: rect.left + 12,
+          top: event.clientY - drag.grabY,
+          width: rect.width - 24,
+        }
+      : null
+    return
+  }
+
+  const column = under?.closest<HTMLElement>('[data-drop-day]')
   const day = column ? fromDateKey(column.dataset.dropDay) : null
   if (!job || !column || !day) {
     drag.target = null
@@ -76,6 +109,7 @@ function updateTarget(event: PointerEvent): void {
   const owner = column.dataset.dropAssignee
 
   drag.target = {
+    kind: 'slot',
     key: column.dataset.dropKey ?? '',
     assigneeId: owner === 'keep' ? (job.assignee?.id ?? null) : owner ? Number(owner) : null,
     startsAt,
@@ -109,7 +143,11 @@ function onUp(): void {
   drag.dropping = true
   const callback = onDrop
   setTimeout(() => {
-    callback?.({ job, startsAt: target.startsAt, assigneeId: target.assigneeId })
+    callback?.(
+      target.kind === 'unschedule'
+        ? { kind: 'unschedule', job }
+        : { kind: 'slot', job, startsAt: target.startsAt, assigneeId: target.assigneeId },
+    )
     reset()
   }, 180)
 }

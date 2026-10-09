@@ -47,7 +47,7 @@ async function submit(): Promise<void> {
         <li><AppIcon name="calendar" :size="18" /> Kundentermine im Kalender planen</li>
         <li><AppIcon name="board" :size="18" /> Aufgaben wie auf einem Board verwalten</li>
         <li><AppIcon name="timer" :size="18" /> Arbeitszeit per Start, Pause und Abschluss erfassen</li>
-        <li><AppIcon name="chart" :size="18" /> Soll/Ist-Zeiten je Arbeiter auswerten</li>
+        <li><AppIcon name="chart" :size="18" /> Tatsächliche Arbeitszeit je Arbeiter auswerten</li>
       </ul>
 
       <p class="login__footer">Version 1.0 · Ganglbauer Landtechnik</p>

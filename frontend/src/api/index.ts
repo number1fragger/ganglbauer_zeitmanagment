@@ -4,7 +4,8 @@ import type {
   Job,
   JobInput,
   Overview,
-  SollIstReport,
+  ActualTimeReport,
+  ScheduleInput,
   User,
   ThemePreference,
   UserInput,
@@ -47,7 +48,10 @@ export const jobsApi = {
   create: (input: JobInput) => http.post<Job>('/api/jobs', input),
   update: (id: number, input: JobInput) => http.put<Job>(`/api/jobs/${id}`, input),
   remove: (id: number) => http.delete(`/api/jobs/${id}`),
-  extend: (id: number, minutes: number) => http.post<Job>(`/api/jobs/${id}/extend`, { minutes }),
+  /** Einplanen/Verschieben – eine Arbeit hat genau einen Termin, nie einen zweiten. */
+  schedule: (id: number, input: ScheduleInput) => http.put<Job>(`/api/jobs/${id}/schedule`, input),
+  /** Aus dem Kalender nehmen – zurueck in die To-do-Liste, Ist-Zeit bleibt. */
+  unschedule: (id: number) => http.delete<Job>(`/api/jobs/${id}/schedule`),
   start: (id: number) => http.post<Job>(`/api/jobs/${id}/start`),
   pause: (id: number) => http.post<Job>(`/api/jobs/${id}/pause`),
   complete: (id: number) => http.post<Job>(`/api/jobs/${id}/complete`),
@@ -60,14 +64,16 @@ export const jobsApi = {
 
 export const requestsApi = {
   mine: () => http.get<WorkRequest | null>('/api/work-requests/mine'),
-  create: (neededAt: Date) => http.post<WorkRequest>('/api/work-requests', { neededAt: neededAt.toISOString() }),
+  create: (neededAt: Date) =>
+    http.post<WorkRequest>('/api/work-requests', { neededAt: neededAt.toISOString() }),
   withdraw: (id: number) => http.post<void>(`/api/work-requests/${id}/withdraw`),
   fulfil: (id: number) => http.post<void>(`/api/work-requests/${id}/fulfil`),
 }
 
 export const planningApi = {
   overview: () => http.get<Overview>('/api/overview'),
-  report: (from: string, to: string) => http.get<SollIstReport>(`/api/reports/soll-ist?${query({ from, to })}`),
+  report: (from: string, to: string) =>
+    http.get<ActualTimeReport>(`/api/reports/ist-zeit?${query({ from, to })}`),
 }
 
 export const usersApi = {

@@ -56,7 +56,7 @@ async function apply(): Promise<void> {
         ? 'Früher fertig – Folgetermine vorziehen?'
         : 'Später fertig – Folgetermine verschieben?'
     "
-    :subtitle="`${title ?? followUp.title ?? 'Die Arbeit'} wurde ${minutes} Minuten ${earlier ? 'früher' : 'später'} als geplant abgeschlossen (${t(followUp.actualEnd)} statt ${t(followUp.plannedEnd)}).`"
+    :subtitle="`${title ?? followUp.title ?? 'Die Arbeit'} wurde ${minutes} Minuten ${earlier ? 'früher' : 'später'} als im Kalender eingetragen abgeschlossen (${t(followUp.actualEnd)} statt ${t(followUp.scheduledEnd)}).`"
     :width="560"
     @close="emit('close')"
   >

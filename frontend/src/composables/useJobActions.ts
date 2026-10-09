@@ -99,7 +99,7 @@ export function useJobActions(onChanged: (job?: Job) => unknown) {
       if (auth.isPlanner) followUp.value = preview
       else
         toast(
-          'Früher bzw. später fertig als geplant – die Planung kann die Folgetermine anpassen.',
+          'Früher bzw. später fertig als im Kalender eingetragen – die Planung kann die Folgetermine anpassen.',
           'info',
         )
     } catch {

@@ -16,21 +16,26 @@ use Symfony\Component\Serializer\Attribute\Groups;
 /**
  * Eine Arbeit (Aufgabe) in der Werkstatt.
  *
- * Drei Zeitangaben werden strikt getrennt:
- *  - geplante Arbeitszeit (plannedMinutes, optional) – wie lange gearbeitet werden soll
- *  - Termin im Kalender (startsAt/endsAt, optional) – wann die Arbeit offen/eingeplant ist,
+ * Zwei Zeitangaben werden strikt getrennt:
+ *  - Termin im Kalender (startsAt/endsAt, optional) – wann die Arbeit eingeplant ist,
  *    darf mehrere Tage umfassen
  *  - Ist-Zeit (Summe der TimeEntry-Abschnitte) – wie lange tatsaechlich gearbeitet wurde
  *
- * Ohne Termin ist die Arbeit eine reine Aufgabe (To-do) und erscheint
- * nicht im Kalender.
+ * Eine geplante Arbeitsdauer gibt es bewusst nicht. Ohne Termin ist die
+ * Arbeit eine reine Aufgabe (To-do) in der Seitenleiste neben dem Kalender.
+ * Das Einplanen startet keine Zeiterfassung, das Ausplanen loescht keine.
  */
 #[ORM\Entity(repositoryClass: JobRepository::class)]
 #[ORM\Index(name: 'idx_job_schedule', columns: ['starts_at', 'ends_at'])]
 #[ORM\Index(name: 'idx_job_assignee_status', columns: ['assignee_id', 'status'])]
 class Job
 {
-    public const MAX_PLANNED_MINUTES = 10080;
+    /**
+     * Rein technische Standardlaenge eines Kalenderblocks, wenn beim
+     * Einplanen kein Ende angegeben wird (z. B. per Drag & Drop). Das ist
+     * keine geplante Arbeitszeit und wird auch nicht als solche angezeigt.
+     */
+    public const DEFAULT_SLOT_MINUTES = 60;
 
     #[ORM\Id]
     #[ORM\GeneratedValue]
@@ -57,16 +62,6 @@ class Job
     #[ORM\Column(type: 'string', length: 20, enumType: JobStatus::class)]
     #[Groups(['job:read'])]
     private JobStatus $status = JobStatus::Open;
-
-    /** Geplante Arbeitszeit in Minuten (optional), kann per F5 erhoeht werden. */
-    #[ORM\Column(nullable: true)]
-    #[Groups(['job:read'])]
-    private ?int $plannedMinutes = null;
-
-    /** Urspruenglich geplante Zeit – Soll-Wert fuer den Soll/Ist-Vergleich (A1). */
-    #[ORM\Column(nullable: true)]
-    #[Groups(['job:read'])]
-    private ?int $originalPlannedMinutes = null;
 
     /** Termin: Beginn im Kalender (optional). */
     #[ORM\Column(nullable: true)]
@@ -178,27 +173,16 @@ class Job
     // ---- Planung ----------------------------------------------------------
 
     /**
-     * Termin festlegen. Ohne Ende endet der Termin nach der geplanten
-     * Arbeitszeit; ohne beides ist kein Termin moeglich.
+     * Termin festlegen (Beginn, optional Ende). Ohne Ende bekommt der
+     * Kalenderblock die technische Standardlaenge DEFAULT_SLOT_MINUTES.
      */
-    public function schedule(\DateTimeImmutable $startsAt, ?int $plannedMinutes = null, ?\DateTimeImmutable $endsAt = null): static
+    public function schedule(\DateTimeImmutable $startsAt, ?\DateTimeImmutable $endsAt = null): static
     {
-        if (null !== $plannedMinutes) {
-            $this->setPlannedMinutes($plannedMinutes);
-        }
-
         $startsAt = LocalTime::of($startsAt);
-
-        if (null === $endsAt) {
-            $minutes = $plannedMinutes ?? $this->plannedMinutes
-                ?? throw new InvalidInputException('Für einen Termin bitte das Ende oder die geplante Arbeitszeit angeben.');
-            $endsAt = $startsAt->modify(sprintf('+%d minutes', $minutes));
-        }
-
-        $endsAt = LocalTime::of($endsAt);
+        $endsAt = LocalTime::of($endsAt ?? $startsAt->modify(sprintf('+%d minutes', self::DEFAULT_SLOT_MINUTES)));
 
         if ($endsAt <= $startsAt) {
-            throw new InvalidInputException('Das Arbeitsende muss nach dem Arbeitsbeginn liegen.');
+            throw new InvalidInputException('Das Ende des Termins muss nach dem Beginn liegen.');
         }
 
         $this->startsAt = $startsAt;
@@ -222,36 +206,6 @@ class Job
         return null !== $this->startsAt && null !== $this->endsAt;
     }
 
-    public function setPlannedMinutes(?int $minutes): static
-    {
-        if (null !== $minutes && ($minutes <= 0 || $minutes > self::MAX_PLANNED_MINUTES)) {
-            throw new InvalidInputException('Die geplante Zeit muss zwischen einer Minute und einer Woche liegen.');
-        }
-
-        $this->plannedMinutes = $minutes;
-
-        // Solange noch nicht gearbeitet wurde, ist der Plan auch der Soll-Wert.
-        if (!$this->isStarted() && !$this->isDone()) {
-            $this->originalPlannedMinutes = $minutes;
-        }
-
-        return $this;
-    }
-
-    /** F5 – die geplante Zeit nachtraeglich erhoehen, das Termin-Ende rueckt mit. */
-    public function extendBy(int $minutes): static
-    {
-        $this->plannedMinutes = ($this->plannedMinutes ?? 0) + $minutes;
-
-        // Gab es noch keinen Plan, wird der erste Plan zum Soll-Wert.
-        if (null === $this->originalPlannedMinutes && !$this->isStarted()) {
-            $this->originalPlannedMinutes = $this->plannedMinutes;
-        }
-        $this->endsAt = $this->endsAt?->modify(sprintf('+%d minutes', $minutes));
-
-        return $this;
-    }
-
     /** Verschiebt den Termin, ohne die Dauer zu aendern. */
     public function shiftBy(int $minutes): static
     {
@@ -271,16 +225,6 @@ class Job
         }
 
         return $this;
-    }
-
-    public function getPlannedMinutes(): ?int
-    {
-        return $this->plannedMinutes;
-    }
-
-    public function getOriginalPlannedMinutes(): ?int
-    {
-        return $this->originalPlannedMinutes;
     }
 
     public function getStartsAt(): ?\DateTimeImmutable
@@ -410,39 +354,11 @@ class Job
         return $total;
     }
 
-    /** Tatsaechlich gearbeitete Zeit in vollen Minuten (Ist-Wert fuer A1). */
+    /** Tatsaechlich gearbeitete Zeit in vollen Minuten. */
     #[Groups(['job:read'])]
     public function getActualMinutes(): int
     {
         return intdiv($this->getActualSeconds(), 60);
-    }
-
-    /** Restzeit laut Plan; ohne geplante Zeit unbekannt (null). */
-    #[Groups(['job:read'])]
-    public function getRemainingMinutes(): ?int
-    {
-        if ($this->isDone()) {
-            return 0;
-        }
-
-        if (null === $this->plannedMinutes) {
-            return null;
-        }
-
-        return max(0, $this->plannedMinutes - $this->getActualMinutes());
-    }
-
-    /** F6 – die festgelegte Arbeitszeit ist ueberschritten. */
-    #[Groups(['job:read'])]
-    public function isOverrun(): bool
-    {
-        return $this->getOverrunMinutes() > 0;
-    }
-
-    #[Groups(['job:read'])]
-    public function getOverrunMinutes(): int
-    {
-        return null === $this->plannedMinutes ? 0 : max(0, $this->getActualMinutes() - $this->plannedMinutes);
     }
 
     public function getRunningEntry(): ?TimeEntry

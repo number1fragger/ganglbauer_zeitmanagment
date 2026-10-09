@@ -8,18 +8,39 @@ use App\Entity\User;
 use App\Enum\JobStatus;
 use PHPUnit\Framework\TestCase;
 
-class JobTest extends TestCase
+final class JobTest extends TestCase
 {
-    public function testPlannedTimeCanBeExtended(): void
+    public function testEndDefaultsToStartPlusPlannedTime(): void
     {
-        $job = new Job();
-        $job->setPlannedMinutes(120);
+        $job = (new Job())->schedule(new \DateTimeImmutable('2026-09-28 12:00'), 180);
+
+        self::assertSame('2026-09-28 15:00', $job->getEndsAt()->format('Y-m-d H:i'));
+        self::assertSame(180, $job->getOriginalPlannedMinutes());
+    }
+
+    public function testEndBeforeStartIsRejected(): void
+    {
+        $this->expectException(\InvalidArgumentException::class);
+
+        (new Job())->schedule(new \DateTimeImmutable('2026-09-28 12:00'), 60, new \DateTimeImmutable('2026-09-28 11:00'));
+    }
+
+    public function testIncomingUtcTimesAreStoredInLocalTime(): void
+    {
+        $job = (new Job())->schedule(new \DateTimeImmutable('2026-09-28T05:00:00Z'), 60);
+
+        self::assertSame('07:00', $job->getStartsAt()->format('H:i'));
+    }
+
+    public function testExtendingMovesTheEndButKeepsTheOriginalPlan(): void
+    {
+        $job = (new Job())->schedule(new \DateTimeImmutable('2026-09-28 12:00'), 120);
 
         $job->extendBy(60);
 
         self::assertSame(180, $job->getPlannedMinutes());
         self::assertSame(120, $job->getOriginalPlannedMinutes());
-        self::assertSame(60, $job->getExtendedMinutes());
+        self::assertSame('15:00', $job->getEndsAt()->format('H:i'));
     }
 
     public function testOverrunIsDetectedWhenActualExceedsPlanned(): void
@@ -37,45 +58,26 @@ class JobTest extends TestCase
 
         self::assertFalse($job->isOverrun());
         self::assertSame(150, $job->getRemainingMinutes());
-        self::assertSame(38, $job->getProgressPercent());
     }
 
-    public function testCompletedJobHasNoRemainingTime(): void
+    public function testCompletedJobHasNoRemainingTimeAndCanBeReopened(): void
     {
         $job = $this->jobWithWork(240, 90);
-        $job->complete();
 
-        self::assertSame(JobStatus::Done, $job->getStatus());
+        $job->complete();
         self::assertSame(0, $job->getRemainingMinutes());
-        self::assertNotNull($job->getCompletedAt());
+
+        $job->reopen();
+        self::assertSame(JobStatus::InProgress, $job->getStatus());
+        self::assertNull($job->getCompletedAt());
     }
 
     private function jobWithWork(int $planned, int $worked): Job
     {
-        $job = new Job();
-        $job->setPlannedMinutes($planned);
-
         $start = new \DateTimeImmutable('2026-01-07 08:00:00');
-        $entry = (new TimeEntry())
-            ->setUser(new User())
-            ->setJob($job)
-            ->setStartedAt($start)
-            ->setEndedAt($start->modify(sprintf('+%d minutes', $worked)));
-
-        $job->getTimeEntries()->add($entry);
+        $job = (new Job())->schedule($start, $planned);
+        (new TimeEntry(new User(), $job, $start))->stop($start->modify(sprintf('+%d minutes', $worked)));
 
         return $job;
-    }
-
-    public function testMoveKeepsTheDuration(): void
-    {
-        $job = (new Job())
-            ->setStartsAt(new \DateTimeImmutable('2026-01-07 08:00'))
-            ->setDueAt(new \DateTimeImmutable('2026-01-07 11:00'));
-
-        $job->moveTo(new \DateTimeImmutable('2026-01-08 13:30'));
-
-        self::assertSame('2026-01-08 13:30', $job->getStartsAt()?->format('Y-m-d H:i'));
-        self::assertSame('2026-01-08 16:30', $job->getDueAt()?->format('Y-m-d H:i'));
     }
 }

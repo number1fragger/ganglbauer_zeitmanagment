@@ -4,8 +4,6 @@ namespace App\Entity;
 
 use App\Enum\UserRole;
 use App\Repository\UserRepository;
-use Doctrine\Common\Collections\ArrayCollection;
-use Doctrine\Common\Collections\Collection;
 use Doctrine\ORM\Mapping as ORM;
 use Symfony\Bridge\Doctrine\Validator\Constraints\UniqueEntity;
 use Symfony\Component\Security\Core\User\PasswordAuthenticatedUserInterface;
@@ -15,71 +13,57 @@ use Symfony\Component\Validator\Constraints as Assert;
 
 #[ORM\Entity(repositoryClass: UserRepository::class)]
 #[ORM\Table(name: '`user`')]
-#[UniqueEntity(fields: ['email'], message: 'Diese E-Mail-Adresse wird bereits verwendet.')]
+#[UniqueEntity(fields: ['username'], message: 'Dieser Benutzername ist schon vergeben.')]
 class User implements UserInterface, PasswordAuthenticatedUserInterface
 {
     #[ORM\Id]
     #[ORM\GeneratedValue]
     #[ORM\Column]
-    #[Groups(['user:read', 'entry:read', 'job:read', 'request:read'])]
+    #[Groups(['user:read', 'user:ref'])]
     private ?int $id = null;
 
-    #[ORM\Column(length: 180, unique: true)]
-    #[Assert\NotBlank]
-    #[Assert\Email]
-    #[Groups(['user:read', 'user:write'])]
-    private string $email = '';
-
-    /** @var list<string> */
-    #[ORM\Column]
+    /** Anmeldename, z. B. "p.hofer". */
+    #[ORM\Column(length: 50, unique: true)]
+    #[Assert\NotBlank(message: 'Bitte einen Benutzernamen angeben.')]
+    #[Assert\Regex('/^[a-z0-9._-]{3,50}$/', message: 'Nur Kleinbuchstaben, Ziffern, Punkt, Binde- und Unterstrich (3–50 Zeichen).')]
     #[Groups(['user:read'])]
-    private array $roles = [];
+    private string $username = '';
 
     #[ORM\Column]
     private string $password = '';
 
     #[ORM\Column(length: 100)]
-    #[Assert\NotBlank]
-    #[Groups(['user:read', 'user:write', 'entry:read', 'job:read', 'request:read'])]
+    #[Assert\NotBlank(message: 'Bitte den Vornamen angeben.')]
+    #[Assert\Length(max: 100)]
+    #[Groups(['user:read'])]
     private string $firstName = '';
 
     #[ORM\Column(length: 100)]
-    #[Assert\NotBlank]
-    #[Groups(['user:read', 'user:write', 'entry:read', 'job:read', 'request:read'])]
+    #[Assert\NotBlank(message: 'Bitte den Nachnamen angeben.')]
+    #[Assert\Length(max: 100)]
+    #[Groups(['user:read'])]
     private string $lastName = '';
 
-    /** Wochenarbeitszeit in Stunden (Basis fuer Soll-/Ist-Vergleich). */
-    #[ORM\Column(type: 'float')]
-    #[Assert\Positive]
-    #[Groups(['user:read', 'user:write'])]
+    #[ORM\Column(type: 'string', length: 20, enumType: UserRole::class)]
+    #[Groups(['user:read'])]
+    private UserRole $role = UserRole::Worker;
+
+    /** Wochenarbeitszeit in Stunden – Basis fuer Auslastung und Prognose. */
+    #[ORM\Column]
+    #[Assert\Range(min: 1, max: 60, notInRangeMessage: 'Die Wochenstunden muessen zwischen 1 und 60 liegen.')]
+    #[Groups(['user:read'])]
     private float $weeklyHours = 38.5;
 
     #[ORM\Column]
-    #[Groups(['user:read', 'user:write'])]
+    #[Groups(['user:read'])]
     private bool $active = true;
 
     #[ORM\Column]
-    #[Groups(['user:read'])]
     private \DateTimeImmutable $createdAt;
-
-    /** @var Collection<int, TimeEntry> */
-    #[ORM\OneToMany(targetEntity: TimeEntry::class, mappedBy: 'user', orphanRemoval: true)]
-    private Collection $timeEntries;
-
-    /** @var Collection<int, Job> */
-    #[ORM\OneToMany(targetEntity: Job::class, mappedBy: 'assignee')]
-    private Collection $jobs;
-
-    /** @var Collection<int, WorkRequest> */
-    #[ORM\OneToMany(targetEntity: WorkRequest::class, mappedBy: 'user', orphanRemoval: true)]
-    private Collection $workRequests;
 
     public function __construct()
     {
         $this->createdAt = new \DateTimeImmutable();
-        $this->timeEntries = new ArrayCollection();
-        $this->jobs = new ArrayCollection();
-        $this->workRequests = new ArrayCollection();
     }
 
     public function getId(): ?int
@@ -87,63 +71,27 @@ class User implements UserInterface, PasswordAuthenticatedUserInterface
         return $this->id;
     }
 
-    public function getEmail(): string
+    public function getUsername(): string
     {
-        return $this->email;
+        return $this->username;
     }
 
-    public function setEmail(string $email): static
+    public function setUsername(string $username): static
     {
-        $this->email = $email;
+        $this->username = mb_strtolower(trim($username));
 
         return $this;
     }
 
     public function getUserIdentifier(): string
     {
-        return $this->email;
+        return $this->username;
     }
 
     /** @return list<string> */
     public function getRoles(): array
     {
-        $roles = $this->roles;
-        $roles[] = 'ROLE_USER';
-
-        return array_values(array_unique($roles));
-    }
-
-    /** @param list<string> $roles */
-    public function setRoles(array $roles): static
-    {
-        $this->roles = $roles;
-
-        return $this;
-    }
-
-    /** Die hoechste Rolle – bestimmt, welche Ansichten sichtbar sind. */
-    #[Groups(['user:read'])]
-    public function getRole(): string
-    {
-        return UserRole::highestOf($this->getRoles())->value;
-    }
-
-    #[Groups(['user:read'])]
-    public function getRoleLabel(): string
-    {
-        return UserRole::highestOf($this->getRoles())->label();
-    }
-
-    public function setRole(UserRole $role): static
-    {
-        $this->roles = $role->storedRoles();
-
-        return $this;
-    }
-
-    public function hasRole(UserRole $role): bool
-    {
-        return \in_array($role->value, $this->getRoles(), true);
+        return [$this->role->securityRole()];
     }
 
     public function getPassword(): string
@@ -151,9 +99,9 @@ class User implements UserInterface, PasswordAuthenticatedUserInterface
         return $this->password;
     }
 
-    public function setPassword(string $password): static
+    public function setPassword(string $hashedPassword): static
     {
-        $this->password = $password;
+        $this->password = $hashedPassword;
 
         return $this;
     }
@@ -169,7 +117,7 @@ class User implements UserInterface, PasswordAuthenticatedUserInterface
 
     public function setFirstName(string $firstName): static
     {
-        $this->firstName = $firstName;
+        $this->firstName = trim($firstName);
 
         return $this;
     }
@@ -181,24 +129,41 @@ class User implements UserInterface, PasswordAuthenticatedUserInterface
 
     public function setLastName(string $lastName): static
     {
-        $this->lastName = $lastName;
+        $this->lastName = trim($lastName);
 
         return $this;
     }
 
-    #[Groups(['user:read', 'entry:read', 'job:read', 'request:read'])]
+    #[Groups(['user:read', 'user:ref'])]
     public function getFullName(): string
     {
         return trim($this->firstName.' '.$this->lastName);
     }
 
-    /** Kuerzel fuer Kalenderkarten, z. B. "KL" fuer Kevin Lichtl. */
-    #[Groups(['user:read', 'job:read'])]
+    /** "Anton Huber" -> "AH" */
+    #[Groups(['user:read', 'user:ref'])]
     public function getInitials(): string
     {
-        $initials = mb_substr($this->firstName, 0, 1).mb_substr($this->lastName, 0, 1);
+        return mb_strtoupper(mb_substr($this->firstName, 0, 1).mb_substr($this->lastName, 0, 1));
+    }
 
-        return mb_strtoupper('' !== $initials ? $initials : mb_substr($this->email, 0, 2));
+    /** "Bernd Steiner" -> "B. Steiner" */
+    #[Groups(['user:read', 'user:ref'])]
+    public function getShortName(): string
+    {
+        return trim(mb_substr($this->firstName, 0, 1).'. '.$this->lastName);
+    }
+
+    public function getRole(): UserRole
+    {
+        return $this->role;
+    }
+
+    public function setRole(UserRole $role): static
+    {
+        $this->role = $role;
+
+        return $this;
     }
 
     public function getWeeklyHours(): float
@@ -211,6 +176,12 @@ class User implements UserInterface, PasswordAuthenticatedUserInterface
         $this->weeklyHours = $weeklyHours;
 
         return $this;
+    }
+
+    /** Taegliche Arbeitszeit in Minuten (Mo–Fr). */
+    public function getDailyMinutes(): int
+    {
+        return (int) round($this->weeklyHours * 60 / 5);
     }
 
     public function isActive(): bool
@@ -228,30 +199,5 @@ class User implements UserInterface, PasswordAuthenticatedUserInterface
     public function getCreatedAt(): \DateTimeImmutable
     {
         return $this->createdAt;
-    }
-
-    /** @return Collection<int, TimeEntry> */
-    public function getTimeEntries(): Collection
-    {
-        return $this->timeEntries;
-    }
-
-    /** @return Collection<int, Job> */
-    public function getJobs(): Collection
-    {
-        return $this->jobs;
-    }
-
-    /** @return Collection<int, WorkRequest> */
-    public function getWorkRequests(): Collection
-    {
-        return $this->workRequests;
-    }
-
-    /** Taegliche Arbeitszeit in Minuten – Basis fuer die Auslastungsprognose. */
-    #[Groups(['user:read'])]
-    public function getDailyMinutes(): int
-    {
-        return (int) round($this->weeklyHours * 60 / 5);
     }
 }

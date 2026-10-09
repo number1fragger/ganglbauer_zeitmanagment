@@ -17,27 +17,6 @@ class TimeEntryRepository extends ServiceEntityRepository
         parent::__construct($registry, TimeEntry::class);
     }
 
-    /** @return TimeEntry[] */
-    public function findInRange(User $user, ?\DateTimeImmutable $from, ?\DateTimeImmutable $to): array
-    {
-        $qb = $this->createQueryBuilder('e')
-            ->addSelect('j')
-            ->join('e.job', 'j')
-            ->andWhere('e.user = :user')
-            ->setParameter('user', $user)
-            ->orderBy('e.startedAt', 'DESC');
-
-        if (null !== $from) {
-            $qb->andWhere('e.startedAt >= :from')->setParameter('from', $from);
-        }
-
-        if (null !== $to) {
-            $qb->andWhere('e.startedAt <= :to')->setParameter('to', $to);
-        }
-
-        return $qb->getQuery()->getResult();
-    }
-
     public function findRunning(User $user): ?TimeEntry
     {
         return $this->createQueryBuilder('e')
@@ -46,7 +25,6 @@ class TimeEntryRepository extends ServiceEntityRepository
             ->andWhere('e.user = :user')
             ->andWhere('e.endedAt IS NULL')
             ->setParameter('user', $user)
-            ->orderBy('e.startedAt', 'DESC')
             ->setMaxResults(1)
             ->getQuery()
             ->getOneOrNullResult();

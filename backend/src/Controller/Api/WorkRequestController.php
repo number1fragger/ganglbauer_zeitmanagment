@@ -2,116 +2,77 @@
 
 namespace App\Controller\Api;
 
+use App\Dto\WorkRequestInput;
 use App\Entity\WorkRequest;
-use App\Enum\WorkRequestStatus;
 use App\Repository\WorkRequestRepository;
 use Doctrine\ORM\EntityManagerInterface;
 use Symfony\Component\HttpFoundation\JsonResponse;
-use Symfony\Component\HttpFoundation\Request;
 use Symfony\Component\HttpFoundation\Response;
-use Symfony\Component\HttpKernel\Exception\BadRequestHttpException;
+use Symfony\Component\HttpKernel\Attribute\MapRequestPayload;
 use Symfony\Component\Routing\Attribute\Route;
-use Symfony\Component\Validator\Validator\ValidatorInterface;
+use Symfony\Component\Security\Http\Attribute\IsGranted;
 
 /**
  * F7/F8 – "Brauche Arbeit".
  */
 #[Route('/api/work-requests')]
-class WorkRequestController extends AbstractApiController
+final class WorkRequestController extends AbstractApiController
 {
+    private const GROUPS = ['request:read', 'user:ref'];
+
     public function __construct(
         private readonly EntityManagerInterface $em,
         private readonly WorkRequestRepository $requests,
-        private readonly ValidatorInterface $validator,
     ) {
     }
 
-    #[Route('', name: 'api_requests_list', methods: ['GET'])]
-    public function list(Request $request): JsonResponse
-    {
-        // Alle Anforderungen sehen nur Chef und Vorarbeiter – sie teilen die Arbeit zu.
-        $all = $request->query->getBoolean('all') && $this->isGranted('ROLE_FOREMAN');
-        $user = $all ? null : $this->currentUser();
-
-        return $this->item(
-            $this->requests->findVisible($user, $request->query->getBoolean('includeClosed')),
-            ['request:read'],
-        );
-    }
-
-    #[Route('/mine', name: 'api_requests_mine', methods: ['GET'], priority: 10)]
+    #[Route('/mine', name: 'api_requests_mine', methods: ['GET'])]
     public function mine(): JsonResponse
     {
-        return $this->item($this->requests->findOpenFor($this->currentUser()), ['request:read']);
+        return $this->serialized($this->requests->findOpenFor($this->currentUser()), self::GROUPS);
     }
 
+    /** Pro Arbeiter gibt es nur eine offene Anfrage – eine neue ersetzt die alte. */
     #[Route('', name: 'api_requests_create', methods: ['POST'])]
-    public function create(Request $request): JsonResponse
+    public function create(#[MapRequestPayload] WorkRequestInput $input): JsonResponse
     {
-        $data = $this->payload($request);
+        \assert(null !== $input->neededAt);
         $user = $this->currentUser();
 
-        // Pro Arbeiter nur eine offene Anforderung – die neue ersetzt die alte.
-        $existing = $this->requests->findOpenFor($user);
-        if (null !== $existing) {
-            $existing->setStatus(WorkRequestStatus::Cancelled);
+        try {
+            $request = new WorkRequest($user, $input->neededAt);
+        } catch (\DomainException $e) {
+            return $this->rejected($e->getMessage());
         }
 
-        $workRequest = new WorkRequest();
-        $workRequest->setUser($user);
-        $workRequest->setNeededAt(
-            $this->parseDate((string) ($data['neededAt'] ?? ''), 'neededAt')
-            ?? throw new BadRequestHttpException('Bitte angeben, ab wann du wieder Arbeit brauchst.')
-        );
-        $workRequest->setNote(isset($data['note']) ? (string) $data['note'] : null);
-
-        $violations = $this->validator->validate($workRequest);
-        if (\count($violations) > 0) {
-            return $this->violations($violations);
-        }
-
-        $this->em->persist($workRequest);
+        $this->requests->findOpenFor($user)?->withdraw();
+        $this->em->persist($request);
         $this->em->flush();
 
-        return $this->item($workRequest, ['request:read'], Response::HTTP_CREATED);
+        return $this->serialized($request, self::GROUPS, Response::HTTP_CREATED);
     }
 
-    #[Route('/{id}/status', name: 'api_requests_status', methods: ['PUT'], requirements: ['id' => '\d+'])]
-    public function changeStatus(WorkRequest $workRequest, Request $request): JsonResponse
+    #[Route('/{id}/withdraw', name: 'api_requests_withdraw', methods: ['POST'], requirements: ['id' => '\d+'])]
+    public function withdraw(WorkRequest $request): JsonResponse
     {
-        $this->denyUnlessOwnerOrForeman($workRequest);
-
-        $data = $this->payload($request);
-        $status = WorkRequestStatus::tryFrom((string) ($data['status'] ?? ''))
-            ?? throw new BadRequestHttpException('Unbekannter Status.');
-
-        // Der Arbeiter kann seine Anforderung nur zurueckziehen –
-        // als "zugeteilt" markiert sie, wer die Arbeit verteilt.
-        if (WorkRequestStatus::Fulfilled === $status && !$this->isGranted('ROLE_FOREMAN')) {
-            throw $this->createAccessDeniedException('Nur Chef und Vorarbeiter teilen Arbeit zu.');
+        if ($request->getUser() !== $this->currentUser()) {
+            throw $this->createAccessDeniedException('Diese Anfrage gehoert einer anderen Person.');
         }
 
-        $workRequest->setStatus($status);
+        $request->withdraw();
         $this->em->flush();
 
-        return $this->item($workRequest, ['request:read']);
+        return $this->noContent();
     }
 
-    #[Route('/{id}', name: 'api_requests_delete', methods: ['DELETE'], requirements: ['id' => '\d+'])]
-    public function delete(WorkRequest $workRequest): JsonResponse
+    /** Die Planung hat eine Arbeit zugeteilt – die Anfrage ist erledigt. */
+    #[Route('/{id}/fulfil', name: 'api_requests_fulfil', methods: ['POST'], requirements: ['id' => '\d+'])]
+    #[IsGranted('ROLE_VORARBEITER')]
+    public function fulfil(WorkRequest $request): JsonResponse
     {
-        $this->denyUnlessOwnerOrForeman($workRequest);
-
-        $this->em->remove($workRequest);
+        $request->fulfil();
         $this->em->flush();
 
-        return new JsonResponse(null, Response::HTTP_NO_CONTENT);
-    }
-
-    private function denyUnlessOwnerOrForeman(WorkRequest $workRequest): void
-    {
-        if ($workRequest->getUser() !== $this->currentUser() && !$this->isGranted('ROLE_FOREMAN')) {
-            throw $this->createAccessDeniedException('Diese Anforderung gehoert einer anderen Person.');
-        }
+        return $this->noContent();
     }
 }

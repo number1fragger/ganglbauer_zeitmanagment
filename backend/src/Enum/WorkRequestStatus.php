@@ -6,5 +6,5 @@ enum WorkRequestStatus: string
 {
     case Open = 'offen';
     case Fulfilled = 'zugeteilt';
-    case Cancelled = 'zurueckgezogen';
+    case Withdrawn = 'zurueckgezogen';
 }

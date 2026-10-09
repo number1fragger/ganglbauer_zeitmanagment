@@ -6,25 +6,21 @@ security:
         app_user_provider:
             entity:
                 class: App\Entity\User
-                property: email
+                property: username
 
-    # Chef > Vorarbeiter > Arbeiter: Jede Rolle erbt die Rechte der darunter.
+    # Chef darf alles, was der Vorarbeiter darf, und der alles, was der Arbeiter darf.
     role_hierarchy:
-        ROLE_ADMIN: [ROLE_FOREMAN]
-        ROLE_FOREMAN: [ROLE_USER]
+        ROLE_CHEF: [ROLE_VORARBEITER]
+        ROLE_VORARBEITER: [ROLE_ARBEITER]
 
     firewalls:
-        dev:
-            pattern: ^/(_(profiler|wdt)|css|images|js)/
-            security: false
-
         login:
             pattern: ^/api/login$
             stateless: true
             user_checker: App\Security\UserChecker
             json_login:
                 check_path: api_login
-                username_path: email
+                username_path: username
                 password_path: password
                 success_handler: lexik_jwt_authentication.handler.authentication_success
                 failure_handler: lexik_jwt_authentication.handler.authentication_failure
@@ -35,13 +31,9 @@ security:
             user_checker: App\Security\UserChecker
             jwt: ~
 
-    # Grobe Absicherung pro Pfad. Die feinen Regeln (z. B. "Arbeiter darf nur
-    # die eigene Arbeit abhaken") stehen im JobVoter und in den Controllern.
+    # Die Rechte je Aktion stehen als #[IsGranted] direkt an den Controllern.
     access_control:
-        - { path: ^/api/login, roles: PUBLIC_ACCESS }
-        - { path: ^/api/health, roles: PUBLIC_ACCESS }
-        - { path: ^/api/users, roles: ROLE_ADMIN }
-        - { path: ^/api/(overview|reports|workers), roles: ROLE_FOREMAN }
+        - { path: ^/api/(login|health)$, roles: PUBLIC_ACCESS }
         - { path: ^/api, roles: IS_AUTHENTICATED_FULLY }
 
 when@test:

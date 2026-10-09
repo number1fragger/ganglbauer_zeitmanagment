@@ -2,128 +2,78 @@
 
 namespace App\Service;
 
-use App\Entity\Job;
+use App\Entity\User;
 use App\Repository\JobRepository;
-use App\Repository\TimeEntryRepository;
 use App\Repository\UserRepository;
 use App\Repository\WorkRequestRepository;
 
 /**
- * Baut die Startseite der App (F9): Wer ist womit beschaeftigt,
- * wie lange noch, und wer hat schon neue Arbeit angefordert.
+ * Daten fuer die Seitenleiste der Planung (F9): Kapazitaet je Arbeiter,
+ * offene "Brauche Arbeit"-Anfragen und Warnungen bei Zeitueberschreitung.
  */
 class OverviewBuilder
 {
     public function __construct(
         private readonly UserRepository $users,
         private readonly JobRepository $jobs,
-        private readonly TimeEntryRepository $entries,
         private readonly WorkRequestRepository $requests,
-        private readonly WorkloadCalculator $workload,
+        private readonly WorkerStatus $status,
     ) {
     }
 
     /**
      * @return array<string, mixed>
      */
-    public function build(): array
+    public function build(?\DateTimeImmutable $now = null): array
     {
-        $now = new \DateTimeImmutable();
-        $workers = [];
+        $now ??= new \DateTimeImmutable();
 
-        foreach ($this->users->findWorkforce() as $user) {
+        $workers = array_map(
+            fn (User $user): array => ['user' => $this->describe($user)] + $this->status->of($user, $now),
+            $this->users->findWorkers(),
+        );
 
-            $openJobs = $this->jobs->findOpenFor($user);
-
-            $remaining = 0;
-            $overrunCount = 0;
-            foreach ($openJobs as $job) {
-                $remaining += $job->getRemainingMinutes();
-                if ($job->isOverrun()) {
-                    ++$overrunCount;
-                }
-            }
-
-            $running = $this->entries->findRunning($user);
-            $request = $this->requests->findOpenFor($user);
-            $availableFrom = $this->workload->estimateAvailableFrom($user, $remaining, $now);
-
-            $workers[] = [
-                'user' => [
-                    'id' => $user->getId(),
-                    'fullName' => $user->getFullName(),
-                    'dailyMinutes' => $user->getDailyMinutes(),
-                ],
-                'openJobs' => \count($openJobs),
-                'remainingMinutes' => $remaining,
-                'overrunJobs' => $overrunCount,
-                'availableFrom' => $availableFrom->format(\DATE_ATOM),
-                'availableToday' => $availableFrom->format('Y-m-d') === $now->format('Y-m-d'),
-                'currentJob' => null !== $running ? $this->describeJob($running->getJob()) : null,
-                'nextJob' => $this->describeJob($this->pickNext($openJobs)),
-                'workRequest' => null !== $request ? [
-                    'id' => $request->getId(),
-                    'neededAt' => $request->getNeededAt()->format(\DATE_ATOM),
-                    'note' => $request->getNote(),
-                ] : null,
+        $requests = [];
+        foreach ($this->requests->findOpen() as $request) {
+            $requests[] = [
+                'id' => $request->getId(),
+                'user' => $this->describe($request->getUser()),
+                'neededAt' => $request->getNeededAt()->format(\DATE_ATOM),
             ];
         }
 
-        // Wer am ehesten frei ist, steht oben – dafuer wird geplant.
-        usort($workers, static fn (array $a, array $b): int => strcmp($a['availableFrom'], $b['availableFrom']));
+        $warnings = [];
+        foreach ($this->jobs->findOpen() as $job) {
+            if ($job->isOverrun()) {
+                $warnings[] = [
+                    'jobId' => $job->getId(),
+                    'title' => $job->getTitle(),
+                    'worker' => $job->getAssignee()?->getShortName(),
+                    'overrunMinutes' => $job->getOverrunMinutes(),
+                ];
+            }
+        }
 
         return [
             'generatedAt' => $now->format(\DATE_ATOM),
             'workers' => $workers,
-            'totals' => [
-                'workers' => \count($workers),
-                'openJobs' => array_sum(array_column($workers, 'openJobs')),
-                'remainingMinutes' => array_sum(array_column($workers, 'remainingMinutes')),
-                'openRequests' => \count(array_filter($workers, static fn (array $w): bool => null !== $w['workRequest'])),
-            ],
+            'requests' => $requests,
+            'warnings' => $warnings,
         ];
     }
 
     /**
-     * @param Job[] $jobs
+     * @return array<string, mixed>
      */
-    private function pickNext(array $jobs): ?Job
+    private function describe(User $user): array
     {
-        $next = null;
-
-        foreach ($jobs as $job) {
-            if (null === $next) {
-                $next = $job;
-                continue;
-            }
-
-            if ($job->getPriority()->weight() > $next->getPriority()->weight()) {
-                $next = $job;
-            }
-        }
-
-        return $next;
-    }
-
-    /**
-     * @return array<string, mixed>|null
-     */
-    private function describeJob(?Job $job): ?array
-    {
-        if (null === $job) {
-            return null;
-        }
-
         return [
-            'id' => $job->getId(),
-            'title' => $job->getTitle(),
-            'customer' => $job->getCustomer(),
-            'priority' => $job->getPriority()->value,
-            'plannedMinutes' => $job->getPlannedMinutes(),
-            'actualMinutes' => $job->getActualMinutes(),
-            'remainingMinutes' => $job->getRemainingMinutes(),
-            'overrun' => $job->isOverrun(),
-            'dueAt' => $job->getDueAt()?->format(\DATE_ATOM),
+            'id' => $user->getId(),
+            'fullName' => $user->getFullName(),
+            'shortName' => $user->getShortName(),
+            'initials' => $user->getInitials(),
+            'role' => $user->getRole()->value,
+            'weeklyHours' => $user->getWeeklyHours(),
         ];
     }
 }

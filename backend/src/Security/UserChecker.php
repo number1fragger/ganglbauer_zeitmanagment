@@ -8,11 +8,8 @@ use Symfony\Component\Security\Core\Exception\CustomUserMessageAccountStatusExce
 use Symfony\Component\Security\Core\User\UserCheckerInterface;
 use Symfony\Component\Security\Core\User\UserInterface;
 
-/**
- * Deaktivierte Benutzer koennen sich nicht mehr anmelden – und ein
- * bereits ausgestelltes Token wird beim naechsten Request abgelehnt.
- */
-class UserChecker implements UserCheckerInterface
+/** Deaktivierte Konten koennen sich nicht mehr anmelden. */
+final class UserChecker implements UserCheckerInterface
 {
     public function checkPreAuth(UserInterface $user): void
     {

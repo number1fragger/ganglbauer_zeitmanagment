@@ -19,22 +19,16 @@ class WorkRequestRepository extends ServiceEntityRepository
     }
 
     /** @return WorkRequest[] */
-    public function findVisible(?User $user, bool $includeClosed = false): array
+    public function findOpen(): array
     {
-        $qb = $this->createQueryBuilder('r')
+        return $this->createQueryBuilder('r')
             ->addSelect('u')
             ->join('r.user', 'u')
-            ->orderBy('r.neededAt', 'ASC');
-
-        if (null !== $user) {
-            $qb->andWhere('r.user = :user')->setParameter('user', $user);
-        }
-
-        if (!$includeClosed) {
-            $qb->andWhere('r.status = :open')->setParameter('open', WorkRequestStatus::Open);
-        }
-
-        return $qb->getQuery()->getResult();
+            ->andWhere('r.status = :open')
+            ->setParameter('open', WorkRequestStatus::Open)
+            ->orderBy('r.neededAt', 'ASC')
+            ->getQuery()
+            ->getResult();
     }
 
     public function findOpenFor(User $user): ?WorkRequest
@@ -44,7 +38,6 @@ class WorkRequestRepository extends ServiceEntityRepository
             ->andWhere('r.status = :open')
             ->setParameter('user', $user)
             ->setParameter('open', WorkRequestStatus::Open)
-            ->orderBy('r.neededAt', 'ASC')
             ->setMaxResults(1)
             ->getQuery()
             ->getOneOrNullResult();

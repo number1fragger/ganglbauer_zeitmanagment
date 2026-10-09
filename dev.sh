@@ -1,58 +1,29 @@
 #!/usr/bin/env bash
 # Kurzbefehle fuer die Entwicklung – Aufruf: ./dev.sh <befehl>
-# Die Datenbank (MariaDB) laeuft in Docker, Backend und Frontend lokal.
+# Die Datenbank laeuft in Docker, Backend (PHP 8.4) und Frontend lokal.
 set -euo pipefail
 cd "$(dirname "$0")"
 
 case "${1:-help}" in
-  # MariaDB starten und warten, bis sie Verbindungen annimmt
+  # MariaDB starten und warten, bis sie bereit ist
   db)
-    docker compose up -d database
-    printf 'warte auf die Datenbank '
-    for _ in $(seq 1 60); do
-      if docker compose exec -T database healthcheck.sh --connect --innodb_initialized >/dev/null 2>&1; then
-        echo '– bereit.'
-        exit 0
-      fi
-      printf '.'
-      sleep 1
-    done
-    echo
-    echo 'Die Datenbank ist nicht hochgekommen. Logs: docker compose logs database'
-    exit 1
+    [ -f .env ] || cp .env.example .env
+    docker compose up -d --wait database
     ;;
 
-  db-stop)
-    docker compose stop database
-    ;;
-
-  # Achtung: loescht die Datenbank samt Inhalt
-  db-reset)
-    docker compose down -v
-    ;;
-
-  # Abhaengigkeiten installieren (laeuft lokal, nicht im Container)
+  # Abhaengigkeiten installieren und JWT-Schluessel erzeugen
   install)
-    cd backend
-    [ -f .env ] || cp env.dist .env
-    composer install
-    php bin/console lexik:jwt:generate-keypair --skip-if-exists
-    cd ../frontend
-    # npm ci installiert genau die Versionen aus package-lock.json und aendert die Datei nicht.
-    npm ci
-    echo
-    echo 'Fertig. Weiter mit: ./dev.sh setup'
+    (cd backend && composer install && php bin/console lexik:jwt:generate-keypair --skip-if-exists)
+    (cd frontend && npm install)
     ;;
 
-  # Schema anlegen und Demodaten laden
+  # Schema anlegen und Demodaten laden (Passwort aller Demo-Konten: werkstatt)
   setup)
     cd backend
-    php bin/console doctrine:database:create --if-not-exists
-    php bin/console doctrine:schema:update --force
+    php bin/console doctrine:migrations:migrate --no-interaction
     php bin/console doctrine:fixtures:load --no-interaction
     ;;
 
-  # Nur die Demodaten neu laden
   seed)
     cd backend && php bin/console doctrine:fixtures:load --no-interaction
     ;;
@@ -72,7 +43,12 @@ case "${1:-help}" in
 
   test)
     (cd backend && vendor/bin/phpunit)
-    (cd frontend && npx eslint .)
+    (cd frontend && npm run type-check && npm run lint)
+    ;;
+
+  # Achtung: loescht die Datenbank samt Inhalt
+  db-reset)
+    docker compose down -v database
     ;;
 
   *)
@@ -80,14 +56,13 @@ case "${1:-help}" in
 Verwendung: ./dev.sh <befehl>
 
   db         MariaDB im Container starten
-  install    composer install und npm install (lokal)
+  install    composer install, npm install, JWT-Schluessel
   setup      Schema anlegen und Demodaten laden
+  seed       Demodaten neu laden
   backend    Symfony-Devserver auf http://127.0.0.1:8000
   frontend   Vite-Devserver auf http://localhost:5173
-  seed       Demodaten neu laden
   console    Symfony-Befehl, z. B. ./dev.sh console debug:router
-  test       PHPUnit und ESLint
-  db-stop    Datenbank stoppen
+  test       PHPUnit, TypeScript-Check und Lint
   db-reset   Datenbank samt Inhalt loeschen
 USAGE
     ;;

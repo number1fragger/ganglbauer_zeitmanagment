@@ -1,74 +1,89 @@
-# Ganglbauer Zeitmanagement
+# Werkstatt-Planung – Ganglbauer Landtechnik
 
-Werkstatt-Planung für Ganglbauer Landtechnik: Arbeiten einplanen, Zeiten erfassen
-und auf einen Blick sehen, wer wann wieder neue Arbeit braucht.
-Die Anforderungen stehen in [Angabe.md](Angabe.md), die ausführliche
-**Projektdokumentation** in [docs/Dokumentation.md](docs/Dokumentation.md).
+Arbeitseinteilung und Terminplanung für die Werkstätte (siehe [Angabe.md](Angabe.md)).
+Das Aussehen folgt dem Figma-Entwurf „Werkstatt-Planungs-App“.
 
-- **Backend:** Symfony 7.4 (PHP 8.4), JWT-Login, Doctrine – Ordner `backend/`
-- **Frontend:** Vue 3 (JavaScript), Vue Router, Pinia, Vite – Ordner `frontend/`
-- **Datenbank:** MariaDB 11
+| Teil      | Technik                                         | Ordner      |
+| --------- | ----------------------------------------------- | ----------- |
+| Backend   | Symfony 7.4, PHP 8.4, Doctrine, JWT-Login       | `backend/`  |
+| Frontend  | Vue 3, TypeScript, Vite, Pinia                  | `frontend/` |
+| Datenbank | MariaDB 11.4                                    | Docker      |
+| Webserver | nginx: liefert die App aus, `/api` → PHP-FPM    | Docker      |
 
 ## Rollen
 
-| | Chef | Vorarbeiter | Arbeiter |
-|---|:-:|:-:|:-:|
-| Kalender (Tag / Woche / Monat), Drag & Drop | ✓ | ✓ | – |
-| Arbeiten anlegen, bearbeiten, zuteilen, löschen | ✓ | ✓ | – |
-| Eigene Arbeiten: Zeit erfassen, verlängern, abhaken | ✓ | ✓ | ✓ |
-| „Brauche Arbeit“ melden | ✓ | ✓ | ✓ |
-| Anfragen als zugeteilt markieren, Auswertung | ✓ | ✓ | – |
-| Benutzer & Rechte | ✓ | – | – |
+| Rolle       | Planung | Eigene Arbeiten | Zeit ändern | Auswertung | Benutzer |
+| ----------- | :-----: | :-------------: | :---------: | :--------: | :------: |
+| Chef        |    ✓    |        ✓        |      ✓      |     ✓      |    ✓     |
+| Vorarbeiter |    ✓    |        ✓        |      ✓      |     ✓      |    –     |
+| Arbeiter    |    –    |        ✓        | ✓ (eigene)  |     –      |    –     |
 
-Die Rechte werden im **Backend** geprüft (`security.yaml`, `JobVoter`). Das Frontend
-blendet nur die Seiten aus, die eine Rolle ohnehin nicht benutzen darf.
+Die Rechte prüft das Backend bei jeder Anfrage (`#[IsGranted]`, `JobVoter`).
+Der Vue-Router blendet Ansichten nur aus.
 
-## Entwicklung (Datenbank in Docker, Rest lokal)
+## Am Server installieren (SSH)
 
-Voraussetzungen: PHP 8.4 mit `pdo_mysql`, Composer, Node 22, Docker.
+Voraussetzung: Docker mit dem Compose-Plugin.
 
 ```bash
-./dev.sh db         # MariaDB starten (Port 3307)
-./dev.sh install    # composer install, JWT-Schlüssel, npm install
-./dev.sh setup      # Schema anlegen und Demodaten laden
-./dev.sh backend    # API auf http://127.0.0.1:8000
-./dev.sh frontend   # App auf http://localhost:5173
-./dev.sh test       # PHPUnit und ESLint
-```
+git clone https://github.com/number1fragger/ganglbauer_zeitmanagment.git
+cd ganglbauer_zeitmanagment
 
-Demo-Zugänge aus den Fixtures:
+cp .env.example .env
+# In .env alle Passwörter und Secrets ändern, z. B. mit: openssl rand -hex 24
+nano .env
 
-| Rolle | E-Mail | Passwort |
-|---|---|---|
-| Chef | meister@ganglbauer.at | admin1234 |
-| Vorarbeiter | vorarbeiter@ganglbauer.at | test1234 |
-| Arbeiter | kevin@ganglbauer.at (auch resul@, toni@) | test1234 |
-
-## Kompletter Stack in Docker
-
-Datenbank, Symfony-Backend und Vue-Frontend laufen als eigene Container
-(`ganglbauer-db`, `ganglbauer-backend`, `ganglbauer-frontend`):
-
-```bash
-cd docker
-cp .env.example .env      # einmalig, Passwörter und ersten Chef eintragen
 docker compose up -d --build
 ```
 
-Die App läuft dann unter http://localhost:8080. Der Chef aus `ADMIN_EMAIL` /
-`ADMIN_PASSWORD` wird beim ersten Start automatisch angelegt.
+Beim Start legt das Backend die JWT-Schlüssel an und bringt die Datenbank per
+Migration auf den aktuellen Stand. Die App läuft danach auf Port `HTTP_PORT`
+(Standard 8080). Die Datenbank ist nur vom Server selbst erreichbar.
 
-Serverbetrieb mit HTTPS, Updates und Datensicherung: [docs/Deployment.md](docs/Deployment.md)
+Ersten Chef anlegen (der Befehl fragt nach dem Passwort):
 
-## Wichtige API-Endpunkte
+```bash
+docker compose exec backend php bin/console app:create-user p.hofer Peter Hofer --role=chef
+```
 
-| Pfad | Wer | Zweck |
-|---|---|---|
-| `POST /api/login` | alle | JWT holen |
-| `GET /api/calendar?from=…&to=…` | alle (Arbeiter nur eigene) | Kalenderabschnitte, max. 45 Tage |
-| `GET/POST/PATCH/DELETE /api/jobs` | siehe Rollen | Arbeiten |
-| `POST /api/work-requests` | alle | „Brauche Arbeit“, frühestens für den nächsten Tag |
-| `GET /api/overview` | Chef, Vorarbeiter | Wer ist wann wieder frei |
-| `GET /api/workers` | Chef, Vorarbeiter | Aktive Arbeiter zum Zuteilen |
-| `GET /api/reports/soll-ist` | Chef, Vorarbeiter | Soll/Ist-Vergleich |
-| `/api/users` | Chef | Benutzer & Rechte |
+Alle weiteren Konten legt der Chef in der App unter „Benutzer & Rechte“ an.
+
+- **Update:** `git pull && docker compose up -d --build`
+- **Logs:** `docker compose logs -f backend` bzw. `frontend`
+- **HTTPS:** einen Reverse-Proxy (z. B. Caddy oder den nginx am Host) vor Port `HTTP_PORT` setzen.
+
+## Lokal entwickeln
+
+Voraussetzung: PHP 8.4 mit `intl` und `pdo_mysql`, Composer, Node 22, Docker.
+
+```bash
+./dev.sh db        # MariaDB im Container
+./dev.sh install   # composer + npm + JWT-Schlüssel
+./dev.sh setup     # Schema + Demodaten
+./dev.sh backend   # http://127.0.0.1:8000  (eigenes Terminal)
+./dev.sh frontend  # http://localhost:5173  (eigenes Terminal)
+```
+
+Demo-Konten mit dem Passwort `werkstatt`: `p.hofer` (Chef), `c.mayr`
+(Vorarbeiterin), `a.huber`, `b.steiner` und `d.gruber` (Arbeiter).
+
+Tests: `./dev.sh test`
+
+## API (Auszug)
+
+| Methode     | Pfad                                      | Wer             | Zweck                                  |
+| ----------- | ----------------------------------------- | --------------- | -------------------------------------- |
+| POST        | `/api/login`                              | alle            | Anmelden, liefert ein JWT              |
+| GET         | `/api/jobs?from=&to=`                     | alle¹           | Kalender                               |
+| GET         | `/api/jobs/mine`                          | alle            | Meine Arbeiten heute                   |
+| POST        | `/api/jobs`, PUT/DELETE `/api/jobs/{id}`  | Vorarbeiter+    | Arbeiten planen (F1–F4)                |
+| POST        | `/api/jobs/{id}/extend`                   | Zuständige²     | Zeit erhöhen, Folgetermine rücken (F5) |
+| POST        | `/api/jobs/{id}/complete`, `/reopen`      | Zuständige²     | Abhaken (F4)                           |
+| POST        | `/api/jobs/{id}/start`, `/api/time/stop`  | Zuständige²     | Zeiterfassung (Ist-Zeit)               |
+| POST        | `/api/work-requests`                      | alle            | „Brauche Arbeit“ ab morgen (F7, F8)    |
+| GET         | `/api/overview`                           | Vorarbeiter+    | Kapazität, Anfragen, Warnungen (F6, F9) |
+| GET         | `/api/reports/soll-ist?from=&to=`         | Vorarbeiter+    | Soll/Ist-Vergleich (A1)                |
+| GET/POST/PUT | `/api/users`                             | Chef            | Benutzer & Rechte                      |
+
+¹ Arbeiter sehen nur ihre eigenen Arbeiten.
+² Der zugeteilte Arbeiter oder Vorarbeiter/Chef.

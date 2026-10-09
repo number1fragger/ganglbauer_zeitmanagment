@@ -2,9 +2,7 @@
 
 namespace App\Repository;
 
-use App\Entity\Job;
 use App\Entity\User;
-use App\Enum\JobStatus;
 use App\Enum\UserRole;
 use Doctrine\Bundle\DoctrineBundle\Repository\ServiceEntityRepository;
 use Doctrine\Persistence\ManagerRegistry;
@@ -36,45 +34,27 @@ class UserRepository extends ServiceEntityRepository implements PasswordUpgrader
     public function findAllOrdered(): array
     {
         return $this->createQueryBuilder('u')
-            ->orderBy('u.lastName', 'ASC')
-            ->addOrderBy('u.firstName', 'ASC')
-            ->getQuery()
-            ->getResult();
-    }
-
-    /** Aktive Benutzer – alle, die man einer Arbeit zuteilen kann. @return User[] */
-    public function findActiveOrdered(): array
-    {
-        return $this->createQueryBuilder('u')
-            ->andWhere('u.active = true')
-            ->orderBy('u.lastName', 'ASC')
-            ->addOrderBy('u.firstName', 'ASC')
+            ->orderBy('u.firstName', 'ASC')
+            ->addOrderBy('u.lastName', 'ASC')
             ->getQuery()
             ->getResult();
     }
 
     /**
-     * Wer in Kalender, Kapazitaet und Zuteilung auftaucht: alle aktiven
-     * Arbeiter und Vorarbeiter. Der Chef nur, wenn ihm gerade selbst eine
-     * offene Arbeit zugeteilt ist – sonst stuende er dauerhaft als "frei" da.
+     * Aktive Vorarbeiter und Arbeiter – also alle, die selbst Arbeiten
+     * zugeteilt bekommen. Die Reihenfolge bestimmt die Spalten im Kalender.
      *
      * @return User[]
      */
-    public function findWorkforce(): array
+    public function findWorkers(): array
     {
-        $withOpenJobs = array_column($this->getEntityManager()->createQueryBuilder()
-            ->select('DISTINCT IDENTITY(j.assignee) AS id')
-            ->from(Job::class, 'j')
-            ->andWhere('j.assignee IS NOT NULL')
-            ->andWhere('j.status != :done')
-            ->setParameter('done', JobStatus::Done)
+        return $this->createQueryBuilder('u')
+            ->andWhere('u.active = true')
+            ->andWhere('u.role IN (:roles)')
+            ->setParameter('roles', [UserRole::Foreman, UserRole::Worker])
+            ->orderBy('u.firstName', 'ASC')
+            ->addOrderBy('u.lastName', 'ASC')
             ->getQuery()
-            ->getScalarResult(), 'id');
-
-        return array_values(array_filter(
-            $this->findActiveOrdered(),
-            static fn (User $user): bool => !$user->hasRole(UserRole::Admin)
-                || \in_array((string) $user->getId(), array_map('strval', $withOpenJobs), true),
-        ));
+            ->getResult();
     }
 }

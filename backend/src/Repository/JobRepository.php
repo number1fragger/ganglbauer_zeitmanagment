@@ -6,6 +6,7 @@ use App\Entity\Job;
 use App\Entity\User;
 use App\Enum\JobStatus;
 use Doctrine\Bundle\DoctrineBundle\Repository\ServiceEntityRepository;
+use Doctrine\ORM\QueryBuilder;
 use Doctrine\Persistence\ManagerRegistry;
 
 /**
@@ -19,97 +20,17 @@ class JobRepository extends ServiceEntityRepository
     }
 
     /**
-     * Arbeitsliste, optional gefiltert. Sortiert nach Prioritaet und
-     * geplantem Ende, damit oben steht, was zuerst dran ist.
+     * Arbeiten, die sich mit dem Zeitraum ueberschneiden – fuer den Kalender.
      *
      * @return Job[]
      */
-    public function findFiltered(?User $assignee = null, ?JobStatus $status = null, bool $includeDone = false): array
+    public function findInRange(\DateTimeImmutable $from, \DateTimeImmutable $to, ?User $assignee = null): array
     {
-        $qb = $this->createQueryBuilder('j')
-            ->addSelect('u', 'e')
-            ->leftJoin('j.assignee', 'u')
-            ->leftJoin('j.timeEntries', 'e');
-
-        if (null !== $assignee) {
-            $qb->andWhere('j.assignee = :assignee')->setParameter('assignee', $assignee);
-        }
-
-        if (null !== $status) {
-            $qb->andWhere('j.status = :status')->setParameter('status', $status);
-        } elseif (!$includeDone) {
-            $qb->andWhere('j.status != :done')->setParameter('done', JobStatus::Done);
-        }
-
-        /** @var Job[] $jobs */
-        $jobs = $qb->getQuery()->getResult();
-
-        usort($jobs, static function (Job $a, Job $b): int {
-            $byPriority = $b->getPriority()->weight() <=> $a->getPriority()->weight();
-            if (0 !== $byPriority) {
-                return $byPriority;
-            }
-
-            $aDue = $a->getDueAt()?->getTimestamp() ?? \PHP_INT_MAX;
-            $bDue = $b->getDueAt()?->getTimestamp() ?? \PHP_INT_MAX;
-
-            return $aDue <=> $bDue;
-        });
-
-        return $jobs;
-    }
-
-    /** Offene Arbeiten eines Arbeiters inklusive Zeiteintraegen. */
-    /** @return Job[] */
-    public function findOpenFor(User $user): array
-    {
-        return $this->createQueryBuilder('j')
-            ->addSelect('e')
-            ->leftJoin('j.timeEntries', 'e')
-            ->andWhere('j.assignee = :user')
-            ->andWhere('j.status != :done')
-            ->setParameter('user', $user)
-            ->setParameter('done', JobStatus::Done)
-            ->getQuery()
-            ->getResult();
-    }
-
-    /** @return Job[] */
-    public function findCompletedBetween(\DateTimeImmutable $from, \DateTimeImmutable $to): array
-    {
-        return $this->createQueryBuilder('j')
-            ->addSelect('u', 'e')
-            ->leftJoin('j.assignee', 'u')
-            ->leftJoin('j.timeEntries', 'e')
-            ->andWhere('j.status = :done')
-            ->andWhere('j.completedAt >= :from')
-            ->andWhere('j.completedAt <= :to')
-            ->setParameter('done', JobStatus::Done)
+        $qb = $this->withRelations()
+            ->andWhere('j.startsAt < :to')
+            ->andWhere('j.endsAt > :from')
             ->setParameter('from', $from)
             ->setParameter('to', $to)
-            ->orderBy('j.completedAt', 'DESC')
-            ->getQuery()
-            ->getResult();
-    }
-
-    /**
-     * Eingeplante Arbeiten, die im Zeitraum liegen koennten. Weil eine Arbeit
-     * ueber mehrere Tage laufen kann, wird auch etwas vor "from" gesucht –
-     * den genauen Schnitt macht der CalendarBuilder.
-     *
-     * @return Job[]
-     */
-    public function findScheduledAround(\DateTimeImmutable $from, \DateTimeImmutable $to, ?User $assignee = null): array
-    {
-        $qb = $this->createQueryBuilder('j')
-            ->addSelect('u', 'e')
-            ->join('j.assignee', 'u')
-            ->leftJoin('j.timeEntries', 'e')
-            ->andWhere('j.startsAt IS NOT NULL')
-            ->andWhere('j.startsAt <= :to')
-            ->andWhere('j.startsAt >= :lookBack')
-            ->setParameter('to', $to)
-            ->setParameter('lookBack', $from->modify('-60 days'))
             ->orderBy('j.startsAt', 'ASC');
 
         if (null !== $assignee) {
@@ -120,25 +41,87 @@ class JobRepository extends ServiceEntityRepository
     }
 
     /**
-     * Offene Arbeiten ohne Beginn oder ohne Arbeiter – die tauchen im
-     * Kalender noch nicht auf und muessen erst eingeplant werden.
+     * Was ein Arbeiter an einem Tag sieht: alles, was an dem Tag geplant ist,
+     * plus offene Arbeiten, die schon frueher haetten fertig sein sollen.
      *
      * @return Job[]
      */
-    public function findUnscheduled(?User $assignee = null): array
+    public function findForWorkerDay(User $user, \DateTimeImmutable $dayStart): array
     {
-        $qb = $this->createQueryBuilder('j')
-            ->addSelect('u')
-            ->leftJoin('j.assignee', 'u')
-            ->andWhere('j.status != :done')
-            ->andWhere('j.startsAt IS NULL OR j.assignee IS NULL')
+        $dayEnd = $dayStart->modify('+1 day');
+
+        return $this->withRelations()
+            ->andWhere('j.assignee = :user')
+            ->andWhere('j.startsAt < :dayEnd')
+            ->andWhere('j.endsAt > :dayStart OR j.status != :done')
+            ->setParameter('user', $user)
+            ->setParameter('dayStart', $dayStart)
+            ->setParameter('dayEnd', $dayEnd)
             ->setParameter('done', JobStatus::Done)
-            ->orderBy('j.createdAt', 'ASC');
+            ->orderBy('j.startsAt', 'ASC')
+            ->getQuery()
+            ->getResult();
+    }
+
+    /** @return Job[] */
+    public function findOpen(?User $assignee = null): array
+    {
+        $qb = $this->withRelations()
+            ->andWhere('j.status != :done')
+            ->setParameter('done', JobStatus::Done)
+            ->orderBy('j.startsAt', 'ASC');
 
         if (null !== $assignee) {
             $qb->andWhere('j.assignee = :assignee')->setParameter('assignee', $assignee);
         }
 
         return $qb->getQuery()->getResult();
+    }
+
+    /**
+     * Offene Arbeiten desselben Arbeiters, die nach dem angegebenen Zeitpunkt
+     * beginnen – sie ruecken nach, wenn eine Arbeit laenger dauert (F5).
+     *
+     * @return Job[]
+     */
+    public function findFollowing(Job $job, \DateTimeImmutable $after): array
+    {
+        if (null === $job->getAssignee()) {
+            return [];
+        }
+
+        return $this->createQueryBuilder('j')
+            ->andWhere('j.assignee = :assignee')
+            ->andWhere('j.id != :id')
+            ->andWhere('j.status != :done')
+            ->andWhere('j.startsAt >= :after')
+            ->setParameter('assignee', $job->getAssignee())
+            ->setParameter('id', $job->getId())
+            ->setParameter('done', JobStatus::Done)
+            ->setParameter('after', $after)
+            ->getQuery()
+            ->getResult();
+    }
+
+    /** @return Job[] */
+    public function findCompletedBetween(\DateTimeImmutable $from, \DateTimeImmutable $to): array
+    {
+        return $this->withRelations()
+            ->andWhere('j.status = :done')
+            ->andWhere('j.completedAt >= :from')
+            ->andWhere('j.completedAt < :to')
+            ->setParameter('done', JobStatus::Done)
+            ->setParameter('from', $from)
+            ->setParameter('to', $to)
+            ->getQuery()
+            ->getResult();
+    }
+
+    private function withRelations(): QueryBuilder
+    {
+        return $this->createQueryBuilder('j')
+            ->addSelect('u', 'e')
+            ->leftJoin('j.assignee', 'u')
+            ->leftJoin('j.timeEntries', 'e');
     }
 }

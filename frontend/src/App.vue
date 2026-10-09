@@ -1,16 +1,20 @@
-<script setup>
-import { useRoute } from 'vue-router'
-import AppHeader from '@/components/AppHeader.vue'
-import JobDialog from '@/components/JobDialog.vue'
+<script setup lang="ts">
+import { watch } from 'vue'
+import { RouterView, useRouter } from 'vue-router'
 import { useAuthStore } from '@/stores/auth'
 
-// Chef und Vorarbeiter bekommen den Planungs-Header, Arbeiter ihre eigene schlanke Ansicht.
 const auth = useAuthStore()
-const route = useRoute()
+const router = useRouter()
+
+// Abgelaufene Anmeldung (401) oder Abmelden fuehrt zurueck zum Login.
+watch(
+  () => auth.isAuthenticated,
+  (loggedIn) => {
+    if (!loggedIn) void router.push({ name: 'login' })
+  },
+)
 </script>
 
 <template>
-  <AppHeader v-if="auth.isForeman && !route.meta.public" />
   <RouterView />
-  <JobDialog v-if="auth.isForeman" />
 </template>

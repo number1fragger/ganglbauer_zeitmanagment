@@ -3,51 +3,27 @@
 namespace App\Enum;
 
 /**
- * Die drei Rollen der Werkstatt. Die Rechte bauen aufeinander auf
- * (siehe role_hierarchy in security.yaml):
- *
- *   Chef (ROLE_ADMIN)  >  Vorarbeiter (ROLE_FOREMAN)  >  Arbeiter (ROLE_USER)
+ * Rolle in der Werkstatt. Bestimmt, welche Ansichten und API-Aufrufe
+ * erlaubt sind (siehe role_hierarchy in config/packages/security.yaml).
  */
 enum UserRole: string
 {
-    case Admin = 'ROLE_ADMIN';
-    case Foreman = 'ROLE_FOREMAN';
-    case Worker = 'ROLE_USER';
+    case Chef = 'chef';
+    case Foreman = 'vorarbeiter';
+    case Worker = 'arbeiter';
 
-    public function label(): string
+    public function securityRole(): string
     {
         return match ($this) {
-            self::Admin => 'Chef',
-            self::Foreman => 'Vorarbeiter',
-            self::Worker => 'Arbeiter',
+            self::Chef => 'ROLE_CHEF',
+            self::Foreman => 'ROLE_VORARBEITER',
+            self::Worker => 'ROLE_ARBEITER',
         };
     }
 
-    /**
-     * Die hoechste Rolle aus einer Rollenliste – ein Benutzer mit
-     * ROLE_ADMIN und ROLE_USER ist also "Chef".
-     *
-     * @param string[] $roles
-     */
-    public static function highestOf(array $roles): self
+    /** Vorarbeiter und Arbeiter bekommen selbst Arbeiten zugeteilt, der Chef plant nur. */
+    public function worksInWorkshop(): bool
     {
-        foreach ([self::Admin, self::Foreman] as $role) {
-            if (\in_array($role->value, $roles, true)) {
-                return $role;
-            }
-        }
-
-        return self::Worker;
-    }
-
-    /**
-     * Rollen, die in der Datenbank gespeichert werden. ROLE_USER bekommt
-     * ohnehin jeder (User::getRoles), daher bleibt die Liste beim Arbeiter leer.
-     *
-     * @return list<string>
-     */
-    public function storedRoles(): array
-    {
-        return self::Worker === $this ? [] : [$this->value];
+        return self::Chef !== $this;
     }
 }

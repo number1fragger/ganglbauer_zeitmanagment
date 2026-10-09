@@ -1,472 +1,374 @@
-<script setup>
-import { computed, reactive, ref, watch } from 'vue'
-import { api } from '@/api/client'
-import { useJobDialogStore } from '@/stores/jobDialog'
-import { formatHours, priorities, toDateTimeInput } from '@/utils/format'
-
-/** Dialog "Arbeit anlegen / bearbeiten" (F1–F5). */
-const dialog = useJobDialogStore()
+<script setup lang="ts">
+import { computed, reactive, ref } from 'vue'
+import { jobsApi } from '@/api'
+import { errorMessage } from '@/api/http'
+import type { Job, JobInput, Priority, UserRef } from '@/api/types'
+import { priorities } from '@/utils/domain'
+import { addMinutes, formatHours, toLocalInput } from '@/utils/time'
+import BaseModal from './BaseModal.vue'
 
 const STEP_MINUTES = 30
 
-const loading = ref(false)
-const busy = ref(false)
+const props = defineProps<{
+  job?: Job | null
+  /** Vorbelegung beim Anlegen, z. B. aus einem Klick in den Kalender. */
+  defaults?: { startsAt?: Date; assigneeId?: number | null }
+  workers: UserRef[]
+}>()
+
+const emit = defineEmits<{ close: []; saved: [job: Job]; deleted: [id: number] }>()
+
+const editing = computed(() => !!props.job)
+const start = props.job ? new Date(props.job.startsAt) : (props.defaults?.startsAt ?? defaultStart())
+
+const form = reactive({
+  title: props.job?.title ?? '',
+  customer: props.job?.customer ?? '',
+  priority: (props.job?.priority ?? 'mittel') as Priority,
+  startsAt: toLocalInput(start),
+  endsAt: toLocalInput(props.job ? new Date(props.job.endsAt) : addMinutes(start, 120)),
+  plannedMinutes: props.job?.plannedMinutes ?? 120,
+  assigneeId: props.job?.assignee?.id ?? props.defaults?.assigneeId ?? null,
+  done: props.job?.status === 'erledigt',
+})
+
 const error = ref('')
-const job = ref(null)
-const workers = ref([])
-/** Ende von Hand gesetzt – dann nicht mehr automatisch nachziehen. */
-const endTouched = ref(false)
+const busy = ref(false)
 
-const form = reactive({})
-const isEdit = computed(() => dialog.jobId !== null)
-
-function nextFullHour() {
-  const date = new Date()
-  date.setHours(date.getHours() + 1, 0, 0, 0)
-  return date
+function defaultStart(): Date {
+  const now = new Date()
+  now.setMinutes(now.getMinutes() < 30 ? 30 : 60, 0, 0)
+  return now
 }
 
-watch(
-  () => dialog.open,
-  async (open) => {
-    if (!open) return
-
-    error.value = ''
-    job.value = null
-    endTouched.value = false
-    Object.assign(form, {
-      title: '',
-      customer: '',
-      priority: 'normal',
-      plannedMinutes: 120,
-      assigneeId: dialog.prefill.assigneeId ?? null,
-      startsAt: dialog.prefill.startsAt ?? toDateTimeInput(nextFullHour()),
-      dueAt: '',
-      done: false,
-    })
-
-    loading.value = true
-    try {
-      const [list, data] = await Promise.all([
-        api.get('/api/workers'),
-        dialog.jobId !== null ? api.get(`/api/jobs/${dialog.jobId}`) : null,
-      ])
-      workers.value = list
-
-      if (data) {
-        job.value = data
-        endTouched.value = true
-        Object.assign(form, {
-          title: data.title,
-          customer: data.customer ?? '',
-          priority: data.priority === 'dringend' ? 'hoch' : data.priority,
-          plannedMinutes: data.plannedMinutes,
-          assigneeId: data.assignee?.id ?? null,
-          startsAt: data.startsAt ? toDateTimeInput(data.startsAt) : '',
-          dueAt: data.dueAt ? toDateTimeInput(data.dueAt) : '',
-          done: data.status === 'erledigt',
-        })
-      }
-    } catch (e) {
-      error.value = e.message
-    } finally {
-      loading.value = false
-      suggestEnd()
-    }
-  },
-)
-
-/** Vorschlag fuer das Ende: Beginn + geplante Zeit. */
-function suggestEnd() {
-  if (endTouched.value || !form.startsAt) return
-  form.dueAt = toDateTimeInput(
-    new Date(new Date(form.startsAt).getTime() + form.plannedMinutes * 60_000),
-  )
+/** Beginn oder Dauer geaendert: das Ende rueckt mit. */
+function syncEnd(): void {
+  if (form.startsAt) form.endsAt = toLocalInput(addMinutes(new Date(form.startsAt), form.plannedMinutes))
 }
 
-watch(() => [form.startsAt, form.plannedMinutes], suggestEnd)
-
-function stepPlanned(direction) {
-  form.plannedMinutes = Math.max(STEP_MINUTES, form.plannedMinutes + direction * STEP_MINUTES)
+function changePlanned(delta: number): void {
+  form.plannedMinutes = Math.max(STEP_MINUTES, form.plannedMinutes + delta)
+  syncEnd()
 }
 
-async function run(action) {
-  busy.value = true
+function payload(): JobInput {
+  return {
+    title: form.title,
+    customer: form.customer || null,
+    priority: form.priority,
+    startsAt: new Date(form.startsAt).toISOString(),
+    endsAt: new Date(form.endsAt).toISOString(),
+    plannedMinutes: form.plannedMinutes,
+    assigneeId: form.assigneeId,
+    done: form.done,
+  }
+}
+
+async function run(action: () => Promise<void>): Promise<void> {
   error.value = ''
+  busy.value = true
   try {
     await action()
   } catch (e) {
-    error.value = e.message
+    error.value = errorMessage(e)
   } finally {
     busy.value = false
   }
 }
 
-/** F5 – sofort um eine Stunde verlaengern. */
-const extendOneHour = () =>
-  run(async () => {
-    job.value = await api.post(`/api/jobs/${job.value.id}/extend`, { minutes: 60 })
-    form.plannedMinutes = job.value.plannedMinutes
-  })
-
 const save = () =>
   run(async () => {
-    const payload = {
-      title: form.title,
-      customer: form.customer || null,
-      priority: form.priority,
-      plannedMinutes: form.plannedMinutes,
-      assigneeId: form.assigneeId,
-      startsAt: form.startsAt ? new Date(form.startsAt).toISOString() : null,
-      dueAt: form.dueAt ? new Date(form.dueAt).toISOString() : null,
-    }
-
-    if (job.value) {
-      await api.patch(`/api/jobs/${job.value.id}`, payload)
-      if (form.done !== (job.value.status === 'erledigt')) {
-        await api.post(`/api/jobs/${job.value.id}/complete`, { done: form.done })
-      }
-    } else {
-      await api.post('/api/jobs', payload)
-    }
-    dialog.changed()
+    const job = props.job ? await jobsApi.update(props.job.id, payload()) : await jobsApi.create(payload())
+    emit('saved', job)
   })
 
-function remove() {
-  if (!window.confirm(`„${job.value.title}“ wirklich löschen? Erfasste Zeiten gehen verloren.`))
-    return
+/** F5 – sofort speichern, damit die Folgetermine im Backend nachruecken. */
+const extendByHour = () =>
   run(async () => {
-    await api.delete(`/api/jobs/${job.value.id}`)
-    dialog.changed()
+    if (!props.job) return
+    const job = await jobsApi.extend(props.job.id, 60)
+    form.plannedMinutes = job.plannedMinutes
+    form.endsAt = toLocalInput(new Date(job.endsAt))
+    emit('saved', job)
   })
-}
+
+const remove = () =>
+  run(async () => {
+    if (!props.job || !confirm(`„${props.job.title}“ wirklich löschen?`)) return
+    await jobsApi.remove(props.job.id)
+    emit('deleted', props.job.id)
+  })
 </script>
 
 <template>
-  <div
-    v-if="dialog.open"
-    class="overlay"
-    @click.self="dialog.close()"
-    @keydown.esc="dialog.close()"
+  <BaseModal
+    :title="editing ? 'Arbeit bearbeiten' : 'Arbeit anlegen'"
+    subtitle="Kundentermin planen und Zeit festlegen"
+    @close="emit('close')"
   >
-    <form class="dialog" role="dialog" aria-modal="true" @submit.prevent="save">
-      <h1>{{ isEdit ? 'Arbeit bearbeiten' : 'Arbeit anlegen' }}</h1>
-      <p class="sub">Kundentermin planen und Zeit festlegen</p>
-      <hr />
+    <form class="job-form" @submit.prevent="save">
+      <label class="field">
+        <span class="field__label">Bezeichnung der Arbeit</span>
+        <input v-model="form.title" class="input" maxlength="150" required autofocus />
+      </label>
 
-      <p v-if="error" class="error">{{ error }}</p>
-      <p v-if="loading" class="muted">Wird geladen …</p>
+      <label class="field">
+        <span class="field__label">Kunde</span>
+        <input v-model="form.customer" class="input" maxlength="150" />
+      </label>
 
-      <template v-else>
-        <div class="field">
-          <label for="jd-title">Bezeichnung der Arbeit</label>
-          <input id="jd-title" v-model="form.title" required autofocus />
-        </div>
-
-        <div class="field">
-          <label for="jd-customer">Kunde</label>
-          <input id="jd-customer" v-model="form.customer" />
-        </div>
-
-        <div class="field">
-          <label>Priorität</label>
-          <div class="prios">
-            <button
-              v-for="p in priorities"
-              :key="p.value"
-              type="button"
-              class="prio"
-              :class="{ active: form.priority === p.value }"
-              :style="form.priority === p.value ? { background: p.soft } : {}"
-              @click="form.priority = p.value"
-            >
-              <span class="dot" :style="{ background: p.color }"></span>
-              {{ p.label }}
-            </button>
-          </div>
-        </div>
-
-        <div class="two">
-          <div class="field">
-            <label for="jd-start">Arbeitsbeginn</label>
-            <input id="jd-start" v-model="form.startsAt" type="datetime-local" />
-          </div>
-          <div class="field">
-            <label for="jd-end">Arbeitsende (geplant)</label>
-            <input
-              id="jd-end"
-              v-model="form.dueAt"
-              type="datetime-local"
-              @input="endTouched = true"
-            />
-          </div>
-        </div>
-
-        <div class="two">
-          <div class="field">
-            <label>Geplante Arbeitszeit</label>
-            <div class="stepper">
-              <strong>{{ formatHours(form.plannedMinutes, 'Stunden') }}</strong>
-              <button type="button" aria-label="30 Minuten weniger" @click="stepPlanned(-1)">
-                –
-              </button>
-              <button type="button" aria-label="30 Minuten mehr" @click="stepPlanned(1)">+</button>
-            </div>
-          </div>
-          <div class="field">
-            <label for="jd-worker">Zugewiesener Arbeiter</label>
-            <select id="jd-worker" v-model="form.assigneeId">
-              <option :value="null">Noch niemand</option>
-              <option v-for="w in workers" :key="w.id" :value="w.id">
-                {{ w.fullName }}
-              </option>
-            </select>
-          </div>
-        </div>
-
-        <div v-if="job" class="extend">
-          <div>
-            <strong>Arbeitszeit nachträglich erhöhen</strong>
-            <p>
-              Dauert die Arbeit länger, kann die Zeit hier erweitert werden. Alle Folgetermine
-              verschieben sich automatisch.
-            </p>
-          </div>
-          <button type="button" :disabled="busy" @click="extendOneHour">+ 1 Stunde</button>
-        </div>
-
-        <div v-if="job" class="field">
-          <label>Status</label>
-          <label class="status">
-            <input v-model="form.done" type="checkbox" />
-            Arbeit ist erledigt (abhaken)
+      <fieldset class="field job-form__plain">
+        <legend class="field__label">Priorität</legend>
+        <div class="job-form__priorities">
+          <label
+            v-for="p in priorities"
+            :key="p.value"
+            class="priority-option"
+            :class="{ 'priority-option--active': form.priority === p.value }"
+            :style="{ '--soft': p.soft }"
+          >
+            <input v-model="form.priority" type="radio" name="priority" :value="p.value" />
+            <span class="priority-option__swatch" :style="{ background: p.color }" />
+            {{ p.label }}
           </label>
         </div>
-      </template>
+      </fieldset>
 
-      <hr />
-      <div class="actions">
-        <button v-if="job" type="button" class="delete" :disabled="busy" @click="remove">
-          Löschen
-        </button>
-        <button type="button" class="secondary cancel" @click="dialog.close()">Abbrechen</button>
-        <button type="submit" class="save" :disabled="busy || loading">Speichern</button>
+      <div class="job-form__pair">
+        <label class="field">
+          <span class="field__label">Arbeitsbeginn</span>
+          <input v-model="form.startsAt" class="input" type="datetime-local" step="900" required @change="syncEnd" />
+        </label>
+        <label class="field">
+          <span class="field__label">Arbeitsende (geplant)</span>
+          <input v-model="form.endsAt" class="input" type="datetime-local" step="900" :min="form.startsAt" required />
+        </label>
       </div>
+
+      <div class="job-form__pair">
+        <div class="field">
+          <span class="field__label" id="planned-label">Geplante Arbeitszeit</span>
+          <div class="stepper" role="group" aria-labelledby="planned-label">
+            <strong>{{ formatHours(form.plannedMinutes).replace(' h', ' Stunden') }}</strong>
+            <button type="button" aria-label="30 Minuten weniger" @click="changePlanned(-STEP_MINUTES)">–</button>
+            <button type="button" aria-label="30 Minuten mehr" @click="changePlanned(STEP_MINUTES)">+</button>
+          </div>
+        </div>
+        <label class="field">
+          <span class="field__label">Zugewiesener Arbeiter</span>
+          <select v-model="form.assigneeId" class="input">
+            <option :value="null">Noch niemand</option>
+            <option v-for="worker in workers" :key="worker.id" :value="worker.id">{{ worker.fullName }}</option>
+          </select>
+        </label>
+      </div>
+
+      <section v-if="editing && !form.done" class="extend accent">
+        <div>
+          <h3 class="extend__title">Arbeitszeit nachträglich erhöhen</h3>
+          <p class="extend__text">
+            Dauert die Arbeit länger, kann die Zeit hier erweitert werden. Alle Folgetermine verschieben sich
+            automatisch.
+          </p>
+        </div>
+        <button type="button" class="extend__button" :disabled="busy" @click="extendByHour">+ 1 Stunde</button>
+      </section>
+
+      <div v-if="editing" class="field">
+        <span class="field__label">Status</span>
+        <label class="done-toggle">
+          <input v-model="form.done" type="checkbox" />
+          Arbeit ist erledigt (abhaken)
+        </label>
+      </div>
+
+      <p v-if="error" class="form-error" role="alert">{{ error }}</p>
+
+      <footer class="job-form__actions">
+        <button v-if="editing" type="button" class="link job-form__delete" :disabled="busy" @click="remove">
+          Arbeit löschen
+        </button>
+        <button type="button" class="btn btn--large" @click="emit('close')">Abbrechen</button>
+        <button class="btn btn--primary btn--large" :disabled="busy">Speichern</button>
+      </footer>
     </form>
-  </div>
+  </BaseModal>
 </template>
 
 <style scoped>
-.overlay {
-  position: fixed;
-  inset: 0;
-  z-index: 50;
-  background: rgba(31, 36, 48, 0.4);
-  display: flex;
-  justify-content: center;
-  align-items: flex-start;
-  overflow-y: auto;
-  padding: 3rem 1rem;
+.job-form {
+  display: grid;
+  gap: 18px;
 }
 
-.dialog {
-  width: 560px;
-  max-width: 100%;
-  background: var(--surface);
-  border-radius: 12px;
-  padding: 2rem;
-  box-shadow: 0 20px 50px rgba(16, 24, 40, 0.25);
-}
-
-h1 {
+.job-form__plain {
   margin: 0;
+  padding: 0;
+  border: 0;
 }
 
-.sub {
-  margin: 0.15rem 0 0;
-  font-size: 0.75rem;
-  color: var(--muted);
+.job-form__plain legend {
+  margin-bottom: 5px;
 }
 
-hr {
-  border: none;
-  border-top: 1px solid var(--border);
-  margin: 1.5rem 0;
+.job-form__priorities {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 16px;
 }
 
-.field {
-  margin-bottom: 1.25rem;
-}
-
-.two {
-  display: grid;
-  grid-template-columns: 1fr 1fr;
-  gap: 1.25rem;
-}
-
-.prios {
-  display: grid;
-  grid-template-columns: repeat(3, 1fr);
-  gap: 1rem;
-}
-
-.prio {
+.priority-option {
   display: flex;
   align-items: center;
-  gap: 0.5rem;
+  gap: 8px;
+  width: 150px;
   height: 40px;
-  padding: 0 0.875rem;
-  background: var(--surface-muted);
+  padding: 0 14px;
+  border-radius: var(--radius);
+  background: var(--surface-alt);
   color: var(--muted);
+  font-size: 12px;
   font-weight: 500;
+  cursor: pointer;
 }
 
-.prio.active {
+.priority-option input {
+  position: absolute;
+  opacity: 0;
+}
+
+.priority-option:has(input:focus-visible) {
+  outline: 2px solid var(--primary);
+}
+
+.priority-option--active {
+  background: var(--soft);
   color: var(--text);
   font-weight: 600;
+}
+
+.priority-option__swatch {
+  width: 10px;
+  height: 10px;
+  border-radius: 3px;
+}
+
+.job-form__pair {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 20px;
+}
+
+.job-form .input[type='datetime-local'],
+.job-form select.input {
+  font-size: 12px;
 }
 
 .stepper {
   display: flex;
   align-items: center;
-  gap: 0.4rem;
+  gap: 6px;
   height: 40px;
-  padding: 0 0.4rem 0 0.875rem;
-  background: var(--surface-muted);
-  border-radius: 8px;
+  padding: 0 6px 0 14px;
+  border-radius: var(--radius);
+  background: var(--surface-alt);
 }
 
 .stepper strong {
   flex: 1;
-  font-size: 0.8125rem;
+  font-weight: 600;
 }
 
 .stepper button {
   width: 28px;
   height: 28px;
-  padding: 0;
-  border-radius: 6px;
+  border: 0;
+  border-radius: var(--radius-sm);
   background: var(--surface);
-  color: var(--text);
   font-weight: 700;
 }
 
 .extend {
+  --accent: var(--warning);
+  position: relative;
   display: flex;
   align-items: center;
-  gap: 1rem;
-  padding: 0.9rem 1rem;
-  margin-bottom: 1.25rem;
+  gap: 16px;
+  padding: 14px 16px 14px 16px;
+  border-radius: var(--radius-lg);
   background: var(--warning-soft);
-  border-left: 3px solid var(--warning);
-  border-radius: 10px;
 }
 
-.extend strong {
-  font-size: 0.75rem;
-  color: var(--warning-text);
+.extend__title {
+  color: var(--warning-ink);
+  font-size: 12px;
+  font-weight: 600;
 }
 
-.extend p {
-  margin: 0.2rem 0 0;
-  font-size: 0.625rem;
+.extend__text {
+  margin-top: 4px;
   color: var(--muted);
+  font-size: 10px;
 }
 
-.extend button {
+.extend__button {
   flex: none;
-  height: 28px;
   width: 108px;
+  height: 28px;
+  border: 0;
+  border-radius: var(--radius-sm);
   background: var(--surface);
-  color: var(--warning-text);
-  font-size: 0.625rem;
-  border-radius: 6px;
+  color: var(--warning-ink);
+  font-size: 10px;
+  font-weight: 600;
 }
 
-.status {
+.done-toggle {
   display: flex;
   align-items: center;
-  gap: 0.75rem;
+  gap: 10px;
   height: 44px;
-  padding: 0 0.875rem;
-  margin: 0;
-  background: var(--surface-muted);
-  border-radius: 8px;
-  font-size: 0.75rem;
+  padding: 0 14px;
+  border-radius: var(--radius);
+  background: var(--surface-alt);
+  font-size: 12px;
   font-weight: 500;
-  color: var(--text);
   cursor: pointer;
 }
 
-.status input {
+.done-toggle input {
   width: 20px;
   height: 20px;
+  margin: 0;
+  accent-color: var(--success);
 }
 
-.actions {
+.job-form__actions {
   display: flex;
+  align-items: center;
   justify-content: flex-end;
-  gap: 0.75rem;
+  gap: 12px;
+  padding-top: 24px;
+  border-top: 1px solid var(--border);
 }
 
-.actions button {
-  height: 44px;
+.job-form__actions .btn {
+  min-width: 104px;
 }
 
-.cancel {
-  width: 104px;
-}
-
-.save {
-  width: 112px;
-}
-
-.delete {
+.job-form__delete {
   margin-right: auto;
-  background: none;
   color: var(--danger);
-  padding: 0;
 }
 
-/* Handy: Blatt von unten, alles untereinander */
-@media (max-width: 600px) {
-  .overlay {
-    align-items: flex-end;
-    padding: 0;
-  }
-
-  .dialog {
-    max-height: 92dvh;
-    overflow-y: auto;
-    padding: 1.5rem 1.25rem calc(1.25rem + env(safe-area-inset-bottom));
-    border-radius: 16px 16px 0 0;
-  }
-
-  .two {
+@media (max-width: 560px) {
+  .job-form__pair {
     grid-template-columns: 1fr;
-    gap: 0;
   }
 
-  .prios {
-    gap: 0.5rem;
-  }
-
-  .extend {
-    flex-direction: column;
-    align-items: stretch;
-  }
-
-  .extend button {
-    width: 100%;
-  }
-
-  .actions {
-    flex-wrap: wrap;
-  }
-
-  .cancel,
-  .save {
+  .priority-option {
     flex: 1;
+    width: auto;
   }
 }
 </style>

@@ -1,450 +1,412 @@
-<script setup>
-import { computed, onMounted, ref, watch } from 'vue'
-import { api } from '@/api/client'
-import { addDays, dayKey, isoWeek, startOfWeek } from '@/utils/calendar'
-import { decimalHours, formatDate, formatHours, formatWeekdayTime } from '@/utils/format'
+<script setup lang="ts">
+import { computed, ref, watch } from 'vue'
+import { planningApi } from '@/api'
+import { errorMessage } from '@/api/http'
+import type { Overview, SollIstReport } from '@/api/types'
+import RoleBadge from '@/components/RoleBadge.vue'
+import { addDays, describeShort, formatHours, formatSignedHours, isoWeek, startOfWeek, toDateKey } from '@/utils/time'
 
-/** Auswertung: geplante gegenueber tatsaechlich benoetigter Zeit (A1). */
-const period = ref('week')
-const report = ref(null)
-const previous = ref(null)
-const overview = ref(null)
-const error = ref('')
+const WEEKS_TO_CHOOSE = 8
 
-/** Zeitraum und der gleich lange Zeitraum davor (fuer den Vergleich). */
-const ranges = computed(() => {
-  const today = new Date()
-  let from = addDays(today, -29)
-  let to = today
-
-  if (period.value === 'week' || period.value === 'lastWeek') {
-    from = addDays(startOfWeek(today), period.value === 'week' ? 0 : -7)
-    to = addDays(from, 6)
-  } else if (period.value === 'month') {
-    from = new Date(today.getFullYear(), today.getMonth(), 1)
-    to = new Date(today.getFullYear(), today.getMonth() + 1, 0)
-  }
-
-  const length = Math.round((to - from) / 86_400_000) + 1
-  return { from, to, prevFrom: addDays(from, -length), prevTo: addDays(from, -1) }
+/** Die laufende und die letzten Wochen zur Auswahl. */
+const weeks = Array.from({ length: WEEKS_TO_CHOOSE }, (_, i) => {
+  const monday = addDays(startOfWeek(new Date()), -7 * i)
+  return { key: toDateKey(monday), label: `KW ${isoWeek(monday)}`, from: monday, to: addDays(monday, 6) }
 })
 
-const week = isoWeek(new Date())
-const periodOptions = [
-  { value: 'week', label: `Zeitraum: KW ${week}` },
-  { value: 'lastWeek', label: `Zeitraum: KW ${week > 1 ? week - 1 : 52}` },
-  { value: 'month', label: 'Zeitraum: dieser Monat' },
-  { value: 'days30', label: 'Zeitraum: letzte 30 Tage' },
-]
+const selected = ref(weeks[0]!.key)
+const report = ref<SollIstReport | null>(null)
+const overview = ref<Overview | null>(null)
+const error = ref('')
 
-async function load() {
+async function load(): Promise<void> {
+  const week = weeks.find((w) => w.key === selected.value)!
   error.value = ''
-  const r = ranges.value
   try {
-    ;[report.value, previous.value, overview.value] = await Promise.all([
-      api.get('/api/reports/soll-ist', { from: dayKey(r.from), to: dayKey(r.to) }),
-      api.get('/api/reports/soll-ist', { from: dayKey(r.prevFrom), to: dayKey(r.prevTo) }),
-      api.get('/api/overview'),
+    ;[report.value, overview.value] = await Promise.all([
+      planningApi.report(toDateKey(week.from), toDateKey(week.to)),
+      planningApi.overview(),
     ])
   } catch (e) {
-    error.value = e.message
+    error.value = errorMessage(e)
   }
 }
 
-onMounted(load)
-watch(period, load)
+watch(selected, load, { immediate: true })
 
-function totals(r) {
-  const jobs = r?.jobs ?? []
-  const planned = jobs.reduce((s, j) => s + j.plannedMinutes, 0)
-  const actual = jobs.reduce((s, j) => s + j.actualMinutes, 0)
-  // Genauigkeit: wie nah liegt jede Arbeit an ihrem Plan (100 % = genau getroffen).
-  const deviation = jobs.reduce((s, j) => s + Math.abs(j.actualMinutes - j.plannedMinutes), 0)
+const kpis = computed(() => {
+  const totals = report.value?.totals
+  if (!totals) return []
+  const diff = totals.actualMinutes - totals.plannedMinutes
+  const percent = (value: number | null) =>
+    value === null ? '–' : `${value.toLocaleString('de-AT', { minimumFractionDigits: 1 })} %`
 
-  return {
-    jobs: jobs.length,
-    workers: r?.perWorker.length ?? 0,
-    planned,
-    actual,
-    accuracy: planned > 0 ? Math.max(0, 100 - (deviation / planned) * 100) : null,
-    overruns: jobs.filter((j) => j.actualMinutes > j.plannedMinutes).length,
-  }
-}
-
-const now = computed(() => totals(report.value))
-const before = computed(() => totals(previous.value))
-
-const pct = (value) => `${value.toFixed(1).replace('.', ',')} %`
-const signed = (minutes) =>
-  `${minutes > 0 ? '+' : minutes < 0 ? '−' : '±'}${formatHours(Math.abs(minutes))}`
-
-const accuracyDelta = computed(() =>
-  now.value.accuracy !== null && before.value.accuracy !== null
-    ? now.value.accuracy - before.value.accuracy
-    : null,
-)
-
-const maxBar = computed(() =>
-  Math.max(
-    60,
-    ...(report.value?.perWorker.flatMap((w) => [w.plannedMinutes, w.actualMinutes]) ?? []),
-  ),
-)
-
-const deviations = computed(() =>
-  [...(report.value?.jobs ?? [])]
-    .filter((j) => j.diffMinutes !== 0)
-    .sort((a, b) => Math.abs(b.diffMinutes) - Math.abs(a.diffMinutes))
-    .slice(0, 4),
-)
-
-/** Auslastung: Restarbeit im Verhaeltnis zu einer Arbeitswoche. */
-const load7 = computed(() =>
-  (overview.value?.workers ?? []).map((w) => {
-    const share = Math.min(1, w.remainingMinutes / Math.max(1, w.user.dailyMinutes * 5))
-    return {
-      ...w,
-      share,
-      color: share < 0.2 ? 'var(--danger)' : share < 0.5 ? 'var(--warning)' : 'var(--success)',
-    }
-  }),
-)
-
-function shortName(full) {
-  const [first, ...rest] = full.split(' ')
-  return rest.length ? `${first[0]}. ${rest.join(' ')}` : full
-}
-
-function exportCsv() {
-  const header = [
-    'Arbeit',
-    'Kunde',
-    'Arbeiter',
-    'Soll (h)',
-    'Ist (h)',
-    'Differenz (h)',
-    'Erledigt am',
+  return [
+    {
+      label: 'Geplante Zeit gesamt',
+      value: formatHours(totals.plannedMinutes),
+      note: `${totals.workers} Arbeiter · ${totals.jobs} Arbeiten`,
+      tone: 'neutral',
+    },
+    {
+      label: 'Tatsächliche Zeit',
+      value: formatHours(totals.actualMinutes),
+      note: `${formatSignedHours(diff)} gegenüber Plan`,
+      tone: diff > 0 ? 'bad' : 'good',
+    },
+    {
+      label: 'Planungsgenauigkeit',
+      value: percent(totals.accuracyPercent),
+      note:
+        totals.accuracyDelta === null
+          ? 'kein Vergleich zur Vorwoche'
+          : `${totals.accuracyDelta > 0 ? '+' : ''}${totals.accuracyDelta.toLocaleString('de-AT')} % zur Vorwoche`,
+      tone: (totals.accuracyPercent ?? 0) >= 90 ? 'good' : 'warn',
+    },
+    { label: 'Zeitüberschreitungen', value: String(totals.overruns), note: `von ${totals.jobs} Arbeiten`, tone: 'warn' },
   ]
-  const rows = report.value.jobs.map((job) => [
-    job.title,
-    job.customer ?? '',
-    job.worker,
-    decimalHours(job.plannedMinutes),
-    decimalHours(job.actualMinutes),
-    decimalHours(job.diffMinutes),
-    job.completedAt ? formatDate(job.completedAt) : '',
-  ])
-  const csv = [header, ...rows]
-    .map((row) => row.map((cell) => `"${String(cell).replace(/"/g, '""')}"`).join(';'))
-    .join('\n')
+})
 
-  const link = document.createElement('a')
-  link.href = URL.createObjectURL(new Blob([`\ufeff${csv}`], { type: 'text/csv;charset=utf-8' }))
-  link.download = `soll-ist_${report.value.from}_${report.value.to}.csv`
-  link.click()
-  URL.revokeObjectURL(link.href)
-}
+/** Laengster Balken = groesster Wert ueber alle Arbeiter. */
+const scale = computed(() =>
+  Math.max(1, ...(report.value?.perWorker ?? []).flatMap((w) => [w.plannedMinutes, w.actualMinutes])),
+)
+
+/** Auslastung: Restarbeit relativ zum am laengsten ausgelasteten Arbeiter (mindestens ein Tag). */
+const utilisation = computed(() => {
+  const workers = overview.value?.workers ?? []
+  const max = Math.max(8 * 60, ...workers.map((w) => w.remainingMinutes))
+
+  return [...workers]
+    .sort((a, b) => a.availableFrom.localeCompare(b.availableFrom))
+    .map((w) => ({
+      name: w.user.fullName,
+      percent: Math.max(2, (w.remainingMinutes / max) * 100),
+      color: w.remainingMinutes < 4 * 60 ? 'var(--danger)' : w.remainingMinutes < 8 * 60 ? 'var(--warning)' : 'var(--success)',
+      freeFrom: `frei ab ${describeShort(new Date(w.availableFrom))}`,
+    }))
+})
 </script>
 
 <template>
-  <div class="page-head">
-    <div>
-      <h1>Auswertung</h1>
-      <p>Geplante gegenüber tatsächlich benötigter Zeit</p>
-    </div>
-    <div class="head-actions">
-      <button type="button" class="secondary" :disabled="!report?.jobs.length" @click="exportCsv">
-        CSV exportieren
-      </button>
-      <select v-model="period" class="period" aria-label="Zeitraum">
-        <option v-for="o in periodOptions" :key="o.value" :value="o.value">{{ o.label }}</option>
-      </select>
-    </div>
-  </div>
-
-  <div class="page-body report">
-    <p v-if="error" class="error">{{ error }}</p>
-
-    <section class="kpis">
-      <div class="kpi">
-        <span>Geplante Zeit gesamt</span>
-        <strong>{{ formatHours(now.planned) }}</strong>
-        <small>{{ now.workers }} Arbeiter · {{ now.jobs }} Arbeiten</small>
+  <div class="report">
+    <header class="report__header">
+      <div>
+        <h1 class="page-title">Auswertung</h1>
+        <p class="page-sub">Geplante gegenüber tatsächlich benötigter Zeit</p>
       </div>
-      <div class="kpi">
-        <span>Tatsächliche Zeit</span>
-        <strong :class="now.actual > now.planned ? 'red' : 'green'">{{
-          formatHours(now.actual)
-        }}</strong>
-        <small>{{ signed(now.actual - now.planned) }} gegenüber Plan</small>
-      </div>
-      <div class="kpi">
-        <span>Planungsgenauigkeit</span>
-        <strong class="green">{{ now.accuracy === null ? '–' : pct(now.accuracy) }}</strong>
-        <small v-if="accuracyDelta !== null">
-          {{ accuracyDelta >= 0 ? '+' : '−' }}{{ pct(Math.abs(accuracyDelta)) }} zum Zeitraum davor
-        </small>
-        <small v-else>kein Vergleichszeitraum</small>
-      </div>
-      <div class="kpi">
-        <span>Zeitüberschreitungen</span>
-        <strong class="orange">{{ now.overruns }}</strong>
-        <small>von {{ now.jobs }} Arbeiten</small>
-      </div>
-    </section>
+      <RouterLink class="link report__back" :to="{ name: 'planning' }">Zur Planung</RouterLink>
+      <RoleBadge with-logout />
+      <label class="report__period">
+        <span>Zeitraum:</span>
+        <select v-model="selected" aria-label="Zeitraum">
+          <option v-for="week in weeks" :key="week.key" :value="week.key">{{ week.label }}</option>
+        </select>
+      </label>
+    </header>
 
-    <section class="middle">
-      <div class="panel bars">
-        <h2>Soll/Ist je Arbeiter</h2>
-        <p class="hint">blau = geplant · orange = tatsächlich (grün, wenn im Plan)</p>
+    <main class="report__main">
+      <p v-if="error" class="form-error" role="alert">{{ error }}</p>
 
-        <div v-for="w in report?.perWorker ?? []" :key="w.worker" class="bar-group">
-          <strong>{{ w.worker }}</strong>
-          <div class="bar-line">
-            <span
-              class="bar"
-              :style="{
-                width: `${(w.plannedMinutes / maxBar) * 75}%`,
-                background: 'var(--primary)',
-              }"
-            ></span>
-            <small>{{ formatHours(w.plannedMinutes) }}</small>
+      <section v-if="report" class="kpis">
+        <article v-for="kpi in kpis" :key="kpi.label" class="card kpi" :class="`kpi--${kpi.tone}`">
+          <span class="kpi__label">{{ kpi.label }}</span>
+          <strong class="kpi__value">{{ kpi.value }}</strong>
+          <span class="kpi__note">{{ kpi.note }}</span>
+        </article>
+      </section>
+
+      <div v-if="report" class="report__row">
+        <section class="card panel">
+          <h2 class="section-title">Soll/Ist je Arbeiter</h2>
+          <p class="section-sub">blau = geplant · grün/orange = tatsächlich (orange heißt länger als geplant)</p>
+
+          <div v-if="report.perWorker.length" class="bars">
+            <div v-for="row in report.perWorker" :key="row.worker" class="bars__worker">
+              <strong>{{ row.worker }}</strong>
+              <div class="bars__line">
+                <span class="bars__bar" :style="{ width: `${(row.plannedMinutes / scale) * 75}%` }" />
+                <small>{{ formatHours(row.plannedMinutes) }}</small>
+              </div>
+              <div class="bars__line" :class="row.actualMinutes > row.plannedMinutes ? 'bars--over' : 'bars--ok'">
+                <span class="bars__bar" :style="{ width: `${(row.actualMinutes / scale) * 75}%` }" />
+                <small>{{ formatHours(row.actualMinutes) }}</small>
+              </div>
+            </div>
           </div>
-          <div class="bar-line">
-            <span
-              class="bar"
-              :style="{
-                width: `${(w.actualMinutes / maxBar) * 75}%`,
-                background:
-                  w.actualMinutes > w.plannedMinutes ? 'var(--warning)' : 'var(--success)',
-              }"
-            ></span>
-            <small :class="w.actualMinutes > w.plannedMinutes ? 'red' : 'green'">
-              {{ formatHours(w.actualMinutes) }}
-            </small>
-          </div>
-        </div>
-        <p v-if="!report?.perWorker.length" class="hint">
-          In diesem Zeitraum wurde noch keine Arbeit abgeschlossen.
-        </p>
+          <p v-else class="empty report__empty">In dieser Woche wurden keine Arbeiten mit erfasster Zeit abgeschlossen.</p>
+        </section>
+
+        <section class="card panel">
+          <h2 class="section-title">Größte Abweichungen</h2>
+          <ul v-if="report.deviations.length" class="deviations">
+            <li v-for="d in report.deviations" :key="d.jobId">
+              <span>
+                <strong>{{ d.title }}</strong>
+                <small>{{ d.worker }}</small>
+              </span>
+              <b :class="d.diffMinutes > 0 ? 'deviations--over' : 'deviations--under'">
+                {{ formatSignedHours(d.diffMinutes) }}
+              </b>
+            </li>
+          </ul>
+          <p v-else class="empty report__empty">Keine Abweichungen – alles wie geplant.</p>
+        </section>
       </div>
 
-      <div class="panel">
-        <h2>Größte Abweichungen</h2>
-        <div v-for="d in deviations" :key="d.jobId" class="dev">
-          <span>
-            <strong>{{ d.title }}</strong>
-            <small>{{ shortName(d.worker) }}</small>
-          </span>
-          <b :class="d.diffMinutes > 0 ? 'red' : 'green'">{{ signed(d.diffMinutes) }}</b>
-        </div>
-        <p v-if="!deviations.length" class="hint">Keine Abweichungen.</p>
-      </div>
-    </section>
-
-    <section class="panel">
-      <h2>Auslastung – wann wird wieder Arbeit gebraucht?</h2>
-      <div v-for="w in load7" :key="w.user.id" class="cap">
-        <span class="cap__name">{{ w.user.fullName }}</span>
-        <span class="cap__bar"
-          ><span :style="{ width: `${Math.max(2, w.share * 100)}%`, background: w.color }"></span
-        ></span>
-        <span class="cap__when">frei ab {{ formatWeekdayTime(w.availableFrom, true) }}</span>
-      </div>
-    </section>
+      <section v-if="utilisation.length" class="card panel">
+        <h2 class="section-title">Auslastung – wann wird wieder Arbeit gebraucht?</h2>
+        <ul class="utilisation">
+          <li v-for="row in utilisation" :key="row.name">
+            <span>{{ row.name }}</span>
+            <span class="utilisation__track">
+              <span class="utilisation__bar" :style="{ width: `${row.percent}%`, background: row.color }" />
+            </span>
+            <small>{{ row.freeFrom }}</small>
+          </li>
+        </ul>
+      </section>
+    </main>
   </div>
 </template>
 
 <style scoped>
-.head-actions {
+.report__header {
   display: flex;
-  gap: 12px;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 16px;
+  padding: 22px 32px 16px;
+  border-bottom: 1px solid var(--border);
+  background: var(--surface);
 }
 
-.period {
-  width: 190px;
+.report__back {
+  margin-left: auto;
+  font-size: 12px;
+}
+
+.report__period {
+  display: flex;
+  align-items: center;
+  gap: 6px;
   height: 36px;
-  background: var(--button);
+  padding: 0 14px 0 20px;
+  border-radius: var(--radius);
+  background: var(--surface-muted);
+  font-size: 12px;
   font-weight: 500;
-  font-size: 0.75rem;
 }
 
-.report {
-  display: flex;
-  flex-direction: column;
+.report__period select {
+  border: 0;
+  background: transparent;
+  font-weight: 600;
+}
+
+.report__main {
+  display: grid;
   gap: 24px;
+  max-width: 1080px;
+  margin: 0 auto;
+  padding: 28px 32px 48px;
 }
 
 .kpis {
   display: grid;
-  grid-template-columns: repeat(4, 1fr);
+  grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
   gap: 16px;
-}
-
-.kpi,
-.panel {
-  background: var(--surface);
-  border-radius: 10px;
-  padding: 18px 20px;
 }
 
 .kpi {
   display: flex;
   flex-direction: column;
-  gap: 6px;
+  gap: 8px;
+  min-height: 104px;
+  padding: 16px 18px;
 }
 
-.kpi span {
-  font-size: 0.6875rem;
-  font-weight: 500;
+.kpi__label {
   color: var(--muted);
+  font-size: 11px;
+  font-weight: 500;
 }
 
-.kpi strong {
-  font-size: 1.5rem;
+.kpi__value {
+  font-size: 24px;
   font-weight: 700;
 }
 
-.kpi small {
-  font-size: 0.625rem;
+.kpi__note {
   color: var(--muted);
+  font-size: 10px;
 }
 
-.red {
+.kpi--bad .kpi__value {
   color: var(--danger);
 }
 
-.green {
+.kpi--good .kpi__value {
   color: var(--success);
 }
 
-.orange {
+.kpi--warn .kpi__value {
   color: var(--warning);
 }
 
-.middle {
+.report__row {
   display: grid;
-  grid-template-columns: 2fr 1fr;
+  grid-template-columns: minmax(0, 2fr) minmax(280px, 1fr);
   gap: 24px;
 }
 
-.panel h2 {
-  font-size: 0.8125rem;
-  margin: 0;
+.panel {
+  padding: 20px;
 }
 
-.hint {
-  margin: 4px 0 16px;
-  font-size: 0.6875rem;
-  color: var(--muted);
+.report__empty {
+  margin-top: 12px;
+  padding: 0;
 }
 
-.bar-group {
-  margin-bottom: 22px;
+.bars {
+  display: grid;
+  gap: 22px;
+  margin-top: 20px;
 }
 
-.bar-group strong {
-  font-size: 0.75rem;
+.bars__worker strong {
+  display: block;
+  margin-bottom: 6px;
+  font-size: 12px;
   font-weight: 600;
 }
 
-.bar-line {
+.bars__line {
   display: flex;
   align-items: center;
   gap: 6px;
   margin-top: 6px;
 }
 
-.bar {
+.bars__bar {
   height: 14px;
   border-radius: 4px;
-  min-width: 4px;
+  background: var(--primary);
 }
 
-.bar-line small {
-  font-size: 0.625rem;
-  font-weight: 500;
+.bars__line small {
   color: var(--muted);
+  font-size: 10px;
+  font-weight: 500;
 }
 
-.bar-line small.red {
-  color: var(--danger);
+.bars--ok .bars__bar {
+  background: var(--success);
 }
 
-.bar-line small.green {
+.bars--ok small {
   color: var(--success);
 }
 
-.dev {
+.bars--over .bars__bar {
+  background: var(--warning);
+}
+
+.bars--over small {
+  color: var(--danger);
+}
+
+.deviations {
+  display: grid;
+  gap: 14px;
+  margin: 18px 0 0;
+  padding: 0;
+  list-style: none;
+}
+
+.deviations li {
   display: flex;
   align-items: center;
   justify-content: space-between;
-  gap: 12px;
-  margin-top: 14px;
+  min-height: 62px;
   padding: 12px 16px;
-  border-radius: 8px;
-  background: var(--surface-muted);
+  border-radius: var(--radius);
+  background: var(--surface-alt);
 }
 
-.dev span {
-  display: flex;
-  flex-direction: column;
-  min-width: 0;
-}
-
-.dev strong {
-  font-size: 0.75rem;
+.deviations strong {
+  display: block;
+  font-size: 12px;
   font-weight: 600;
 }
 
-.dev small {
-  font-size: 0.625rem;
+.deviations small {
+  display: block;
+  margin-top: 4px;
   color: var(--muted);
+  font-size: 10px;
 }
 
-.dev b {
-  font-size: 0.875rem;
+.deviations b {
+  font-size: 14px;
 }
 
-.cap {
+.deviations--over {
+  color: var(--danger);
+}
+
+.deviations--under {
+  color: var(--success);
+}
+
+.utilisation {
   display: grid;
-  grid-template-columns: 140px 1fr 110px;
-  align-items: center;
-  gap: 16px;
-  margin-top: 14px;
+  gap: 14px;
+  margin: 18px 0 0;
+  padding: 0;
+  list-style: none;
 }
 
-.cap__name {
-  font-size: 0.6875rem;
+.utilisation li {
+  display: grid;
+  grid-template-columns: 138px 1fr 110px;
+  align-items: center;
+  gap: 20px;
+  font-size: 11px;
   font-weight: 500;
 }
 
-.cap__bar {
+.utilisation small {
+  color: var(--muted);
+  font-size: 10px;
+}
+
+.utilisation__track {
   height: 10px;
   border-radius: 5px;
   background: var(--grid);
-  overflow: hidden;
 }
 
-.cap__bar span {
+.utilisation__bar {
   display: block;
   height: 100%;
   border-radius: 5px;
 }
 
-.cap__when {
-  font-size: 0.625rem;
-  font-weight: 500;
-  color: var(--muted);
-}
-
-@media (max-width: 900px) {
-  .kpis {
-    grid-template-columns: 1fr 1fr;
+@media (max-width: 860px) {
+  .report__row {
+    grid-template-columns: 1fr;
   }
 
-  .middle {
+  .report__main,
+  .report__header {
+    padding-inline: 16px;
+  }
+
+  .utilisation li {
     grid-template-columns: 1fr;
+    gap: 6px;
   }
 }
 </style>

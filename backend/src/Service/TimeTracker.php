@@ -5,8 +5,8 @@ namespace App\Service;
 use App\Entity\Job;
 use App\Entity\TimeEntry;
 use App\Entity\User;
-use App\Enum\JobStatus;
 use App\Repository\TimeEntryRepository;
+use Doctrine\ORM\EntityManagerInterface;
 
 /**
  * Start/Stopp der Zeiterfassung. Pro Arbeiter laeuft hoechstens ein
@@ -15,44 +15,25 @@ use App\Repository\TimeEntryRepository;
  */
 class TimeTracker
 {
-    public function __construct(private readonly TimeEntryRepository $entries)
-    {
+    public function __construct(
+        private readonly TimeEntryRepository $entries,
+        private readonly EntityManagerInterface $em,
+    ) {
     }
 
-    public function start(User $user, Job $job, ?string $note = null): TimeEntry
+    public function start(User $user, Job $job): TimeEntry
     {
-        $this->stopRunning($user);
+        $this->stop($user);
 
-        $entry = new TimeEntry();
-        $entry->setUser($user);
-        $entry->setJob($job);
-        $entry->setNote($note);
-        $entry->setStartedAt(new \DateTimeImmutable());
-
-        if (JobStatus::Open === $job->getStatus()) {
-            $job->setStatus(JobStatus::InProgress);
-        }
+        $entry = new TimeEntry($user, $job);
+        $job->markInProgress();
+        $this->em->persist($entry);
 
         return $entry;
     }
 
-    public function stopRunning(User $user, ?\DateTimeImmutable $at = null): ?TimeEntry
+    public function stop(User $user): ?TimeEntry
     {
-        $running = $this->entries->findRunning($user);
-
-        if (null === $running) {
-            return null;
-        }
-
-        $end = $at ?? new \DateTimeImmutable();
-
-        // Mindestens eine Minute, damit die Validierung (Ende > Beginn) haelt.
-        if ($end <= $running->getStartedAt()) {
-            $end = $running->getStartedAt()->modify('+1 minute');
-        }
-
-        $running->setEndedAt($end);
-
-        return $running;
+        return $this->entries->findRunning($user)?->stop();
     }
 }

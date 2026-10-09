@@ -6,183 +6,172 @@ use App\Entity\Job;
 use App\Entity\TimeEntry;
 use App\Entity\User;
 use App\Entity\WorkRequest;
-use App\Enum\JobStatus;
 use App\Enum\Priority;
 use App\Enum\UserRole;
-use App\Service\WorkloadCalculator;
 use Doctrine\Bundle\FixturesBundle\Fixture;
 use Doctrine\Persistence\ObjectManager;
 use Symfony\Component\PasswordHasher\Hasher\UserPasswordHasherInterface;
 
 /**
- * Demodaten fuer die Werkstatt Ganglbauer Landtechnik.
+ * Demodaten passend zum Figma-Entwurf. Alle Termine haengen an der
+ * laufenden Woche, damit der Kalender immer etwas zeigt.
  *
- * Zugaenge:
- *   meister@ganglbauer.at      / admin1234  (Chef)
- *   vorarbeiter@ganglbauer.at  / test1234   (Vorarbeiter)
- *   kevin@, resul@, toni@...   / test1234   (Arbeiter)
+ * Passwort fuer alle Demo-Konten: werkstatt
  */
-class AppFixtures extends Fixture
+final class AppFixtures extends Fixture
 {
-    public function __construct(
-        private readonly UserPasswordHasherInterface $hasher,
-        private readonly WorkloadCalculator $workload,
-    ) {
+    public const PASSWORD = 'werkstatt';
+
+    /** [Tag ab Montag, Beginn, Stunden geplant, Stunden tatsaechlich, Arbeiter, Titel, Kunde, Prioritaet] */
+    private const CURRENT_WEEK = [
+        [0, '07:00', 2.5, 2.0, 'a.huber', 'Bremsen hinten', 'Fam. Wagner', Priority::High],
+        [0, '09:30', 2.0, 2.0, 'a.huber', 'Service 60.000 km', 'M. Berger', Priority::Medium],
+        [0, '12:00', 3.0, 4.0, 'a.huber', 'Kupplung tauschen', 'Fa. Leitner', Priority::High],
+        [0, '07:00', 1.5, 1.5, 'b.steiner', 'Reifenwechsel', 'S. Pichler', Priority::Low],
+        [0, '08:30', 2.0, 3.5, 'b.steiner', 'Pickerl §57a', 'R. Hofer', Priority::Medium],
+        [0, '07:00', 4.0, 4.0, 'c.mayr', 'Motorschaden', 'T. Novak', Priority::High],
+        [0, '11:30', 1.5, 1.0, 'c.mayr', 'Ölwechsel', 'A. Maier', Priority::Low],
+        [0, '07:30', 2.0, 2.0, 'd.gruber', 'Auspuff schweißen', 'K. Sturm', Priority::Low],
+        [0, '10:00', 2.5, 2.5, 'd.gruber', 'Lichtmaschine', 'Fa. Ebner', Priority::High],
+        [1, '07:00', 3.0, 3.0, 'a.huber', 'Getriebe prüfen', 'Hofer Landwirtschaft', Priority::Medium],
+        [1, '07:00', 6.0, 6.5, 'c.mayr', 'Motor Zusammenbau', 'T. Novak', Priority::High],
+        [1, '10:30', 2.0, 1.5, 'd.gruber', 'Klimaservice', 'Fam. Brunner', Priority::Low],
+        [1, '13:00', 2.5, 2.5, 'd.gruber', 'Stoßdämpfer', 'L. Winkler', Priority::Medium],
+        [2, '07:00', 7.0, 7.0, 'a.huber', 'Karosserie', 'Gut Ebersdorf', Priority::Medium],
+        [2, '07:00', 3.0, 3.0, 'c.mayr', 'Pickerl §57a', 'Lagerhaus Tulln', Priority::Medium],
+        [2, '10:30', 2.0, 2.0, 'd.gruber', 'Batterie', 'Gemeinde Sitzendorf', Priority::Low],
+        [3, '07:00', 3.0, 3.0, 'c.mayr', 'Endkontrolle', 'T. Novak', Priority::High],
+        [3, '08:00', 2.0, 2.0, 'd.gruber', 'Zahnriemen', 'Fa. Ebner', Priority::High],
+        [4, '08:00', 1.5, 1.5, 'a.huber', 'Reifen', 'S. Pichler', Priority::Low],
+        [7, '07:00', 2.0, 2.0, 'a.huber', 'Inspektion', 'M. Berger', Priority::Medium],
+        [7, '07:00', 2.5, 2.5, 'b.steiner', 'Bremsen vorne', 'L. Winkler', Priority::High],
+        [7, '09:30', 1.5, 1.5, 'c.mayr', 'Ölwechsel', 'Fam. Wagner', Priority::Low],
+        [8, '07:00', 4.0, 4.0, 'c.mayr', 'Achsvermessung', 'Fa. Leitner', Priority::Medium],
+        [8, '07:00', 3.0, 3.0, 'd.gruber', 'Service', 'K. Sturm', Priority::Medium],
+    ];
+
+    /** Titel fuer die erledigten Arbeiten der Vorwochen (Soll/Ist-Auswertung). */
+    private const HISTORY_TITLES = [
+        'Hydraulikschlauch tauschen', 'Service Traktor', 'Mähwerk Messerwechsel', 'Anhänger Bremsen prüfen',
+        'Kabine Elektrik', 'Ölwechsel', 'Zapfwelle instandsetzen', 'Beleuchtung Anhänger',
+        'Klimaanlage befüllen', 'Pflug Scharwechsel', 'Reifenwechsel', 'Pickerl §57a',
+    ];
+
+    public function __construct(private readonly UserPasswordHasherInterface $hasher)
+    {
     }
 
     public function load(ObjectManager $manager): void
     {
-        $meister = $this->makeUser($manager, 'meister@ganglbauer.at', 'Franz', 'Ganglbauer', 'admin1234', UserRole::Admin);
-        $martin = $this->makeUser($manager, 'vorarbeiter@ganglbauer.at', 'Martin', 'Pichler', 'test1234', UserRole::Foreman);
-        $kevin = $this->makeUser($manager, 'kevin@ganglbauer.at', 'Kevin', 'Lichtl', 'test1234');
-        $resul = $this->makeUser($manager, 'resul@ganglbauer.at', 'Resul', 'Zajmi', 'test1234');
-        $toni = $this->makeUser($manager, 'toni@ganglbauer.at', 'Toni', 'Berger', 'test1234');
+        $users = [
+            'p.hofer' => $this->user($manager, 'p.hofer', 'Peter', 'Hofer', UserRole::Chef),
+            'a.huber' => $this->user($manager, 'a.huber', 'Anton', 'Huber', UserRole::Worker),
+            'b.steiner' => $this->user($manager, 'b.steiner', 'Bernd', 'Steiner', UserRole::Worker),
+            'c.mayr' => $this->user($manager, 'c.mayr', 'Clara', 'Mayr', UserRole::Foreman),
+            'd.gruber' => $this->user($manager, 'd.gruber', 'David', 'Gruber', UserRole::Worker),
+        ];
 
         $now = new \DateTimeImmutable();
+        $monday = new \DateTimeImmutable('monday this week');
+        $running = [];
 
-        // Der Plan beginnt am letzten Werktag, damit schon Zeit erfasst sein kann.
-        $planStart = $this->previousWorkday($now)->setTime(WorkloadCalculator::DAY_START_HOUR, 0);
+        foreach (self::CURRENT_WEEK as [$day, $time, $plannedHours, $actualHours, $worker, $title, $customer, $priority]) {
+            $start = $monday->modify(sprintf('+%d days %s', $day, $time));
+            $job = $this->job($manager, $users[$worker], $title, $customer, $priority, $start, (int) ($plannedHours * 60));
+            $actualEnd = $start->modify(sprintf('+%d minutes', (int) ($actualHours * 60)));
 
-        $plan = [
-            // Arbeiter => [[Titel, Kunde, Prioritaet, geplante Minuten, bereits gearbeitet], ...]
-            // Die Arbeiten eines Arbeiters werden lueckenlos hintereinander eingeplant.
-            [$kevin, [
-                ['Hydraulikschlauch tauschen', 'Hofer Landwirtschaft', Priority::Urgent, 120, 150],
-                ['Service Traktor Steyr 4110', 'Fam. Brunner', Priority::Normal, 480, 210],
-                ['Frontlader Zylinder abdichten', 'Gut Ebersdorf', Priority::High, 360, 0],
-            ]],
-            [$resul, [
-                ['Maehwerk Messerwechsel', 'Lagerhaus Tulln', Priority::High, 180, 60],
-                ['Anhaenger Bremsen pruefen', 'Fam. Steiner', Priority::Normal, 240, 0],
-            ]],
-            [$toni, [
-                ['Kabine Elektrik Fehlersuche', 'Gut Ebersdorf', Priority::High, 300, 120],
-                ['Winterdienststreuer montieren', 'Gemeinde Sitzendorf', Priority::Low, 900, 0],
-                ['Getriebe Fendt 312 zerlegen', 'Fam. Wimmer', Priority::Normal, 960, 0],
-            ]],
-            [$martin, [
-                ['Oelwechsel Hoflader', 'Hofer Landwirtschaft', Priority::Normal, 90, 0],
-                ['Pickerl-Ueberpruefung §57a', 'Fam. Brunner', Priority::Normal, 120, 0],
-            ]],
-        ];
-
-        foreach ($plan as [$worker, $jobs]) {
-            $cursor = $planStart;
-
-            foreach ($jobs as [$title, $customer, $priority, $planned, $worked]) {
-                $blocks = $this->workload->splitIntoWorkingBlocks($worker, $cursor, $planned);
-                $start = $blocks[0]['start'];
-                $end = $blocks[\count($blocks) - 1]['end'];
-
-                $job = (new Job())
-                    ->setTitle($title)
-                    ->setCustomer($customer)
-                    ->setAssignee($worker)
-                    ->setPriority($priority)
-                    ->setPlannedMinutes($planned)
-                    ->setStartsAt($start)
-                    ->setDueAt($end);
-
-                if ($worked > 0) {
-                    $job->setStatus(JobStatus::InProgress);
-                    $entryStart = min($start, $now->modify(sprintf('-%d minutes', $worked + 30)));
-                    $manager->persist((new TimeEntry())
-                        ->setUser($worker)
-                        ->setJob($job)
-                        ->setNote('Arbeit an der Maschine')
-                        ->setStartedAt($entryStart)
-                        ->setEndedAt($entryStart->modify(sprintf('+%d minutes', $worked))));
-                }
-
-                $manager->persist($job);
-                $cursor = $end;
+            if ($actualEnd <= $now) {
+                $this->track($manager, $job, $start, $actualEnd)->getJob()->complete($actualEnd);
+            } elseif ($start <= $now && !isset($running[$worker])) {
+                // Wird gerade bearbeitet – die Zeiterfassung laeuft noch.
+                $manager->persist(new TimeEntry($users[$worker], $job, $start));
+                $job->markInProgress();
+                $running[$worker] = true;
             }
         }
 
-        // Noch nicht eingeplant – taucht im Kalender unter "Ungeplant" auf.
-        $manager->persist((new Job())
-            ->setTitle('Reifen wechseln Hoftrac')
-            ->setCustomer('Fam. Leitner')
-            ->setPriority(Priority::Normal)
-            ->setPlannedMinutes(90));
+        $this->history($manager, $users, $monday);
 
-        // Abgeschlossene Arbeiten der letzten Wochen – Grundlage fuer den Soll/Ist-Vergleich.
-        $history = [
-            ['Reifen wechseln Frontlader', $kevin, 120, 95, 12],
-            ['Getriebeoel Case IH', $kevin, 240, 300, 9],
-            ['Zapfwelle instandsetzen', $resul, 180, 170, 8],
-            ['Beleuchtung Anhaenger', $resul, 60, 110, 5],
-            ['Klimaanlage befuellen', $toni, 90, 85, 4],
-            ['Pflug Scharwechsel', $toni, 150, 240, 2],
-            ['Batterie tauschen Hoflader', $martin, 45, 50, 6],
-        ];
-
-        foreach ($history as [$title, $worker, $planned, $actual, $daysAgo]) {
-            $done = $now->modify(sprintf('-%d days', $daysAgo))->setTime(14, 0);
-            $start = $done->modify(sprintf('-%d minutes', $actual));
-
-            $job = (new Job())
-                ->setTitle($title)
-                ->setCustomer('Werkstattauftrag')
-                ->setAssignee($worker)
-                ->setPriority(Priority::Normal)
-                ->setPlannedMinutes($planned)
-                ->setStartsAt($start)
-                ->setDueAt($done);
-
-            // Wurde die Zeit ueberschritten, ist vorher verlaengert worden (F5).
-            if ($actual > $planned) {
-                $job->extendBy((int) round(($actual - $planned) / 2));
-            }
-
-            $job->complete($done);
-            $manager->persist($job);
-
-            $manager->persist((new TimeEntry())
-                ->setUser($worker)
-                ->setJob($job)
-                ->setStartedAt($start)
-                ->setEndedAt($done));
-        }
-
-        // F7 – Resul meldet, dass er uebermorgen frueh wieder Arbeit braucht.
-        $manager->persist((new WorkRequest())
-            ->setUser($resul)
-            ->setNeededAt($now->modify('+2 days')->setTime(7, 0))
-            ->setNote('Anhaenger ist bis dahin fertig'));
+        // F7 – zwei offene "Brauche Arbeit"-Anfragen.
+        $nextWorkday = $this->nextWorkday($now);
+        $manager->persist(new WorkRequest($users['b.steiner'], $nextWorkday->setTime(7, 0), $now));
+        $manager->persist(new WorkRequest($users['d.gruber'], $this->nextWorkday($nextWorkday)->setTime(13, 0), $now));
 
         $manager->flush();
     }
 
-    private function previousWorkday(\DateTimeImmutable $day): \DateTimeImmutable
+    /**
+     * Drei Wochen erledigte Arbeiten mit realistischen Abweichungen.
+     *
+     * @param array<string, User> $users
+     */
+    private function history(ObjectManager $manager, array $users, \DateTimeImmutable $monday): void
     {
-        $cursor = $day->modify('-1 day');
+        mt_srand(40);
+        $workers = array_filter($users, static fn (User $user): bool => $user->getRole()->worksInWorkshop());
 
-        while ((int) $cursor->format('N') >= 6) {
-            $cursor = $cursor->modify('-1 day');
+        for ($week = 3; $week >= 1; --$week) {
+            foreach ($workers as $user) {
+                for ($day = 0; $day < 5; ++$day) {
+                    $start = $monday->modify(sprintf('-%d days 07:00', 7 * $week - $day));
+
+                    foreach ([4, 3.5] as $plannedHours) {
+                        $planned = (int) ($plannedHours * 60);
+                        $actual = $planned + 15 * mt_rand(-3, 5);
+                        $title = self::HISTORY_TITLES[mt_rand(0, \count(self::HISTORY_TITLES) - 1)];
+
+                        $job = $this->job($manager, $user, $title, 'Werkstattauftrag', Priority::Medium, $start, $planned);
+                        $end = $start->modify(sprintf('+%d minutes', $actual));
+                        $this->track($manager, $job, $start, $end);
+                        $job->complete($end);
+
+                        $start = $start->modify(sprintf('+%d minutes', $planned + 30));
+                    }
+                }
+            }
         }
-
-        return $cursor;
     }
 
-    private function makeUser(
-        ObjectManager $manager,
-        string $email,
-        string $firstName,
-        string $lastName,
-        string $password,
-        UserRole $role = UserRole::Worker,
-    ): User {
+    private function user(ObjectManager $manager, string $username, string $firstName, string $lastName, UserRole $role): User
+    {
         $user = (new User())
-            ->setEmail($email)
+            ->setUsername($username)
             ->setFirstName($firstName)
             ->setLastName($lastName)
-            ->setRole($role)
-            ->setWeeklyHours(38.5);
-        $user->setPassword($this->hasher->hashPassword($user, $password));
-
+            ->setRole($role);
+        $user->setPassword($this->hasher->hashPassword($user, self::PASSWORD));
         $manager->persist($user);
 
         return $user;
+    }
+
+    private function job(ObjectManager $manager, User $assignee, string $title, string $customer, Priority $priority, \DateTimeImmutable $start, int $plannedMinutes): Job
+    {
+        $job = (new Job())
+            ->setTitle($title)
+            ->setCustomer($customer)
+            ->setPriority($priority)
+            ->setAssignee($assignee)
+            ->schedule($start, $plannedMinutes);
+        $manager->persist($job);
+
+        return $job;
+    }
+
+    private function track(ObjectManager $manager, Job $job, \DateTimeImmutable $start, \DateTimeImmutable $end): TimeEntry
+    {
+        \assert(null !== $job->getAssignee());
+
+        $entry = (new TimeEntry($job->getAssignee(), $job, $start))->stop($end);
+        $manager->persist($entry);
+
+        return $entry;
+    }
+
+    private function nextWorkday(\DateTimeImmutable $day): \DateTimeImmutable
+    {
+        $next = $day->modify('+1 day');
+
+        return (int) $next->format('N') >= 6 ? $next->modify('next monday') : $next;
     }
 }

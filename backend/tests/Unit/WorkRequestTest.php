@@ -2,47 +2,38 @@
 
 namespace App\Tests\Unit;
 
+use App\Entity\User;
 use App\Entity\WorkRequest;
-use App\Enum\WorkRequestStatus;
 use PHPUnit\Framework\TestCase;
-use Symfony\Component\Validator\ConstraintViolationListInterface;
-use Symfony\Component\Validator\Validation;
 
-class WorkRequestTest extends TestCase
+/** F8 – Anfrage fruehestens fuer den naechsten Tag. */
+final class WorkRequestTest extends TestCase
 {
-    public function testRequestForTodayIsRejected(): void
-    {
-        $request = new WorkRequest();
-        $request->setNeededAt((new \DateTimeImmutable())->setTime(23, 0));
+    private const NOW = '2026-09-28 10:00:00';
 
-        self::assertGreaterThan(0, \count($this->validate($request)));
+    public function testSameDayRequestIsRejected(): void
+    {
+        $this->expectException(\DomainException::class);
+
+        $this->request('2026-09-28 13:00:00');
     }
 
-    public function testTomorrowMorningIsAlwaysAccepted(): void
+    public function testTomorrowMorningIsAllowedEvenIfLessThan24HoursAway(): void
     {
-        // "morgen frueh" muss auch dann gehen, wenn es schon 15:00 ist –
-        // mit einer starren 24-Stunden-Regel waere das abgelehnt worden.
-        $request = new WorkRequest();
-        $request->setNeededAt((new \DateTimeImmutable('+1 day'))->setTime(7, 0));
+        $request = $this->request('2026-09-29 07:00:00');
 
-        self::assertCount(0, $this->validate($request));
-        self::assertSame(WorkRequestStatus::Open, $request->getStatus());
+        self::assertTrue($request->isOpen());
     }
 
-    public function testDayAfterTomorrowIsAccepted(): void
+    public function testWithdrawnRequestIsNoLongerOpen(): void
     {
-        $request = new WorkRequest();
-        $request->setNeededAt((new \DateTimeImmutable('+2 days'))->setTime(13, 0));
+        $request = $this->request('2026-09-30 07:00:00')->withdraw();
 
-        self::assertCount(0, $this->validate($request));
+        self::assertFalse($request->isOpen());
     }
 
-    private function validate(WorkRequest $request): ConstraintViolationListInterface
+    private function request(string $neededAt): WorkRequest
     {
-        $validator = Validation::createValidatorBuilder()
-            ->enableAttributeMapping()
-            ->getValidator();
-
-        return $validator->validate($request);
+        return new WorkRequest(new User(), new \DateTimeImmutable($neededAt), new \DateTimeImmutable(self::NOW));
     }
 }

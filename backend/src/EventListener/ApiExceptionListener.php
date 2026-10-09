@@ -2,23 +2,32 @@
 
 namespace App\EventListener;
 
+use Symfony\Component\DependencyInjection\Attribute\Autowire;
 use Symfony\Component\EventDispatcher\Attribute\AsEventListener;
 use Symfony\Component\HttpFoundation\JsonResponse;
 use Symfony\Component\HttpFoundation\Response;
 use Symfony\Component\HttpKernel\Event\ExceptionEvent;
 use Symfony\Component\HttpKernel\Exception\HttpExceptionInterface;
+use Symfony\Component\Validator\ConstraintViolationListInterface;
+use Symfony\Component\Validator\Exception\ValidationFailedException;
 
 /**
- * Liefert fuer /api/* immer sauberes JSON statt HTML-Fehlerseiten.
- *
- * Prioritaet -64: Symfony schreibt den Fehler vorher ins Log (ErrorListener::
- * logKernelException, Prioritaet 0). Im Container landet er so in `docker compose logs`.
+ * Liefert fuer /api/* immer JSON im Format {title, errors?} statt
+ * HTML-Fehlerseiten – auch fuer Validierungsfehler aus MapRequestPayload.
  */
-#[AsEventListener(event: 'kernel.exception', priority: -64)]
-class ApiExceptionListener
+#[AsEventListener(event: 'kernel.exception')]
+final class ApiExceptionListener
 {
-    public function __construct(private readonly bool $debug = false)
-    {
+    private const MESSAGES = [
+        Response::HTTP_FORBIDDEN => 'Dafuer fehlt dir die Berechtigung.',
+        Response::HTTP_NOT_FOUND => 'Nicht gefunden.',
+        Response::HTTP_METHOD_NOT_ALLOWED => 'Diese Aktion ist hier nicht erlaubt.',
+    ];
+
+    public function __construct(
+        #[Autowire('%kernel.debug%')]
+        private readonly bool $debug,
+    ) {
     }
 
     public function __invoke(ExceptionEvent $event): void
@@ -28,28 +37,46 @@ class ApiExceptionListener
         }
 
         $exception = $event->getThrowable();
-        $status = $exception instanceof HttpExceptionInterface
-            ? $exception->getStatusCode()
-            : Response::HTTP_INTERNAL_SERVER_ERROR;
+        $violations = $this->violationsOf($exception);
 
-        $title = $exception->getMessage();
-        if (!$this->debug && $status >= 500) {
-            $title = 'Interner Serverfehler';
-        } elseif (!$this->debug && Response::HTTP_NOT_FOUND === $status) {
-            // Sonst stuenden interne Klassennamen in der Antwort ("App\Entity\Job object not found").
-            $title = 'Nicht gefunden.';
+        if (null !== $violations) {
+            $event->setResponse(new JsonResponse([
+                'title' => 'Bitte die Eingaben pruefen.',
+                'errors' => array_map(static fn ($violation): array => [
+                    'field' => $violation->getPropertyPath(),
+                    'message' => str_starts_with((string) $violation->getMessage(), 'This value should be of type')
+                        ? 'Ungueltiger Wert.'
+                        : (string) $violation->getMessage(),
+                ], iterator_to_array($violations)),
+            ], Response::HTTP_UNPROCESSABLE_ENTITY));
+
+            return;
         }
 
-        $payload = [
-            'status' => $status,
-            'title' => $title,
-        ];
+        $status = $exception instanceof HttpExceptionInterface ? $exception->getStatusCode() : Response::HTTP_INTERNAL_SERVER_ERROR;
+        $title = match (true) {
+            isset(self::MESSAGES[$status]) => self::MESSAGES[$status],
+            $status >= 500 && !$this->debug => 'Interner Serverfehler',
+            default => $exception->getMessage(),
+        };
 
+        $payload = ['title' => $title];
         if ($this->debug) {
-            $payload['exception'] = $exception::class;
+            $payload['exception'] = $exception::class.': '.$exception->getMessage();
             $payload['file'] = $exception->getFile().':'.$exception->getLine();
         }
 
         $event->setResponse(new JsonResponse($payload, $status));
+    }
+
+    private function violationsOf(\Throwable $exception): ?ConstraintViolationListInterface
+    {
+        for ($e = $exception; null !== $e; $e = $e->getPrevious()) {
+            if ($e instanceof ValidationFailedException) {
+                return $e->getViolations();
+            }
+        }
+
+        return null;
     }
 }

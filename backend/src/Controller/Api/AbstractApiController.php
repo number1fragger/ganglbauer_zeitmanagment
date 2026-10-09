@@ -3,33 +3,14 @@
 namespace App\Controller\Api;
 
 use App\Entity\User;
+use App\Util\LocalTime;
 use Symfony\Bundle\FrameworkBundle\Controller\AbstractController;
 use Symfony\Component\HttpFoundation\JsonResponse;
-use Symfony\Component\HttpFoundation\Request;
 use Symfony\Component\HttpFoundation\Response;
 use Symfony\Component\HttpKernel\Exception\BadRequestHttpException;
-use Symfony\Component\Validator\ConstraintViolationListInterface;
 
 abstract class AbstractApiController extends AbstractController
 {
-    /**
-     * @return array<string, mixed>
-     */
-    protected function payload(Request $request): array
-    {
-        if ('' === $request->getContent()) {
-            return [];
-        }
-
-        try {
-            $data = $request->toArray();
-        } catch (\Throwable) {
-            throw new BadRequestHttpException('Ungueltiges JSON im Request-Body.');
-        }
-
-        return $data;
-    }
-
     protected function currentUser(): User
     {
         $user = $this->getUser();
@@ -44,25 +25,20 @@ abstract class AbstractApiController extends AbstractController
     /**
      * @param string[] $groups
      */
-    protected function item(mixed $data, array $groups, int $status = Response::HTTP_OK): JsonResponse
+    protected function serialized(mixed $data, array $groups, int $status = Response::HTTP_OK): JsonResponse
     {
         return $this->json($data, $status, [], ['groups' => $groups]);
     }
 
-    protected function violations(ConstraintViolationListInterface $violations): JsonResponse
+    protected function noContent(): JsonResponse
     {
-        $errors = [];
-        foreach ($violations as $violation) {
-            $errors[] = [
-                'field' => $violation->getPropertyPath(),
-                'message' => $violation->getMessage(),
-            ];
-        }
+        return new JsonResponse(null, Response::HTTP_NO_CONTENT);
+    }
 
-        return $this->json([
-            'title' => 'Validierung fehlgeschlagen',
-            'errors' => $errors,
-        ], Response::HTTP_UNPROCESSABLE_ENTITY);
+    /** Meldung aus der Fachlogik (z. B. Vorlaufzeit) als 422 an den Client. */
+    protected function rejected(string $message): JsonResponse
+    {
+        return $this->json(['title' => $message], Response::HTTP_UNPROCESSABLE_ENTITY);
     }
 
     protected function parseDate(?string $value, string $field): ?\DateTimeImmutable
@@ -72,10 +48,8 @@ abstract class AbstractApiController extends AbstractController
         }
 
         try {
-            // Der Browser schickt UTC ("...Z"). Doctrine speichert ohne Zeitzone,
-            // deshalb erst in die Zeitzone der Werkstatt umrechnen.
-            return (new \DateTimeImmutable($value))->setTimezone(new \DateTimeZone(date_default_timezone_get()));
-        } catch (\Throwable) {
+            return LocalTime::of(new \DateTimeImmutable($value));
+        } catch (\Exception) {
             throw new BadRequestHttpException(sprintf('"%s" ist kein gueltiges Datum.', $field));
         }
     }

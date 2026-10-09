@@ -1,605 +1,481 @@
-<script setup>
-import { computed, onBeforeUnmount, onMounted, ref } from 'vue'
-import { useRouter } from 'vue-router'
-import { api } from '@/api/client'
+<script setup lang="ts">
+import { computed, onMounted, ref } from 'vue'
+import { authApi, jobsApi, requestsApi } from '@/api'
+import { errorMessage } from '@/api/http'
+import type { Job, WorkerStatus, WorkRequest } from '@/api/types'
+import { useNow } from '@/composables/useNow'
 import { useAuthStore } from '@/stores/auth'
-import { isWeekend, shiftWorkday, startOfDay } from '@/utils/calendar'
-import { formatHours, formatWhen } from '@/utils/format'
+import { isDone, roleOf } from '@/utils/domain'
+import {
+  describeMoment,
+  formatDayMonth,
+  formatHours,
+  isWeekend,
+  nextWorkday,
+  relativeDay,
+  startOfDay,
+  weekdayName,
+} from '@/utils/time'
 
-/**
- * Arbeiter-Ansicht (fuers Handy gebaut): eigene Arbeiten, Zeiterfassung,
- * Restzeit und "Ich brauche neue Arbeit" (F4, F5, F7, F8).
- */
 const auth = useAuthStore()
-const router = useRouter()
+const now = useNow(30_000)
 
-const jobs = ref([])
-const workload = ref(null)
-const running = ref(null)
-const myRequest = ref(null)
-const expanded = ref(null)
+const jobs = ref<Job[]>([])
+const status = ref<WorkerStatus | null>(null)
+const request = ref<WorkRequest | null>(null)
 const error = ref('')
-const busy = ref(false)
-const now = ref(Date.now())
+const busyId = ref<number | string | null>(null)
 
-const todayLabel = new Date().toLocaleDateString('de-AT', {
-  weekday: 'long',
-  day: '2-digit',
-  month: '2-digit',
-  year: 'numeric',
+const today = computed(() => {
+  const date = now.value.toLocaleDateString('de-AT', { weekday: 'long', day: '2-digit', month: '2-digit', year: 'numeric' })
+  return `Werkstatt · ${date}`
 })
 
-/** Offene Arbeiten und die heute erledigten. */
-const visibleJobs = computed(() => {
-  const today = startOfDay(new Date()).getTime()
-  return jobs.value
-    .filter((j) => j.status !== 'erledigt' || new Date(j.completedAt).getTime() >= today)
-    .sort(
-      (a, b) =>
-        (a.status !== 'erledigt') - (b.status !== 'erledigt') ||
-        (a.startsAt ?? '').localeCompare(b.startsAt ?? ''),
-    )
-})
-
-async function load() {
+async function load(): Promise<void> {
   try {
-    ;[jobs.value, workload.value, running.value, myRequest.value] = await Promise.all([
-      api.get('/api/jobs', { assignee: 'me', includeDone: 1 }),
-      api.get('/api/me/workload'),
-      api.get('/api/time-entries/running'),
-      api.get('/api/work-requests/mine'),
+    ;[jobs.value, status.value, request.value] = await Promise.all([
+      jobsApi.mine(),
+      authApi.status(),
+      requestsApi.mine(),
     ])
   } catch (e) {
-    error.value = e.message
+    error.value = errorMessage(e)
   }
 }
 
-// Laufende Zeit jede Sekunde aktualisieren.
-const ticker = setInterval(() => (now.value = Date.now()), 1000)
 onMounted(load)
-onBeforeUnmount(() => clearInterval(ticker))
 
-async function act(action) {
+/** Fuehrt eine Aktion aus, zeigt Fehler an und laedt danach neu. */
+async function act(key: number | string, action: () => Promise<unknown>): Promise<void> {
   error.value = ''
-  busy.value = true
+  busyId.value = key
   try {
     await action()
     await load()
   } catch (e) {
-    error.value = e.message
+    error.value = errorMessage(e)
   } finally {
-    busy.value = false
+    busyId.value = null
   }
 }
 
-const startWork = (job) => act(() => api.post('/api/time-entries/start', { jobId: job.id }))
-const stopWork = () => act(() => api.post('/api/time-entries/stop'))
-const extend = (job) => act(() => api.post(`/api/jobs/${job.id}/extend`, { minutes: 60 }))
-const toggleDone = (job) =>
-  act(() => api.post(`/api/jobs/${job.id}/complete`, { done: job.status !== 'erledigt' }))
+// ---- Arbeiten --------------------------------------------------------------
 
-function stateOf(job) {
-  if (job.status === 'erledigt') return 'done'
-  return job.overrun ? 'over' : 'open'
+function stateOf(job: Job): 'done' | 'overrun' | 'open' {
+  return isDone(job) ? 'done' : job.overrun ? 'overrun' : 'open'
 }
 
-function timeLine(job) {
-  if (job.status === 'erledigt')
-    return `${formatHours(job.actualMinutes || job.plannedMinutes)} · erledigt`
+const accentOf = (job: Job) =>
+  ({ done: 'var(--faint)', overrun: 'var(--danger)', open: 'var(--primary)' })[stateOf(job)]
+
+function effortOf(job: Job): string {
+  if (isDone(job)) return `${formatHours(job.actualMinutes || job.plannedMinutes)} · erledigt`
   const soll = `Soll ${formatHours(job.plannedMinutes)}`
   return job.actualMinutes > 0 ? `${soll} · Ist ${formatHours(job.actualMinutes)}` : soll
 }
 
-const clock = computed(() => {
-  if (!running.value) return ''
-  const t = Math.max(0, Math.floor((now.value - new Date(running.value.startedAt)) / 1000))
-  const pad = (n) => String(n).padStart(2, '0')
-  return `${pad(Math.floor(t / 3600))}:${pad(Math.floor((t % 3600) / 60))}:${pad(t % 60)}`
+const toggleDone = (job: Job) =>
+  act(job.id, () => (isDone(job) ? jobsApi.reopen(job.id) : jobsApi.complete(job.id)))
+const toggleTimer = (job: Job) => act(job.id, () => (job.running ? jobsApi.stopTimer() : jobsApi.start(job.id)))
+const addHour = (job: Job) => act(job.id, () => jobsApi.extend(job.id, 60))
+
+// ---- "Ich brauche neue Arbeit" (F7/F8) --------------------------------------
+
+interface Slot {
+  key: string
+  label: string
+  detail: string
+  at: Date
+  locked: boolean
+}
+
+function slotLabel(at: Date): string {
+  const day = relativeDay(at) ?? weekdayName(at)
+  const part = at.getHours() < 12 ? 'früh' : 'Nachmittag'
+  return `${day.charAt(0).toUpperCase()}${day.slice(1)} ${part}`
+}
+
+/** Drei waehlbare Zeitpunkte ab dem naechsten Werktag; heute ist zu kurzfristig. */
+const slots = computed<Slot[]>(() => {
+  const first = nextWorkday(now.value)
+  const second = nextWorkday(first)
+  const at = (day: Date, hour: number) => new Date(day.getFullYear(), day.getMonth(), day.getDate(), hour)
+
+  const options = [at(first, 7), at(first, 13), at(second, 7)].map((date) => ({
+    key: date.toISOString(),
+    label: slotLabel(date),
+    detail: `${formatDayMonth(date)} · ab ${date.getHours() === 7 ? '07:00' : '13:00'}`,
+    at: date,
+    locked: false,
+  }))
+
+  if (!isWeekend(now.value) && now.value.getHours() < 17) {
+    const afternoon = at(startOfDay(now.value), 13)
+    options.push({ key: 'today', label: slotLabel(afternoon), detail: 'Gesperrt – zu kurzfristig', at: afternoon, locked: true })
+  }
+
+  return options
 })
 
-// --- Ich brauche neue Arbeit (F7/F8): fruehestens der naechste Werktag ---------
+const isRequested = (slot: Slot) => request.value !== null && new Date(request.value.neededAt).getTime() === slot.at.getTime()
 
-function slotName(date) {
-  const days = Math.round((startOfDay(date) - startOfDay(new Date())) / 86_400_000)
-  if (days === 1) return 'Morgen'
-  if (days === 2) return 'Übermorgen'
-  return date.toLocaleDateString('de-AT', { weekday: 'long' })
-}
+const requestWork = (slot: Slot) =>
+  act(slot.key, async () => {
+    request.value = await requestsApi.create(slot.at)
+  })
 
-function at(date, hour) {
-  const d = new Date(date)
-  d.setHours(hour, 0, 0, 0)
-  return d
-}
+const withdraw = () => request.value && act('withdraw', () => requestsApi.withdraw(request.value!.id))
 
-const slots = computed(() => {
-  const first = shiftWorkday(startOfDay(new Date()), 1)
-  const second = shiftWorkday(first, 1)
-  const short = (d) =>
-    d.toLocaleDateString('de-AT', { weekday: 'short', day: '2-digit', month: '2-digit' })
-  const todayOpen = !isWeekend(new Date()) && new Date().getHours() < 13
+const finishText = computed(() =>
+  status.value ? `Voraussichtlich fertig: ${describeMoment(new Date(status.value.availableFrom))}` : '',
+)
 
-  return [
-    { label: `${slotName(first)} früh`, detail: `${short(first)} · ab 07:00`, value: at(first, 7) },
-    {
-      label: `${slotName(first)} Nachmittag`,
-      detail: `${short(first)} · ab 13:00`,
-      value: at(first, 13),
-    },
-    {
-      label: `${slotName(second)} früh`,
-      detail: `${short(second)} · ab 07:00`,
-      value: at(second, 7),
-    },
-    // Zur Verdeutlichung der Regel: heute geht nicht mehr.
-    {
-      label: todayOpen ? 'Heute Nachmittag' : 'Heute',
-      detail: 'Gesperrt – zu kurzfristig',
-      value: null,
-    },
-  ]
-})
-
-const isRequested = (slot) =>
-  slot.value &&
-  myRequest.value &&
-  new Date(myRequest.value.neededAt).getTime() === slot.value.getTime()
-
-const requestSlot = (slot) =>
-  act(() => api.post('/api/work-requests', { neededAt: slot.value.toISOString(), note: null }))
-const withdraw = () =>
-  act(() =>
-    api.put(`/api/work-requests/${myRequest.value.id}/status`, { status: 'zurueckgezogen' }),
-  )
-
-function logout() {
-  auth.logout()
-  router.push('/login')
-}
-
-const roleClass = computed(() => `role role-${auth.role.toLowerCase().replace('role_', '')}`)
 </script>
 
 <template>
-  <div class="phone">
-    <header v-if="!auth.isForeman" class="top">
-      <span class="avatar big">{{ auth.user?.initials }}</span>
-      <div class="who">
-        <strong>{{ auth.user?.fullName }}</strong>
-        <span>Werkstatt · {{ todayLabel }}</span>
-        <span :class="roleClass"><i></i>{{ auth.user?.roleLabel }}</span>
-      </div>
-      <div class="links">
-        <RouterLink to="/einstellungen">Einstellungen</RouterLink>
-        <button type="button" @click="logout">Abmelden</button>
+  <div class="my-work">
+    <header class="my-work__header">
+      <span v-if="auth.user" class="avatar my-work__avatar">{{ auth.user.initials }}</span>
+      <div class="my-work__who">
+        <h1>{{ auth.user?.fullName }}</h1>
+        <p class="muted">{{ today }}</p>
+        <div class="my-work__meta">
+          <span
+            v-if="auth.user"
+            class="role-pill"
+            :style="{ '--role': roleOf(auth.user.role).color }"
+          >
+            <span class="dot" :style="{ '--dot': 'var(--role)' }" />{{ roleOf(auth.user.role).label }}
+          </span>
+          <RouterLink v-if="auth.isPlanner" class="link" :to="{ name: 'planning' }">Zur Planung</RouterLink>
+          <button class="link my-work__logout" @click="auth.logout()">Abmelden</button>
+        </div>
       </div>
     </header>
 
-    <main class="body">
-      <p v-if="error" class="error">{{ error }}</p>
+    <main class="my-work__main">
+      <p v-if="error" class="form-error" role="alert">{{ error }}</p>
 
-      <div v-if="running" class="running">
-        <span class="pulse"></span>
-        <span class="running__text">
-          <strong>{{ running.job.title }}</strong>
-          <span>läuft seit {{ clock }}</span>
-        </span>
-        <button type="button" class="stop" :disabled="busy" @click="stopWork">Stopp</button>
-      </div>
+      <section>
+        <h2 class="section-title">Meine Arbeiten heute</h2>
+        <ul v-if="jobs.length" class="my-work__jobs">
+          <li v-for="job in jobs" :key="job.id" class="card accent job" :style="{ '--accent': accentOf(job) }">
+            <div class="job__text">
+              <strong :class="{ muted: isDone(job) }">{{ job.title }}</strong>
+              <span v-if="job.customer" class="muted">Kunde: {{ job.customer }}</span>
+              <span class="job__effort" :class="{ 'job__effort--over': job.overrun && !isDone(job) }">
+                {{ effortOf(job) }}
+              </span>
 
-      <h2>Meine Arbeiten heute</h2>
+              <span v-if="!isDone(job)" class="job__actions">
+                <button class="job__action" :disabled="busyId === job.id" @click="toggleTimer(job)">
+                  {{ job.running ? '■ Stoppen' : '▶ Starten' }}
+                </button>
+                <button class="job__action" :disabled="busyId === job.id" @click="addHour(job)">+ 1 Stunde</button>
+                <span v-if="job.running" class="job__running">läuft</span>
+              </span>
+            </div>
 
-      <article
-        v-for="job in visibleJobs"
-        :key="job.id"
-        class="job"
-        :class="stateOf(job)"
-        @click="expanded = expanded === job.id ? null : job.id"
-      >
-        <div class="job__main">
-          <strong>{{ job.title }}</strong>
-          <span>Kunde: {{ job.customer ?? '–' }}</span>
-          <span class="job__time">{{ timeLine(job) }}</span>
-        </div>
-
-        <button
-          type="button"
-          class="state"
-          :aria-label="job.status === 'erledigt' ? 'Wieder öffnen' : 'Als erledigt abhaken'"
-          :disabled="busy"
-          @click.stop="toggleDone(job)"
-        >
-          <template v-if="job.status === 'erledigt'">OK</template>
-          <template v-else-if="job.overrun">!</template>
-        </button>
-
-        <div
-          v-if="expanded === job.id && job.status !== 'erledigt'"
-          class="job__actions"
-          @click.stop
-        >
-          <button
-            v-if="running?.job.id !== job.id"
-            type="button"
-            class="small"
-            :disabled="busy"
-            @click="startWork(job)"
-          >
-            Zeit starten
-          </button>
-          <button type="button" class="small secondary" :disabled="busy" @click="extend(job)">
-            + 1 Stunde
-          </button>
-          <button type="button" class="small secondary" :disabled="busy" @click="toggleDone(job)">
-            Erledigt
-          </button>
-        </div>
-      </article>
-
-      <p v-if="visibleJobs.length === 0" class="empty">Heute sind dir keine Arbeiten zugeteilt.</p>
-
-      <section v-if="workload" class="rest">
-        <span>Verbleibende Arbeit</span>
-        <strong>{{ formatHours(workload.remainingMinutes, 'Stunden') }}</strong>
-        <small>Voraussichtlich fertig: {{ formatWhen(workload.availableFrom) }}</small>
+            <button
+              class="job__check"
+              :class="`job__check--${stateOf(job)}`"
+              :disabled="busyId === job.id"
+              :aria-label="isDone(job) ? `${job.title} wieder öffnen` : `${job.title} als erledigt abhaken`"
+              :title="isDone(job) ? 'Wieder öffnen' : 'Als erledigt abhaken'"
+              @click="toggleDone(job)"
+            >
+              {{ stateOf(job) === 'done' ? 'OK' : stateOf(job) === 'overrun' ? '!' : '' }}
+            </button>
+          </li>
+        </ul>
+        <p v-else class="empty my-work__empty">Für heute ist dir keine Arbeit zugeteilt.</p>
       </section>
 
-      <h2 class="gap">Ich brauche neue Arbeit</h2>
-      <p class="hint">Anfrage frühestens einen Tag im Voraus möglich</p>
+      <section v-if="status" class="remaining">
+        <span class="remaining__label">Verbleibende Arbeit</span>
+        <strong>{{ formatHours(status.remainingMinutes).replace(' h', ' Stunden') }}</strong>
+        <span class="muted">{{ finishText }}</span>
+      </section>
 
-      <div v-for="slot in slots" :key="slot.label" class="slot" :class="{ locked: !slot.value }">
-        <span>
-          <strong>{{ slot.label }}</strong>
-          <small>{{ slot.detail }}</small>
-        </span>
-        <button v-if="!slot.value" type="button" class="small" disabled>gesperrt</button>
-        <button
-          v-else-if="isRequested(slot)"
-          type="button"
-          class="small requested"
-          :disabled="busy"
-          @click="withdraw"
-        >
-          angefragt ✓
-        </button>
-        <button v-else type="button" class="small" :disabled="busy" @click="requestSlot(slot)">
-          anfragen
-        </button>
-      </div>
+      <section>
+        <h2 class="section-title">Ich brauche neue Arbeit</h2>
+        <p class="section-sub">Anfrage frühestens einen Tag im Voraus möglich</p>
 
-      <p v-if="myRequest?.neededAt" class="note">
-        Deine Anfrage steht: {{ formatWhen(myRequest?.neededAt) }}. Nochmal tippen zieht sie zurück,
-        eine andere Zeit ersetzt sie.
-      </p>
+        <ul class="slots">
+          <li v-for="slot in slots" :key="slot.key" class="slot" :class="{ 'slot--locked': slot.locked }">
+            <span>
+              <strong>{{ slot.label }}</strong>
+              <small>{{ slot.detail }}</small>
+            </span>
+            <span v-if="slot.locked" class="slot__button slot__button--locked">gesperrt</span>
+            <span v-else-if="isRequested(slot)" class="slot__button slot__button--done">angefragt</span>
+            <button
+              v-else
+              class="btn btn--primary slot__button"
+              :disabled="busyId === slot.key"
+              @click="requestWork(slot)"
+            >
+              anfragen
+            </button>
+          </li>
+        </ul>
+
+        <p v-if="request" class="my-work__request">
+          Angefragt: {{ describeMoment(new Date(request.neededAt)) }}.
+          <button class="link" :disabled="busyId === 'withdraw'" @click="withdraw">Anfrage zurückziehen</button>
+        </p>
+      </section>
     </main>
   </div>
 </template>
 
 <style scoped>
-.phone {
-  max-width: 420px;
-  margin: 0 auto;
+.my-work {
+  max-width: 460px;
   min-height: 100vh;
+  margin: 0 auto;
   background: var(--bg);
 }
 
-.top {
+.my-work__header {
   display: flex;
   gap: 12px;
-  align-items: flex-start;
-  padding: 28px 24px 14px;
-  background: var(--surface);
+  padding: 28px 24px 4px;
   border-bottom: 1px solid var(--border);
+  background: var(--surface);
 }
 
-.avatar.big {
+.my-work__avatar {
   width: 40px;
   height: 40px;
-  font-size: 0.8125rem;
+  font-size: 13px;
 }
 
-.who {
-  display: flex;
-  flex-direction: column;
+.my-work__who {
   flex: 1;
-  min-width: 0;
 }
 
-.who strong {
-  font-size: 1rem;
+.my-work__who h1 {
+  font-size: 16px;
   font-weight: 700;
 }
 
-.who > span {
-  font-size: 0.6875rem;
-  color: var(--muted);
+.my-work__who p {
   margin-top: 2px;
+  font-size: 11px;
 }
 
-.role {
-  align-self: flex-start;
+.my-work__meta {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  margin: 6px 0 4px;
+}
+
+.my-work__logout {
+  margin-left: auto;
+  font-size: 10px;
+  font-weight: 600;
+}
+
+.role-pill {
   display: inline-flex;
   align-items: center;
   gap: 6px;
   height: 20px;
-  margin-top: 8px !important;
   padding: 0 10px;
   border-radius: 10px;
-  font-size: 0.625rem !important;
+  background: color-mix(in srgb, var(--role) 12%, white);
+  color: var(--role);
+  font-size: 10px;
   font-weight: 600;
 }
 
-.role i {
+.role-pill .dot {
   width: 6px;
   height: 6px;
-  border-radius: 50%;
-  background: currentColor;
 }
 
-.role-user {
-  background: var(--success-soft);
-  color: var(--success) !important;
+.my-work__main {
+  display: grid;
+  gap: 28px;
+  padding: 24px 24px 40px;
 }
 
-.role-foreman {
-  background: var(--warning-soft);
-  color: var(--warning-text) !important;
-}
-
-.role-admin {
-  background: var(--primary-soft);
-  color: var(--primary) !important;
-}
-
-.links {
-  align-self: flex-end;
-  display: flex;
-  flex-direction: column;
-  align-items: flex-end;
-  gap: 4px;
-}
-
-.links a,
-.links button {
-  height: auto;
+.my-work__jobs,
+.slots {
+  display: grid;
+  gap: 12px;
+  margin: 14px 0 0;
   padding: 0;
-  background: none;
-  color: var(--primary);
-  font-size: 0.625rem;
-  font-weight: 600;
-  text-decoration: none;
+  list-style: none;
 }
 
-.body {
-  padding: 24px;
+.my-work__empty {
+  margin-top: 14px;
 }
 
-h2 {
-  font-size: 0.8125rem;
-  margin: 0 0 12px;
-}
-
-h2.gap {
-  margin-top: 28px;
-  margin-bottom: 0;
-}
-
-.hint {
-  margin: 4px 0 20px;
-  font-size: 0.6875rem;
-  color: var(--muted);
-}
-
-/* ---------- Arbeitskarten ---------- */
 .job {
-  position: relative;
   display: flex;
-  flex-wrap: wrap;
-  gap: 8px;
-  padding: 14px 16px 14px 20px;
-  margin-bottom: 12px;
-  border-radius: 10px;
-  background: var(--surface);
-  border-left: 3px solid var(--primary);
-  cursor: pointer;
+  align-items: flex-start;
+  gap: 12px;
+  min-height: 80px;
+  padding: 14px 18px 14px 20px;
 }
 
-.job.done {
-  border-left-color: var(--faint);
-}
-
-.job.over {
-  border-left-color: var(--danger);
-}
-
-.job__main {
+.job__text {
   display: flex;
-  flex-direction: column;
-  gap: 3px;
   flex: 1;
+  flex-direction: column;
+  gap: 5px;
   min-width: 0;
+  font-size: 11px;
 }
 
-.job__main strong {
-  font-size: 0.8125rem;
+.job__text strong {
+  font-size: 13px;
   font-weight: 600;
 }
 
-.job.done .job__main strong {
+.job__effort {
   color: var(--muted);
-}
-
-.job__main span {
-  font-size: 0.6875rem;
-  color: var(--muted);
-}
-
-.job__main .job__time {
   font-weight: 500;
-  margin-top: 3px;
 }
 
-.job.over .job__time {
+.job__effort--over {
   color: var(--danger);
 }
 
-.state {
-  width: 26px;
-  height: 26px;
-  padding: 0;
-  border-radius: 50%;
-  background: var(--button);
-  color: #fff;
-  font-size: 0.5625rem;
-  font-weight: 700;
-}
-
-.job.done .state {
-  background: var(--success);
-}
-
-.job.over .state {
-  background: var(--danger);
-  font-size: 0.75rem;
-}
-
 .job__actions {
-  width: 100%;
-  display: flex;
-  gap: 8px;
-  padding-top: 10px;
-  border-top: 1px solid var(--grid);
-}
-
-.running {
   display: flex;
   align-items: center;
-  gap: 12px;
-  padding: 12px 16px;
-  margin-bottom: 20px;
-  border-radius: 10px;
-  background: var(--surface);
-  border-left: 3px solid var(--success);
+  gap: 8px;
+  margin-top: 6px;
 }
 
-.running__text {
-  display: flex;
-  flex-direction: column;
-  flex: 1;
-  font-size: 0.6875rem;
-  color: var(--muted);
+.job__action {
+  height: 24px;
+  padding: 0 10px;
+  border: 0;
+  border-radius: var(--radius-sm);
+  background: var(--surface-muted);
+  font-size: 10px;
+  font-weight: 600;
 }
 
-.running__text strong {
-  font-size: 0.75rem;
-  color: var(--text);
-}
-
-.stop {
-  background: var(--danger);
-  height: 30px;
-}
-
-.pulse {
-  width: 10px;
-  height: 10px;
-  border-radius: 50%;
-  background: var(--success);
-  animation: pulse 1.6s ease-in-out infinite;
-}
-
-@keyframes pulse {
-  50% {
-    opacity: 0.25;
-  }
-}
-
-.empty {
-  font-size: 0.75rem;
-  color: var(--muted);
-}
-
-/* ---------- Verbleibende Arbeit ---------- */
-.rest {
-  display: flex;
-  flex-direction: column;
-  margin-top: 24px;
-  padding: 16px 20px;
-  border-radius: 10px;
-  background: var(--primary-soft);
-}
-
-.rest span {
-  font-size: 0.6875rem;
-  font-weight: 500;
-  color: var(--primary);
-}
-
-.rest strong {
-  font-size: 1.375rem;
+.job__running {
+  padding: 2px 8px;
+  border-radius: 9px;
+  background: var(--primary);
+  color: #fff;
+  font-size: 9px;
   font-weight: 700;
-  margin: 2px 0;
 }
 
-.rest small {
-  font-size: 0.625rem;
-  color: var(--muted);
+.job__check {
+  display: grid;
+  flex: none;
+  place-items: center;
+  width: 26px;
+  height: 26px;
+  border: 0;
+  border-radius: 50%;
+  background: var(--surface-muted);
+  color: #fff;
+  font-size: 9px;
+  font-weight: 700;
 }
 
-/* ---------- Anfrage-Slots ---------- */
+.job__check--done {
+  background: var(--success);
+}
+
+.job__check--overrun {
+  background: var(--danger);
+  font-size: 12px;
+}
+
+.job__check--open:hover {
+  box-shadow: inset 0 0 0 2px var(--success);
+}
+
+.remaining {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  padding: 16px 20px;
+  border-radius: var(--radius-lg);
+  background: var(--primary-soft);
+  font-size: 10px;
+}
+
+.remaining__label {
+  color: var(--primary);
+  font-size: 11px;
+  font-weight: 500;
+}
+
+.remaining strong {
+  font-size: 22px;
+  font-weight: 700;
+}
+
 .slot {
   display: flex;
   align-items: center;
   justify-content: space-between;
-  gap: 12px;
-  padding: 10px 16px 10px 20px;
-  margin-bottom: 8px;
-  border-radius: 10px;
+  min-height: 48px;
+  padding: 8px 16px 8px 20px;
+  border-radius: var(--radius-lg);
   background: var(--surface);
 }
 
-.slot span {
-  display: flex;
-  flex-direction: column;
-}
-
 .slot strong {
-  font-size: 0.75rem;
+  display: block;
+  font-size: 12px;
   font-weight: 600;
 }
 
 .slot small {
-  font-size: 0.625rem;
+  display: block;
+  margin-top: 2px;
   color: var(--muted);
+  font-size: 10px;
 }
 
-.slot button {
+.slot--locked {
+  background: var(--surface-muted);
+}
+
+.slot--locked strong,
+.slot--locked small {
+  color: var(--faint);
+}
+
+.slot__button {
+  display: inline-grid;
+  place-items: center;
   width: 80px;
   height: 26px;
+  padding: 0;
+  border-radius: var(--radius-sm);
+  font-size: 10px;
+  font-weight: 600;
 }
 
-.slot.locked {
-  background: var(--button);
-}
-
-.slot.locked strong,
-.slot.locked small {
-  color: var(--faint);
-}
-
-.slot.locked button {
+.slot__button--locked {
   background: #e5e7eb;
   color: var(--faint);
-  opacity: 1;
 }
 
-.requested {
-  background: var(--success);
+.slot__button--done {
+  background: var(--success-soft);
+  color: var(--success);
 }
 
-.note {
-  font-size: 0.6875rem;
-  color: var(--muted);
+.my-work__request {
   margin-top: 12px;
+  color: var(--muted);
+  font-size: 11px;
 }
 </style>

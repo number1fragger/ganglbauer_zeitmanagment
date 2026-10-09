@@ -1,7 +1,0 @@
-.DS_Store
-.idea
-.vscode
-*.swp
-
-# Zugangsdaten fuer den Docker-Stack – Vorlage: docker/.env.example
-docker/.env

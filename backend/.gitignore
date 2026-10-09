@@ -2,9 +2,6 @@
 /.env.local.php
 /.env.*.local
 /config/jwt/*.pem
-/public/bundles/
 /var/
 /vendor/
 /.phpunit.cache/
-.php-cs-fixer.cache
-.DS_Store

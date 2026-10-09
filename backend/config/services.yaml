@@ -1,6 +1,3 @@
-parameters:
-    jwt_ttl: '%env(int:JWT_TTL)%'
-
 services:
     _defaults:
         autowire: true
@@ -9,18 +6,15 @@ services:
     App\:
         resource: '../src/'
         exclude:
-            - '../src/DependencyInjection/'
+            - '../src/DataFixtures/'
+            - '../src/Dto/'
             - '../src/Entity/'
             - '../src/Enum/'
+            - '../src/Util/'
             - '../src/Kernel.php'
-            # Fixtures brauchen das Fixtures-Bundle, das es nur in dev/test gibt.
-            - '../src/DataFixtures/'
 
-    App\EventListener\ApiExceptionListener:
-        arguments:
-            $debug: '%kernel.debug%'
-
-when@dev: &fixtures
+# Demodaten gibt es nur in der Entwicklung – im Produktions-Image fehlt das Fixtures-Bundle.
+when@dev: &dev
     services:
         _defaults:
             autowire: true
@@ -29,4 +23,4 @@ when@dev: &fixtures
         App\DataFixtures\:
             resource: '../src/DataFixtures/'
 
-when@test: *fixtures
+when@test: *dev

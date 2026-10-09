@@ -4,3 +4,4 @@ var/
 .env.*.local
 config/jwt/*.pem
 .phpunit.cache/
+tests/

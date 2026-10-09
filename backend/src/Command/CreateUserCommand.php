@@ -13,13 +13,19 @@ use Symfony\Component\Console\Input\InputOption;
 use Symfony\Component\Console\Output\OutputInterface;
 use Symfony\Component\Console\Style\SymfonyStyle;
 use Symfony\Component\PasswordHasher\Hasher\UserPasswordHasherInterface;
+use Symfony\Component\Validator\Validator\ValidatorInterface;
 
+/**
+ * Legt den ersten Chef am Server an, z. B.:
+ *   php bin/console app:create-user p.hofer Peter Hofer --role=chef
+ */
 #[AsCommand(name: 'app:create-user', description: 'Legt eine Benutzerin oder einen Benutzer an.')]
-class CreateUserCommand extends Command
+final class CreateUserCommand extends Command
 {
     public function __construct(
         private readonly EntityManagerInterface $em,
         private readonly UserPasswordHasherInterface $hasher,
+        private readonly ValidatorInterface $validator,
     ) {
         parent::__construct();
     }
@@ -27,45 +33,50 @@ class CreateUserCommand extends Command
     protected function configure(): void
     {
         $this
-            ->addArgument('email', InputArgument::REQUIRED, 'E-Mail-Adresse')
-            ->addArgument('password', InputArgument::REQUIRED, 'Passwort')
-            ->addArgument('firstName', InputArgument::OPTIONAL, 'Vorname', 'Max')
-            ->addArgument('lastName', InputArgument::OPTIONAL, 'Nachname', 'Mustermann')
-            ->addOption('admin', null, InputOption::VALUE_NONE, 'Kurzform fuer --role=chef')
-            ->addOption('role', null, InputOption::VALUE_REQUIRED, 'chef, vorarbeiter oder arbeiter', 'arbeiter')
-            ->addOption('skip-if-exists', null, InputOption::VALUE_NONE, 'Nichts tun, wenn es die E-Mail-Adresse schon gibt');
+            ->addArgument('username', InputArgument::REQUIRED, 'Benutzername, z. B. p.hofer')
+            ->addArgument('firstName', InputArgument::REQUIRED, 'Vorname')
+            ->addArgument('lastName', InputArgument::REQUIRED, 'Nachname')
+            ->addOption('role', null, InputOption::VALUE_REQUIRED, 'chef, vorarbeiter oder arbeiter', UserRole::Worker->value);
     }
 
     protected function execute(InputInterface $input, OutputInterface $output): int
     {
         $io = new SymfonyStyle($input, $output);
-        $email = (string) $input->getArgument('email');
 
-        // Fuer den Container-Start: den ersten Chef nur beim allerersten Mal anlegen.
-        if ($input->getOption('skip-if-exists') && null !== $this->em->getRepository(User::class)->findOneBy(['email' => $email])) {
-            $io->note(sprintf('Benutzer "%s" gibt es schon – nichts zu tun.', $email));
+        $role = UserRole::tryFrom((string) $input->getOption('role'));
+        if (null === $role) {
+            $io->error('Unbekannte Rolle. Erlaubt: chef, vorarbeiter, arbeiter.');
 
-            return Command::SUCCESS;
+            return Command::INVALID;
         }
 
-        $user = new User();
-        $user->setEmail($email);
-        $user->setFirstName((string) $input->getArgument('firstName'));
-        $user->setLastName((string) $input->getArgument('lastName'));
-        $user->setPassword($this->hasher->hashPassword($user, (string) $input->getArgument('password')));
+        $password = (string) $io->askHidden('Passwort (mindestens 8 Zeichen)');
+        if (mb_strlen($password) < 8) {
+            $io->error('Das Passwort braucht mindestens 8 Zeichen.');
 
-        $role = $input->getOption('admin') ? 'chef' : (string) $input->getOption('role');
-        $user->setRole(match ($role) {
-            'chef' => UserRole::Admin,
-            'vorarbeiter' => UserRole::Foreman,
-            'arbeiter' => UserRole::Worker,
-            default => throw new \InvalidArgumentException('Rolle muss chef, vorarbeiter oder arbeiter sein.'),
-        });
+            return Command::INVALID;
+        }
+
+        $user = (new User())
+            ->setUsername((string) $input->getArgument('username'))
+            ->setFirstName((string) $input->getArgument('firstName'))
+            ->setLastName((string) $input->getArgument('lastName'))
+            ->setRole($role);
+        $user->setPassword($this->hasher->hashPassword($user, $password));
+
+        $violations = $this->validator->validate($user);
+        if (\count($violations) > 0) {
+            foreach ($violations as $violation) {
+                $io->error($violation->getPropertyPath().': '.$violation->getMessage());
+            }
+
+            return Command::FAILURE;
+        }
 
         $this->em->persist($user);
         $this->em->flush();
 
-        $io->success(sprintf('Benutzer "%s" wurde als %s angelegt.', $user->getEmail(), $user->getRoleLabel()));
+        $io->success(sprintf('"%s" wurde als %s angelegt.', $user->getUsername(), $role->value));
 
         return Command::SUCCESS;
     }

@@ -5,44 +5,40 @@ namespace App\Entity;
 use App\Enum\JobStatus;
 use App\Enum\Priority;
 use App\Repository\JobRepository;
+use App\Util\LocalTime;
 use Doctrine\Common\Collections\ArrayCollection;
 use Doctrine\Common\Collections\Collection;
 use Doctrine\ORM\Mapping as ORM;
 use Symfony\Component\Serializer\Attribute\Groups;
-use Symfony\Component\Validator\Constraints as Assert;
-use Symfony\Component\Validator\Context\ExecutionContextInterface;
 
 /**
  * Eine Arbeit in der Werkstatt (F1–F6).
+ *
+ * Beginn und Ende sind immer gesetzt, damit die Arbeit im Kalender
+ * erscheint. Ohne explizites Ende gilt Beginn + geplante Zeit.
  */
 #[ORM\Entity(repositoryClass: JobRepository::class)]
+#[ORM\Index(name: 'idx_job_schedule', columns: ['starts_at', 'ends_at'])]
 #[ORM\Index(name: 'idx_job_assignee_status', columns: ['assignee_id', 'status'])]
 class Job
 {
     #[ORM\Id]
     #[ORM\GeneratedValue]
     #[ORM\Column]
-    #[Groups(['job:read', 'entry:read'])]
+    #[Groups(['job:read'])]
     private ?int $id = null;
 
     #[ORM\Column(length: 150)]
-    #[Assert\NotBlank(message: 'Bitte einen Titel fuer die Arbeit angeben.')]
-    #[Assert\Length(max: 150)]
-    #[Groups(['job:read', 'job:write', 'entry:read'])]
+    #[Groups(['job:read'])]
     private string $title = '';
 
-    #[ORM\Column(type: 'text', nullable: true)]
-    #[Groups(['job:read', 'job:write'])]
-    private ?string $description = null;
-
-    /** Kunde, fuer den die Arbeit erledigt wird. */
     #[ORM\Column(length: 150, nullable: true)]
-    #[Groups(['job:read', 'job:write', 'entry:read'])]
+    #[Groups(['job:read'])]
     private ?string $customer = null;
 
     #[ORM\Column(type: 'string', length: 20, enumType: Priority::class)]
-    #[Groups(['job:read', 'job:write'])]
-    private Priority $priority = Priority::Normal;
+    #[Groups(['job:read'])]
+    private Priority $priority = Priority::Medium;
 
     #[ORM\Column(type: 'string', length: 20, enumType: JobStatus::class)]
     #[Groups(['job:read'])]
@@ -50,26 +46,25 @@ class Job
 
     /** F1 – geplante Arbeitszeit in Minuten, kann per F5 erhoeht werden. */
     #[ORM\Column]
-    #[Assert\Positive(message: 'Die geplante Zeit muss groesser als null sein.')]
-    #[Groups(['job:read', 'job:write'])]
+    #[Groups(['job:read'])]
     private int $plannedMinutes = 60;
 
-    /** Urspruenglich geplante Zeit – Basis fuer den Soll/Ist-Vergleich (A1). */
+    /** Urspruenglich geplante Zeit – Soll-Wert fuer den Soll/Ist-Vergleich (A1). */
     #[ORM\Column]
     #[Groups(['job:read'])]
     private int $originalPlannedMinutes = 60;
 
     /** F3 – geplanter Arbeitsbeginn. */
-    #[ORM\Column(nullable: true)]
-    #[Groups(['job:read', 'job:write'])]
-    private ?\DateTimeImmutable $startsAt = null;
+    #[ORM\Column]
+    #[Groups(['job:read'])]
+    private \DateTimeImmutable $startsAt;
 
     /** F3 – geplantes Arbeitsende. */
-    #[ORM\Column(nullable: true)]
-    #[Groups(['job:read', 'job:write'])]
-    private ?\DateTimeImmutable $dueAt = null;
+    #[ORM\Column]
+    #[Groups(['job:read'])]
+    private \DateTimeImmutable $endsAt;
 
-    #[ORM\ManyToOne(inversedBy: 'jobs')]
+    #[ORM\ManyToOne]
     #[ORM\JoinColumn(nullable: true, onDelete: 'SET NULL')]
     #[Groups(['job:read'])]
     private ?User $assignee = null;
@@ -79,7 +74,6 @@ class Job
     private ?\DateTimeImmutable $completedAt = null;
 
     #[ORM\Column]
-    #[Groups(['job:read'])]
     private \DateTimeImmutable $createdAt;
 
     /** @var Collection<int, TimeEntry> */
@@ -89,17 +83,9 @@ class Job
     public function __construct()
     {
         $this->createdAt = new \DateTimeImmutable();
+        $this->startsAt = $this->createdAt;
+        $this->endsAt = $this->createdAt->modify('+60 minutes');
         $this->timeEntries = new ArrayCollection();
-    }
-
-    #[Assert\Callback]
-    public function validateSchedule(ExecutionContextInterface $context): void
-    {
-        if (null !== $this->startsAt && null !== $this->dueAt && $this->dueAt < $this->startsAt) {
-            $context->buildViolation('Das Arbeitsende darf nicht vor dem Arbeitsbeginn liegen.')
-                ->atPath('dueAt')
-                ->addViolation();
-        }
     }
 
     public function getId(): ?int
@@ -114,19 +100,7 @@ class Job
 
     public function setTitle(string $title): static
     {
-        $this->title = $title;
-
-        return $this;
-    }
-
-    public function getDescription(): ?string
-    {
-        return $this->description;
-    }
-
-    public function setDescription(?string $description): static
-    {
-        $this->description = $description;
+        $this->title = trim($title);
 
         return $this;
     }
@@ -138,7 +112,8 @@ class Job
 
     public function setCustomer(?string $customer): static
     {
-        $this->customer = $customer;
+        $customer = null !== $customer ? trim($customer) : null;
+        $this->customer = '' === $customer ? null : $customer;
 
         return $this;
     }
@@ -160,9 +135,63 @@ class Job
         return $this->status;
     }
 
-    public function setStatus(JobStatus $status): static
+    public function markInProgress(): static
     {
-        $this->status = $status;
+        if (JobStatus::Open === $this->status) {
+            $this->status = JobStatus::InProgress;
+        }
+
+        return $this;
+    }
+
+    public function isDone(): bool
+    {
+        return JobStatus::Done === $this->status;
+    }
+
+    /**
+     * F1/F3 – Termin und geplante Zeit festlegen. Ohne Ende endet die
+     * Arbeit nach der geplanten Zeit.
+     */
+    public function schedule(\DateTimeImmutable $startsAt, int $plannedMinutes, ?\DateTimeImmutable $endsAt = null): static
+    {
+        if ($plannedMinutes <= 0) {
+            throw new \InvalidArgumentException('Die geplante Zeit muss groesser als null sein.');
+        }
+
+        $startsAt = LocalTime::of($startsAt);
+        $endsAt = null !== $endsAt ? LocalTime::of($endsAt) : $startsAt->modify(sprintf('+%d minutes', $plannedMinutes));
+
+        if ($endsAt <= $startsAt) {
+            throw new \InvalidArgumentException('Das Arbeitsende muss nach dem Arbeitsbeginn liegen.');
+        }
+
+        $this->startsAt = $startsAt;
+        $this->endsAt = $endsAt;
+        $this->plannedMinutes = $plannedMinutes;
+
+        // Solange die Arbeit neu ist, ist der Plan auch der Soll-Wert.
+        if (null === $this->id) {
+            $this->originalPlannedMinutes = $plannedMinutes;
+        }
+
+        return $this;
+    }
+
+    /** F5 – die geplante Zeit nachtraeglich erhoehen, das Ende rueckt mit. */
+    public function extendBy(int $minutes): static
+    {
+        $this->plannedMinutes += $minutes;
+        $this->endsAt = $this->endsAt->modify(sprintf('+%d minutes', $minutes));
+
+        return $this;
+    }
+
+    /** Verschiebt den Termin, ohne die geplante Zeit zu aendern. */
+    public function shiftBy(int $minutes): static
+    {
+        $this->startsAt = $this->startsAt->modify(sprintf('+%d minutes', $minutes));
+        $this->endsAt = $this->endsAt->modify(sprintf('+%d minutes', $minutes));
 
         return $this;
     }
@@ -172,74 +201,19 @@ class Job
         return $this->plannedMinutes;
     }
 
-    public function setPlannedMinutes(int $plannedMinutes): static
-    {
-        $this->plannedMinutes = $plannedMinutes;
-
-        if (0 === $this->originalPlannedMinutes || null === $this->id) {
-            $this->originalPlannedMinutes = $plannedMinutes;
-        }
-
-        return $this;
-    }
-
-    /** F5 – die geplante Zeit nachtraeglich erhoehen. */
-    public function extendBy(int $minutes): static
-    {
-        $this->plannedMinutes += max(0, $minutes);
-
-        return $this;
-    }
-
     public function getOriginalPlannedMinutes(): int
     {
         return $this->originalPlannedMinutes;
     }
 
-    #[Groups(['job:read'])]
-    public function getExtendedMinutes(): int
-    {
-        return $this->plannedMinutes - $this->originalPlannedMinutes;
-    }
-
-    public function getStartsAt(): ?\DateTimeImmutable
+    public function getStartsAt(): \DateTimeImmutable
     {
         return $this->startsAt;
     }
 
-    public function setStartsAt(?\DateTimeImmutable $startsAt): static
+    public function getEndsAt(): \DateTimeImmutable
     {
-        $this->startsAt = $startsAt;
-
-        return $this;
-    }
-
-    /**
-     * Drag & Drop im Kalender: neuer Beginn. Ein geplantes Ende wandert um
-     * denselben Betrag mit, damit die Dauer der Arbeit gleich bleibt.
-     */
-    public function moveTo(\DateTimeImmutable $start): static
-    {
-        if (null !== $this->startsAt && null !== $this->dueAt) {
-            $shift = $start->getTimestamp() - $this->startsAt->getTimestamp();
-            $this->dueAt = $this->dueAt->modify(sprintf('%+d seconds', $shift));
-        }
-
-        $this->startsAt = $start;
-
-        return $this;
-    }
-
-    public function getDueAt(): ?\DateTimeImmutable
-    {
-        return $this->dueAt;
-    }
-
-    public function setDueAt(?\DateTimeImmutable $dueAt): static
-    {
-        $this->dueAt = $dueAt;
-
-        return $this;
+        return $this->endsAt;
     }
 
     public function getAssignee(): ?User
@@ -252,6 +226,11 @@ class Job
         $this->assignee = $assignee;
 
         return $this;
+    }
+
+    public function isAssignedTo(User $user): bool
+    {
+        return null !== $this->assignee && $this->assignee->getId() === $user->getId();
     }
 
     public function getCompletedAt(): ?\DateTimeImmutable
@@ -270,7 +249,7 @@ class Job
 
     public function reopen(): static
     {
-        $this->status = JobStatus::Open;
+        $this->status = $this->timeEntries->isEmpty() ? JobStatus::Open : JobStatus::InProgress;
         $this->completedAt = null;
 
         return $this;
@@ -285,6 +264,16 @@ class Job
     public function getTimeEntries(): Collection
     {
         return $this->timeEntries;
+    }
+
+    public function addTimeEntry(TimeEntry $entry): static
+    {
+        if (!$this->timeEntries->contains($entry)) {
+            $this->timeEntries->add($entry);
+            $entry->setJob($this);
+        }
+
+        return $this;
     }
 
     /** Tatsaechlich aufgewendete Zeit in Minuten (Ist-Wert fuer A1). */
@@ -302,7 +291,7 @@ class Job
     #[Groups(['job:read'])]
     public function getRemainingMinutes(): int
     {
-        if (JobStatus::Done === $this->status) {
+        if ($this->isDone()) {
             return 0;
         }
 
@@ -313,7 +302,7 @@ class Job
     #[Groups(['job:read'])]
     public function isOverrun(): bool
     {
-        return $this->getActualMinutes() > $this->plannedMinutes;
+        return $this->getOverrunMinutes() > 0;
     }
 
     #[Groups(['job:read'])]
@@ -332,16 +321,5 @@ class Job
         }
 
         return false;
-    }
-
-    /** Fortschritt in Prozent, gedeckelt bei 100 fuer die Balkendarstellung. */
-    #[Groups(['job:read'])]
-    public function getProgressPercent(): int
-    {
-        if ($this->plannedMinutes <= 0) {
-            return 0;
-        }
-
-        return (int) min(100, round($this->getActualMinutes() / $this->plannedMinutes * 100));
     }
 }

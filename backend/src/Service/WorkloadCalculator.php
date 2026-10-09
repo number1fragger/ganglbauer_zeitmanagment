@@ -15,72 +15,28 @@ class WorkloadCalculator
 {
     public const DAY_START_HOUR = 7;
 
-    public function estimateAvailableFrom(User $user, int $remainingMinutes, ?\DateTimeImmutable $from = null): \DateTimeImmutable
+    /** Schutz vor Endlosschleifen bei absurd grosser Restzeit. */
+    private const MAX_DAYS = 500;
+
+    public function estimateAvailableFrom(User $user, int $remainingMinutes, \DateTimeImmutable $from): \DateTimeImmutable
     {
         $daily = max(1, $user->getDailyMinutes());
-        $cursor = $this->alignToWorkingTime($from ?? new \DateTimeImmutable(), $daily);
+        $cursor = $this->alignToWorkingTime($from, $daily);
         $left = max(0, $remainingMinutes);
 
-        // Obergrenze, damit eine absurd grosse Restzeit keine Endlosschleife baut.
-        for ($guard = 0; $left > 0 && $guard < 500; ++$guard) {
-            $dayEnd = $cursor->setTime(self::DAY_START_HOUR, 0)->modify(sprintf('+%d minutes', $daily));
-            $capacity = (int) floor(($dayEnd->getTimestamp() - $cursor->getTimestamp()) / 60);
-
-            if ($capacity <= 0) {
-                $cursor = $this->alignToWorkingTime($cursor->modify('+1 day')->setTime(0, 0), $daily);
-                continue;
-            }
+        for ($day = 0; $left > 0 && $day < self::MAX_DAYS; ++$day) {
+            $dayEnd = $this->dayEnd($cursor, $daily);
+            $capacity = intdiv($dayEnd->getTimestamp() - $cursor->getTimestamp(), 60);
 
             if ($left <= $capacity) {
                 return $cursor->modify(sprintf('+%d minutes', $left));
             }
 
             $left -= $capacity;
-            $cursor = $this->alignToWorkingTime($dayEnd->modify('+1 minute'), $daily);
+            $cursor = $this->alignToWorkingTime($dayEnd, $daily);
         }
 
         return $cursor;
-    }
-
-    /**
-     * Legt eine Arbeit auf die Arbeitszeit des Arbeiters: Beginnt sie um
-     * 14:00 und dauert acht Stunden, entstehen zwei Bloecke – der Rest des
-     * Tages und der Vormittag des naechsten Werktags. Daraus zeichnet der
-     * Kalender die Karten.
-     *
-     * @return list<array{start: \DateTimeImmutable, end: \DateTimeImmutable}>
-     */
-    public function splitIntoWorkingBlocks(User $user, \DateTimeImmutable $start, int $minutes): array
-    {
-        $daily = max(1, $user->getDailyMinutes());
-        $cursor = $this->alignToWorkingTime($start, $daily);
-        $left = max(1, $minutes);
-        $blocks = [];
-
-        for ($guard = 0; $left > 0 && $guard < 500; ++$guard) {
-            $dayEnd = $cursor->setTime(self::DAY_START_HOUR, 0)->modify(sprintf('+%d minutes', $daily));
-            $capacity = (int) floor(($dayEnd->getTimestamp() - $cursor->getTimestamp()) / 60);
-
-            if ($capacity <= 0) {
-                $cursor = $this->alignToWorkingTime($cursor->modify('+1 day')->setTime(0, 0), $daily);
-                continue;
-            }
-
-            $take = min($left, $capacity);
-            $end = $cursor->modify(sprintf('+%d minutes', $take));
-            $blocks[] = ['start' => $cursor, 'end' => $end];
-
-            $left -= $take;
-            $cursor = $this->alignToWorkingTime($end->modify('+1 minute'), $daily);
-        }
-
-        return $blocks;
-    }
-
-    /** Ende der Arbeitszeit eines Tages, z. B. 14:42 bei 38,5 Wochenstunden. */
-    public function dayEnd(User $user, \DateTimeImmutable $day): \DateTimeImmutable
-    {
-        return $day->setTime(self::DAY_START_HOUR, 0)->modify(sprintf('+%d minutes', max(1, $user->getDailyMinutes())));
     }
 
     /** Schiebt einen Zeitpunkt auf die naechste Arbeitszeit (Mo–Fr, ab 07:00). */
@@ -88,27 +44,20 @@ class WorkloadCalculator
     {
         $cursor = $moment;
 
-        for ($i = 0; $i < 30; ++$i) {
+        while (true) {
             $dayStart = $cursor->setTime(self::DAY_START_HOUR, 0);
-            $dayEnd = $dayStart->modify(sprintf('+%d minutes', $daily));
 
-            if ((int) $cursor->format('N') >= 6) {
-                $cursor = $cursor->modify('+1 day')->setTime(self::DAY_START_HOUR, 0);
+            if ((int) $cursor->format('N') >= 6 || $cursor >= $this->dayEnd($cursor, $daily)) {
+                $cursor = $dayStart->modify('+1 day');
                 continue;
             }
 
-            if ($cursor < $dayStart) {
-                return $dayStart;
-            }
-
-            if ($cursor >= $dayEnd) {
-                $cursor = $cursor->modify('+1 day')->setTime(self::DAY_START_HOUR, 0);
-                continue;
-            }
-
-            return $cursor;
+            return max($cursor, $dayStart);
         }
+    }
 
-        return $cursor;
+    private function dayEnd(\DateTimeImmutable $day, int $daily): \DateTimeImmutable
+    {
+        return $day->setTime(self::DAY_START_HOUR, 0)->modify(sprintf('+%d minutes', $daily));
     }
 }

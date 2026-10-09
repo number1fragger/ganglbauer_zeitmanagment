@@ -1,301 +1,316 @@
-/*
- * Design-Tokens 1:1 aus dem Figma-Entwurf "Werkstatt-Planungs-App".
- */
+/* Design-Tokens aus dem Figma-Entwurf "Werkstatt-Planungs-App". */
 :root {
   --bg: #f5f6f8;
   --surface: #ffffff;
-  --surface-muted: #f7f8fa;
-  --side: #fbfbfc;
+  --surface-alt: #f7f8fa;
+  --surface-muted: #f3f4f6;
+  --sidebar: #fbfbfc;
   --border: #e3e6ea;
   --grid: #eff1f4;
+
   --text: #1f2430;
   --muted: #6b7280;
   --faint: #9ca3af;
+
   --primary: #2563eb;
   --primary-soft: #eef3fe;
-  --success: #16a34a;
-  --success-soft: #e7f6ec;
+  --primary-tint: #e8edfb;
+  --job: #f0f4fe;
+
   --danger: #dc2626;
   --danger-soft: #fef2f2;
   --warning: #f59e0b;
-  --warning-text: #b45309;
+  --warning-ink: #b45309;
   --warning-soft: #fff8e8;
-  --button: #f3f4f6;
-  --radius: 10px;
-  --shadow: none;
+  --success: #16a34a;
+  --success-soft: #e7f6ec;
+
+  --night: #1e293b;
+  --night-line: #334155;
+  --night-text: #cbd5e1;
+  --night-muted: #94a3b8;
+
+  --radius-sm: 6px;
+  --radius: 8px;
+  --radius-lg: 10px;
+
+  --font: 'Inter Variable', Inter, system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif;
+
+  color-scheme: light;
 }
 
-* {
+*,
+*::before,
+*::after {
   box-sizing: border-box;
 }
 
 html,
 body {
   margin: 0;
-  padding: 0;
+  min-height: 100%;
 }
 
 body {
   background: var(--bg);
   color: var(--text);
-  font-family:
-    'Inter',
-    -apple-system,
-    BlinkMacSystemFont,
-    'Segoe UI',
-    Roboto,
-    sans-serif;
-  font-size: 14px;
-  line-height: 1.45;
+  font-family: var(--font);
+  font-size: 13px;
+  line-height: 1.35;
   -webkit-font-smoothing: antialiased;
 }
 
 h1,
 h2,
-h3 {
-  margin: 0 0 0.5rem;
-  line-height: 1.25;
+h3,
+p {
+  margin: 0;
 }
 
-h1 {
-  font-size: 1.25rem;
+button,
+input,
+select {
+  font: inherit;
+  color: inherit;
+}
+
+button {
+  cursor: pointer;
+}
+
+:focus-visible {
+  outline: 2px solid var(--primary);
+  outline-offset: 2px;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  * {
+    transition: none !important;
+    animation: none !important;
+  }
+}
+
+/* ---- Typografie ------------------------------------------------------- */
+
+.page-title {
+  font-size: 20px;
   font-weight: 700;
 }
 
-h2 {
-  font-size: 0.8125rem;
+.page-sub {
+  margin-top: 4px;
+  font-size: 12px;
+  color: var(--muted);
+}
+
+.section-title {
+  font-size: 13px;
   font-weight: 700;
 }
 
-a {
-  color: var(--primary);
-}
-
-.card {
-  background: var(--surface);
-  border-radius: var(--radius);
-  padding: 1.25rem;
-}
-
-.grid {
-  display: grid;
-  gap: 1rem;
-}
-
-.row {
-  display: flex;
-  align-items: center;
-  gap: 0.75rem;
-  flex-wrap: wrap;
+.section-sub {
+  margin-top: 4px;
+  font-size: 11px;
+  color: var(--muted);
 }
 
 .muted {
   color: var(--muted);
 }
 
-.mono {
-  font-variant-numeric: tabular-nums;
-}
+/* ---- Buttons ---------------------------------------------------------- */
 
-label {
-  display: block;
-  font-size: 0.6875rem;
-  font-weight: 500;
-  color: var(--muted);
-  margin-bottom: 0.4rem;
-}
-
-input,
-select,
-textarea {
-  width: 100%;
-  height: 40px;
-  padding: 0 0.875rem;
-  border: 1px solid transparent;
-  border-radius: 8px;
+.btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  height: 36px;
+  padding: 0 18px;
+  border: 0;
+  border-radius: var(--radius);
   background: var(--surface-muted);
   color: var(--text);
-  font: inherit;
-  font-size: 0.8125rem;
+  font-size: 12px;
   font-weight: 500;
-}
-
-textarea {
-  height: auto;
-  padding: 0.6rem 0.875rem;
-}
-
-input:focus,
-select:focus,
-textarea:focus {
-  outline: 2px solid var(--primary);
-  outline-offset: -1px;
-  background: var(--surface);
-}
-
-input[type='checkbox'] {
-  width: 16px;
-  height: 16px;
-  accent-color: var(--primary);
-}
-
-button {
-  font: inherit;
-  font-size: 0.75rem;
-  font-weight: 600;
-  border: none;
-  border-radius: 8px;
-  height: 36px;
-  padding: 0 1rem;
-  cursor: pointer;
-  background: var(--primary);
-  color: #fff;
+  text-decoration: none;
   white-space: nowrap;
 }
 
-button:disabled {
-  opacity: 0.55;
-  cursor: not-allowed;
+.btn:hover {
+  background: #e9ebef;
 }
 
-button.secondary {
-  background: var(--button);
-  color: var(--text);
+.btn:disabled {
+  cursor: not-allowed;
+  opacity: 0.55;
+}
+
+.btn--primary {
+  background: var(--primary);
+  color: #fff;
+  font-weight: 600;
+}
+
+.btn--primary:hover {
+  background: #1d4ed8;
+}
+
+.btn--large {
+  height: 44px;
+}
+
+.btn--small {
+  height: 26px;
+  padding: 0 14px;
+  border-radius: var(--radius-sm);
+  font-size: 10px;
+  font-weight: 600;
+}
+
+.btn--icon {
+  width: 36px;
+  padding: 0;
+  font-size: 14px;
+  font-weight: 600;
+}
+
+.link {
+  padding: 0;
+  border: 0;
+  background: none;
+  color: var(--primary);
+  font-size: 11px;
+  font-weight: 500;
+  text-decoration: none;
+}
+
+.link:hover {
+  text-decoration: underline;
+}
+
+/* ---- Formulare -------------------------------------------------------- */
+
+.field {
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+}
+
+.field__label {
+  font-size: 11px;
+  font-weight: 500;
+  color: var(--muted);
+}
+
+.input {
+  width: 100%;
+  height: 40px;
+  padding: 0 14px;
+  border: 1px solid transparent;
+  border-radius: var(--radius);
+  background: var(--surface-alt);
+  font-size: 13px;
   font-weight: 500;
 }
 
-button.danger {
+.input:focus {
+  outline: none;
+  border-color: var(--primary);
+  background: var(--surface);
+}
+
+.form-error {
+  padding: 10px 14px;
+  border-radius: var(--radius);
   background: var(--danger-soft);
   color: var(--danger);
+  font-size: 12px;
+  font-weight: 500;
 }
 
-button.small {
-  height: 26px;
-  padding: 0 0.75rem;
-  font-size: 0.6875rem;
-  border-radius: 6px;
+/* ---- Bausteine -------------------------------------------------------- */
+
+.card {
+  position: relative;
+  border-radius: var(--radius-lg);
+  background: var(--surface);
 }
 
-table {
-  width: 100%;
-  border-collapse: collapse;
-}
-
-th {
-  text-align: left;
-  font-size: 0.625rem;
-  font-weight: 600;
-  color: var(--muted);
-  padding: 0.75rem 0.6rem;
-  border-bottom: 1px solid var(--border);
-}
-
-td {
-  padding: 0.75rem 0.6rem;
-  border-bottom: 1px solid var(--grid);
-  vertical-align: middle;
-}
-
-.badge {
-  display: inline-flex;
-  align-items: center;
-  gap: 0.35rem;
-  font-size: 0.6875rem;
-  font-weight: 600;
-  padding: 0.2rem 0.6rem;
-  border-radius: 999px;
-  background: var(--primary-soft);
-  color: var(--primary);
-}
-
-.dot {
-  width: 10px;
-  height: 10px;
-  border-radius: 3px;
-  display: inline-block;
-  flex: none;
+/* Farbiger Streifen am linken Rand – Farbe ueber --accent. */
+.accent::before {
+  content: '';
+  position: absolute;
+  inset: 0 auto 0 0;
+  width: 3px;
+  border-radius: 2px;
+  background: var(--accent, var(--primary));
 }
 
 .avatar {
+  display: inline-grid;
   flex: none;
+  place-items: center;
   width: 28px;
   height: 28px;
   border-radius: 50%;
-  display: grid;
-  place-items: center;
-  background: #e8edfb;
+  background: var(--primary-tint);
   color: var(--primary);
-  font-size: 0.6875rem;
+  font-size: 11px;
   font-weight: 600;
 }
 
-.error {
-  background: var(--danger-soft);
-  color: var(--danger);
-  border-radius: 8px;
-  padding: 0.6rem 0.8rem;
-  font-size: 0.8125rem;
+.dot {
+  display: inline-block;
+  flex: none;
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: var(--dot, var(--primary));
 }
 
-.success {
-  background: var(--success-soft);
-  color: var(--success);
-  border-radius: 8px;
-  padding: 0.6rem 0.8rem;
-  font-size: 0.8125rem;
+.badge {
+  display: inline-grid;
+  flex: none;
+  place-items: center;
+  min-width: 18px;
+  height: 18px;
+  padding: 0 6px;
+  border-radius: 9px;
+  color: #fff;
+  font-size: 8px;
+  font-weight: 700;
 }
 
-/* Seitenkopf fuer alle Seiten ausser Kalender (Figma: Auswertung, Benutzer & Rechte) */
-.page-head {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 1rem;
-  padding: 1.5rem 2rem;
+.empty {
+  padding: 14px 16px;
+  border-radius: var(--radius-lg);
   background: var(--surface);
-  border-bottom: 1px solid var(--border);
-}
-
-.page-head h1 {
-  margin: 0;
-}
-
-.page-head p {
-  margin: 0.2rem 0 0;
-  font-size: 0.75rem;
   color: var(--muted);
+  font-size: 11px;
 }
 
-.page-body {
-  padding: 1.75rem 2rem 3rem;
-  max-width: 1080px;
+.segmented {
+  display: inline-flex;
+  padding: 3px;
+  border-radius: var(--radius);
+  background: var(--surface-muted);
 }
 
-/* ---------- Handy ---------- */
-@media (max-width: 768px) {
-  .page-head {
-    flex-direction: column;
-    align-items: stretch;
-    padding: 1rem;
-  }
+.segmented button {
+  min-width: 67px;
+  height: 30px;
+  padding: 0 12px;
+  border: 0;
+  border-radius: var(--radius-sm);
+  background: none;
+  color: var(--muted);
+  font-size: 12px;
+  font-weight: 500;
+}
 
-  .page-head > div:last-child:not(:first-child) {
-    flex-wrap: wrap;
-  }
-
-  .page-head select {
-    flex: 1;
-    width: auto;
-  }
-
-  .page-body {
-    padding: 1rem 1rem 6rem;
-  }
-
-  /* 16px verhindert das automatische Hineinzoomen von iOS in Eingabefelder */
-  input,
-  select,
-  textarea {
-    font-size: 16px;
-  }
+.segmented button[aria-pressed='true'] {
+  background: var(--surface);
+  color: var(--text);
+  font-weight: 600;
 }

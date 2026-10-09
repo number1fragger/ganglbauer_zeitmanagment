@@ -1,25 +1,49 @@
-# Entwicklung: Nur die Datenbank laeuft im Container. Backend und Frontend
-# startest du lokal mit ./dev.sh backend und ./dev.sh frontend.
-# Den kompletten Stack in Containern gibt es unter docker/docker-compose.yml.
+# Gesamte App fuer den Server: docker compose up -d --build
+# Fuer die Entwicklung reicht die Datenbank: docker compose up -d database
+# Werte kommen aus der .env neben dieser Datei (Vorlage: .env.example).
+name: werkstatt
+
 services:
   database:
-    image: mariadb:11
-    container_name: gz_database
+    image: mariadb:11.4
+    restart: unless-stopped
     environment:
-      MARIADB_ROOT_PASSWORD: root
-      MARIADB_DATABASE: zeitmanagement
-      MARIADB_USER: zeitmanagement
-      MARIADB_PASSWORD: zeitmanagement
-    ports:
-      - '3307:3306'
+      MARIADB_DATABASE: werkstatt
+      MARIADB_USER: werkstatt
+      MARIADB_PASSWORD: ${DB_PASSWORD:?DB_PASSWORD in .env setzen}
+      MARIADB_ROOT_PASSWORD: ${DB_ROOT_PASSWORD:?DB_ROOT_PASSWORD in .env setzen}
     volumes:
-      - db_data:/var/lib/mysql
-    # Prüft, ob die Datenbank erreichbar und vollständig initialisiert ist.
+      - db-data:/var/lib/mysql
+    # Nur vom Server selbst erreichbar, nie aus dem Internet.
+    ports:
+      - '127.0.0.1:${DB_PORT:-3306}:3306'
     healthcheck:
       test: ['CMD', 'healthcheck.sh', '--connect', '--innodb_initialized']
-      interval: 5s
+      interval: 10s
       timeout: 5s
       retries: 10
 
+  backend:
+    build: ./backend
+    restart: unless-stopped
+    environment:
+      APP_SECRET: ${APP_SECRET:?APP_SECRET in .env setzen}
+      JWT_PASSPHRASE: ${JWT_PASSPHRASE:?JWT_PASSPHRASE in .env setzen}
+      DATABASE_URL: mysql://werkstatt:${DB_PASSWORD}@database:3306/werkstatt?serverVersion=11.4.0-MariaDB&charset=utf8mb4
+    volumes:
+      - jwt-keys:/app/config/jwt
+    depends_on:
+      database:
+        condition: service_healthy
+
+  frontend:
+    build: ./frontend
+    restart: unless-stopped
+    ports:
+      - '${HTTP_PORT:-8080}:80'
+    depends_on:
+      - backend
+
 volumes:
-  db_data:
+  db-data:
+  jwt-keys:

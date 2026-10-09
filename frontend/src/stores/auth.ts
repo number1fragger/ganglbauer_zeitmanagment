@@ -4,6 +4,7 @@ import { authApi } from '@/api'
 import { configureHttp } from '@/api/http'
 import type { User } from '@/api/types'
 import { canPlan } from '@/utils/domain'
+import { useThemeStore } from './theme'
 
 const TOKEN_KEY = 'werkstatt_token'
 
@@ -13,6 +14,9 @@ function readToken(): string | null {
 }
 
 export const useAuthStore = defineStore('auth', () => {
+  const theme = useThemeStore()
+  theme.connect((value) => (token.value ? authApi.savePreferences(value) : Promise.resolve()))
+
   const token = ref<string | null>(readToken())
   const user = ref<User | null>(null)
 
@@ -36,6 +40,10 @@ export const useAuthStore = defineStore('auth', () => {
 
   async function loadUser(): Promise<void> {
     user.value = await authApi.me()
+    // Die im Konto gespeicherte Farbwahl gilt auf allen Geraeten. Steht dort
+    // noch der Standard ("system"), wird eine lokale Wahl ins Konto uebernommen.
+    if (user.value.theme && user.value.theme !== 'system') theme.set(user.value.theme, false)
+    else if (theme.preference !== 'system') void authApi.savePreferences(theme.preference).catch(() => undefined)
   }
 
   function logout(): void {

@@ -26,7 +26,7 @@ const load = computed(() =>
 
     return {
       worker,
-      color: workerColor(index).color,
+      color: workerColor(index),
       plannedMinutes: planned * 60,
       percent: Math.min(100, (planned / worker.user.weeklyHours) * 100),
     }
@@ -48,7 +48,7 @@ const needWorkSoon = computed(() => {
       <h2 class="section-title">Arbeiter anzeigen</h2>
       <ul class="filter">
         <li v-for="(worker, index) in workers" :key="worker.user.id">
-          <label :style="{ '--color': workerColor(index).color }">
+          <label :style="{ '--color': workerColor(index) }">
             <input type="checkbox" :checked="visible.includes(worker.user.id)" @change="toggle(worker.user.id)" />
             {{ worker.user.fullName }}
           </label>

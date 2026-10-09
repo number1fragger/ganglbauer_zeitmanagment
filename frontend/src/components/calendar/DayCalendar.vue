@@ -1,14 +1,25 @@
 <script setup lang="ts">
 import { computed } from 'vue'
 import type { Job, OverviewWorker, UserRef } from '@/api/types'
-import { segmentOn, type Segment } from '@/utils/calendar'
-import { describeShort } from '@/utils/time'
+import { segmentOn, type MoveEvent, type Segment } from '@/utils/calendar'
+import { describeShort, toDateKey } from '@/utils/time'
 import CalendarColumn from './CalendarColumn.vue'
 import DayJobCard from './DayJobCard.vue'
 import TimeGrid from './TimeGrid.vue'
 
-const props = defineProps<{ day: Date; workers: OverviewWorker[]; jobs: Job[] }>()
-defineEmits<{ open: [job: Job]; create: [defaults: { startsAt: Date; assigneeId: number | null }] }>()
+const props = defineProps<{
+  day: Date
+  workers: OverviewWorker[]
+  jobs: Job[]
+  draggable?: boolean
+  canDrag?: (job: Job) => boolean
+  conflicts?: Map<number, string[]>
+}>()
+defineEmits<{
+  open: [job: Job]
+  create: [defaults: { startsAt: Date; assigneeId: number | null }]
+  move: [event: MoveEvent]
+}>()
 
 interface Column {
   worker: UserRef | null
@@ -35,7 +46,7 @@ const columns = computed<Column[]>(() => {
 </script>
 
 <template>
-  <TimeGrid :columns="columns.length" :min-column-width="200">
+  <TimeGrid :columns="columns.length" :min-column-width="170">
     <template #head>
       <div v-for="column in columns" :key="column.worker?.id ?? 'none'" class="day-head">
         <span class="avatar">{{ column.worker?.initials ?? '?' }}</span>
@@ -52,10 +63,15 @@ const columns = computed<Column[]>(() => {
       :day="day"
       :segments="column.segments"
       :gap="8"
+      :draggable="draggable"
+      :can-drag="canDrag"
+      :drop-key="`${toDateKey(day)}:${column.worker?.id ?? 'none'}`"
+      :drop-assignee="column.worker?.id ?? null"
       @create="$emit('create', { startsAt: $event, assigneeId: column.worker?.id ?? null })"
+      @move="$emit('move', $event)"
     >
       <template #default="{ segment }">
-        <DayJobCard :job="segment.job" @open="$emit('open', $event)" />
+        <DayJobCard :job="segment.job" :conflict="conflicts?.get(segment.job.id)" @open="$emit('open', $event)" />
       </template>
     </CalendarColumn>
   </TimeGrid>

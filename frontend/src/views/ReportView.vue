@@ -3,7 +3,6 @@ import { computed, ref, watch } from 'vue'
 import { planningApi } from '@/api'
 import { errorMessage } from '@/api/http'
 import type { Overview, SollIstReport } from '@/api/types'
-import RoleBadge from '@/components/RoleBadge.vue'
 import { addDays, describeShort, formatHours, formatSignedHours, isoWeek, startOfWeek, toDateKey } from '@/utils/time'
 
 const WEEKS_TO_CHOOSE = 8
@@ -95,8 +94,6 @@ const utilisation = computed(() => {
         <h1 class="page-title">Auswertung</h1>
         <p class="page-sub">Geplante gegenüber tatsächlich benötigter Zeit</p>
       </div>
-      <RouterLink class="link report__back" :to="{ name: 'planning' }">Zur Planung</RouterLink>
-      <RoleBadge with-logout />
       <label class="report__period">
         <span>Zeitraum:</span>
         <select v-model="selected" aria-label="Zeitraum">
@@ -175,15 +172,9 @@ const utilisation = computed(() => {
   display: flex;
   flex-wrap: wrap;
   align-items: center;
+  justify-content: space-between;
   gap: 16px;
-  padding: 22px 32px 16px;
-  border-bottom: 1px solid var(--border);
-  background: var(--surface);
-}
-
-.report__back {
-  margin-left: auto;
-  font-size: 12px;
+  padding: 20px 28px 16px;
 }
 
 .report__period {
@@ -201,7 +192,12 @@ const utilisation = computed(() => {
 .report__period select {
   border: 0;
   background: transparent;
+  color: var(--text);
   font-weight: 600;
+}
+
+.report__period select option {
+  background: var(--surface);
 }
 
 .report__main {

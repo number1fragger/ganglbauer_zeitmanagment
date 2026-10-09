@@ -5,6 +5,7 @@ namespace App\Repository;
 use App\Entity\Job;
 use App\Entity\User;
 use App\Enum\JobStatus;
+use App\Enum\Priority;
 use Doctrine\Bundle\DoctrineBundle\Repository\ServiceEntityRepository;
 use Doctrine\ORM\QueryBuilder;
 use Doctrine\Persistence\ManagerRegistry;
@@ -20,13 +21,15 @@ class JobRepository extends ServiceEntityRepository
     }
 
     /**
-     * Arbeiten, die sich mit dem Zeitraum ueberschneiden – fuer den Kalender.
+     * Eingeplante Arbeiten, die sich mit dem Zeitraum ueberschneiden – fuer
+     * den Kalender. Arbeiten ohne Termin sind hier nie dabei.
      *
      * @return Job[]
      */
     public function findInRange(\DateTimeImmutable $from, \DateTimeImmutable $to, ?User $assignee = null): array
     {
         $qb = $this->withRelations()
+            ->andWhere('j.startsAt IS NOT NULL')
             ->andWhere('j.startsAt < :to')
             ->andWhere('j.endsAt > :from')
             ->setParameter('from', $from)
@@ -41,26 +44,53 @@ class JobRepository extends ServiceEntityRepository
     }
 
     /**
-     * Was ein Arbeiter an einem Tag sieht: alles, was an dem Tag geplant ist,
-     * plus offene Arbeiten, die schon frueher haetten fertig sein sollen.
+     * "Meine Arbeiten": alles Offene des Arbeiters (mit und ohne Termin)
+     * plus das, was er heute abgeschlossen hat.
      *
      * @return Job[]
      */
-    public function findForWorkerDay(User $user, \DateTimeImmutable $dayStart): array
+    public function findMine(User $user, \DateTimeImmutable $dayStart): array
     {
-        $dayEnd = $dayStart->modify('+1 day');
-
         return $this->withRelations()
             ->andWhere('j.assignee = :user')
-            ->andWhere('j.startsAt < :dayEnd')
-            ->andWhere('j.endsAt > :dayStart OR j.status != :done')
+            ->andWhere('j.status != :done OR j.completedAt >= :dayStart')
             ->setParameter('user', $user)
             ->setParameter('dayStart', $dayStart)
-            ->setParameter('dayEnd', $dayEnd)
             ->setParameter('done', JobStatus::Done)
             ->orderBy('j.startsAt', 'ASC')
+            ->addOrderBy('j.createdAt', 'ASC')
             ->getQuery()
             ->getResult();
+    }
+
+    /**
+     * Aufgabenverwaltung (Kanban): alle offenen und laufenden Arbeiten,
+     * abgeschlossene nur seit $doneSince.
+     *
+     * @return Job[]
+     */
+    public function findBoard(\DateTimeImmutable $doneSince, ?User $assignee = null, ?Priority $priority = null, ?string $search = null): array
+    {
+        $qb = $this->withRelations()
+            ->andWhere('j.status != :done OR j.completedAt >= :doneSince')
+            ->setParameter('done', JobStatus::Done)
+            ->setParameter('doneSince', $doneSince)
+            ->orderBy('j.createdAt', 'DESC');
+
+        if (null !== $assignee) {
+            $qb->andWhere('j.assignee = :assignee')->setParameter('assignee', $assignee);
+        }
+
+        if (null !== $priority) {
+            $qb->andWhere('j.priority = :priority')->setParameter('priority', $priority);
+        }
+
+        if (null !== $search && '' !== trim($search)) {
+            $qb->andWhere('LOWER(j.title) LIKE :q OR LOWER(j.customer) LIKE :q OR LOWER(j.description) LIKE :q')
+                ->setParameter('q', '%'.mb_strtolower(addcslashes(trim($search), '%_')).'%');
+        }
+
+        return $qb->getQuery()->getResult();
     }
 
     /** @return Job[] */
@@ -79,8 +109,8 @@ class JobRepository extends ServiceEntityRepository
     }
 
     /**
-     * Offene Arbeiten desselben Arbeiters, die nach dem angegebenen Zeitpunkt
-     * beginnen – sie ruecken nach, wenn eine Arbeit laenger dauert (F5).
+     * Offene, eingeplante Arbeiten desselben Arbeiters, die ab dem
+     * angegebenen Zeitpunkt beginnen – in zeitlicher Reihenfolge.
      *
      * @return Job[]
      */
@@ -90,17 +120,46 @@ class JobRepository extends ServiceEntityRepository
             return [];
         }
 
-        return $this->createQueryBuilder('j')
+        return $this->withRelations()
             ->andWhere('j.assignee = :assignee')
             ->andWhere('j.id != :id')
             ->andWhere('j.status != :done')
+            ->andWhere('j.startsAt IS NOT NULL')
             ->andWhere('j.startsAt >= :after')
             ->setParameter('assignee', $job->getAssignee())
             ->setParameter('id', $job->getId())
             ->setParameter('done', JobStatus::Done)
             ->setParameter('after', $after)
+            ->orderBy('j.startsAt', 'ASC')
             ->getQuery()
             ->getResult();
+    }
+
+    /**
+     * Eingeplante Arbeiten eines Arbeiters, die sich mit dem Zeitraum
+     * ueberschneiden – fuer die Konflikterkennung.
+     *
+     * @param int[] $excludeIds
+     *
+     * @return Job[]
+     */
+    public function findOverlapping(User $assignee, \DateTimeImmutable $from, \DateTimeImmutable $to, array $excludeIds = []): array
+    {
+        $qb = $this->createQueryBuilder('j')
+            ->andWhere('j.assignee = :assignee')
+            ->andWhere('j.startsAt IS NOT NULL')
+            ->andWhere('j.startsAt < :to')
+            ->andWhere('j.endsAt > :from')
+            ->setParameter('assignee', $assignee)
+            ->setParameter('from', $from)
+            ->setParameter('to', $to)
+            ->orderBy('j.startsAt', 'ASC');
+
+        if ([] !== $excludeIds) {
+            $qb->andWhere('j.id NOT IN (:exclude)')->setParameter('exclude', $excludeIds);
+        }
+
+        return $qb->getQuery()->getResult();
     }
 
     /** @return Job[] */

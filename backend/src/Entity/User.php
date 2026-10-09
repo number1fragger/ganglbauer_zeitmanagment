@@ -2,6 +2,7 @@
 
 namespace App\Entity;
 
+use App\Enum\ThemePreference;
 use App\Enum\UserRole;
 use App\Repository\UserRepository;
 use Doctrine\ORM\Mapping as ORM;
@@ -60,6 +61,11 @@ class User implements UserInterface, PasswordAuthenticatedUserInterface
 
     #[ORM\Column]
     private \DateTimeImmutable $createdAt;
+
+    /** Hell, dunkel oder wie das Betriebssystem – gilt auf allen Geraeten des Benutzers. */
+    #[ORM\Column(type: 'string', length: 10, enumType: ThemePreference::class, options: ['default' => 'system'])]
+    #[Groups(['user:read'])]
+    private ThemePreference $theme = ThemePreference::System;
 
     public function __construct()
     {
@@ -199,5 +205,17 @@ class User implements UserInterface, PasswordAuthenticatedUserInterface
     public function getCreatedAt(): \DateTimeImmutable
     {
         return $this->createdAt;
+    }
+
+    public function getTheme(): ThemePreference
+    {
+        return $this->theme;
+    }
+
+    public function setTheme(ThemePreference $theme): static
+    {
+        $this->theme = $theme;
+
+        return $this;
     }
 }

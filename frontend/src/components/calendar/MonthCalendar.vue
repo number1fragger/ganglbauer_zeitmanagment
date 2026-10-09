@@ -8,7 +8,7 @@ import { addDays, isWeekend, sameDay, startOfDay, startOfMonth, startOfWeek } fr
 const MAX_CHIPS = 3
 const WEEKDAYS = ['Mo', 'Di', 'Mi', 'Do', 'Fr', 'Sa', 'So']
 
-const props = defineProps<{ month: Date; workers: OverviewWorker[]; jobs: Job[] }>()
+const props = defineProps<{ month: Date; workers: OverviewWorker[]; jobs: Job[]; conflicts?: Map<number, string[]> }>()
 defineEmits<{ open: [job: Job]; showDay: [day: Date] }>()
 
 const now = useNow()
@@ -25,7 +25,7 @@ const cells = computed(() => {
   return Array.from({ length: count }, (_, i) => {
     const day = addDays(start, i)
     const next = addDays(day, 1)
-    const jobs = props.jobs.filter((job) => new Date(job.startsAt) < next && new Date(job.endsAt) > day)
+    const jobs = props.jobs.filter((job) => !!job.startsAt && !!job.endsAt && new Date(job.startsAt) < next && new Date(job.endsAt) > day)
 
     return {
       day,
@@ -64,9 +64,10 @@ const cells = computed(() => {
         <button
           v-for="job in cell.jobs.slice(0, MAX_CHIPS)"
           :key="job.id"
-          class="month__chip accent"
-          :class="{ 'month__chip--done': job.status === 'erledigt' }"
-          :style="{ '--accent': colorOf(job).color, background: colorOf(job).soft }"
+          class="month__chip accent tinted"
+          :class="{ 'month__chip--done': job.status === 'erledigt', 'month__chip--conflict': conflicts?.has(job.id) }"
+          :style="{ '--accent': colorOf(job) }"
+          :title="`${job.title}${job.assignee ? ' · ' + job.assignee.fullName : ''}${conflicts?.has(job.id) ? ' – Terminkonflikt' : ''}`"
           @click="$emit('open', job)"
         >
           {{ job.assignee?.initials ?? '–' }} · {{ job.title }}
@@ -89,7 +90,7 @@ const cells = computed(() => {
 .month__weekdays,
 .month__grid {
   display: grid;
-  grid-template-columns: repeat(7, 1fr);
+  grid-template-columns: repeat(7, minmax(0, 1fr));
 }
 
 .month__weekdays {
@@ -120,7 +121,7 @@ const cells = computed(() => {
 }
 
 .month__cell--weekend {
-  background: #fafafb;
+  background: var(--surface-alt);
 }
 
 .month__date {
@@ -142,7 +143,7 @@ const cells = computed(() => {
 
 .month__date--today {
   background: var(--primary);
-  color: #fff;
+  color: var(--on-primary);
   font-weight: 700;
 }
 
@@ -158,6 +159,10 @@ const cells = computed(() => {
   text-align: left;
   text-overflow: ellipsis;
   white-space: nowrap;
+}
+
+.month__chip--conflict {
+  box-shadow: inset 0 0 0 1.5px var(--danger);
 }
 
 .month__chip--done {

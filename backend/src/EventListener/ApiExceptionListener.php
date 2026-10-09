@@ -2,6 +2,8 @@
 
 namespace App\EventListener;
 
+use App\Exception\InvalidInputException;
+use App\Exception\WorkflowException;
 use Symfony\Component\DependencyInjection\Attribute\Autowire;
 use Symfony\Component\EventDispatcher\Attribute\AsEventListener;
 use Symfony\Component\HttpFoundation\JsonResponse;
@@ -19,7 +21,7 @@ use Symfony\Component\Validator\Exception\ValidationFailedException;
 final class ApiExceptionListener
 {
     private const MESSAGES = [
-        Response::HTTP_FORBIDDEN => 'Dafuer fehlt dir die Berechtigung.',
+        Response::HTTP_FORBIDDEN => 'Dafür fehlt dir die Berechtigung.',
         Response::HTTP_NOT_FOUND => 'Nicht gefunden.',
         Response::HTTP_METHOD_NOT_ALLOWED => 'Diese Aktion ist hier nicht erlaubt.',
     ];
@@ -41,14 +43,24 @@ final class ApiExceptionListener
 
         if (null !== $violations) {
             $event->setResponse(new JsonResponse([
-                'title' => 'Bitte die Eingaben pruefen.',
+                'title' => 'Bitte die Eingaben prüfen.',
                 'errors' => array_map(static fn ($violation): array => [
                     'field' => $violation->getPropertyPath(),
                     'message' => str_starts_with((string) $violation->getMessage(), 'This value should be of type')
-                        ? 'Ungueltiger Wert.'
+                        ? 'Ungültiger Wert.'
                         : (string) $violation->getMessage(),
                 ], iterator_to_array($violations)),
             ], Response::HTTP_UNPROCESSABLE_ENTITY));
+
+            return;
+        }
+
+        // Fachliche Fehler aus Entitaeten und Diensten mit ihrer Meldung ausliefern.
+        if ($exception instanceof WorkflowException || $exception instanceof InvalidInputException) {
+            $event->setResponse(new JsonResponse(
+                ['title' => $exception->getMessage()],
+                $exception instanceof WorkflowException ? Response::HTTP_CONFLICT : Response::HTTP_UNPROCESSABLE_ENTITY,
+            ));
 
             return;
         }

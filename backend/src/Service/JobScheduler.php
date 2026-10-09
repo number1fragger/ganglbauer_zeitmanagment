@@ -7,7 +7,8 @@ use App\Repository\JobRepository;
 
 /**
  * F5 – Arbeitszeit nachtraeglich erhoehen. Damit sich nichts
- * ueberschneidet, ruecken die Folgetermine des Arbeiters mit.
+ * ueberschneidet, ruecken die noch nicht begonnenen Folgetermine des
+ * Arbeiters mit. Begonnene oder abgeschlossene Arbeiten bleiben stehen.
  * Das Flush uebernimmt der Aufrufer.
  */
 class JobScheduler
@@ -27,8 +28,14 @@ class JobScheduler
         $previousEnd = $job->getEndsAt();
         $job->extendBy($minutes);
 
+        if (null === $previousEnd) {
+            return; // Aufgabe ohne Termin – im Kalender verschiebt sich nichts.
+        }
+
         foreach ($this->jobs->findFollowing($job, $previousEnd) as $following) {
-            $following->shiftBy($minutes);
+            if (!$following->isStarted()) {
+                $following->shiftBy($minutes);
+            }
         }
     }
 }

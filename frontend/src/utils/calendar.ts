@@ -16,8 +16,15 @@ export interface Segment {
   to: number
 }
 
+export interface MoveEvent {
+  job: Job
+  startsAt: Date
+  assigneeId: number | null
+}
+
 /** Teil einer Arbeit, der auf einen Tag faellt – oder null, wenn nichts davon sichtbar ist. */
 export function segmentOn(job: Job, day: Date): Segment | null {
+  if (!job.startsAt || !job.endsAt) return null // Aufgabe ohne Termin
   const dayStart = startOfDay(day)
   const dayEnd = addDays(dayStart, 1)
   const starts = new Date(job.startsAt)
@@ -91,6 +98,12 @@ export function layoutByWorker(segments: Segment[], workerOrder: number[]): Plac
       width: p.width / groups.length,
     })),
   )
+}
+
+/** Dauer im Kalender; Aufgaben ohne Termin nehmen die geplante Zeit (sonst 1 h). */
+export function jobDurationMs(job: Job): number {
+  if (job.startsAt && job.endsAt) return new Date(job.endsAt).getTime() - new Date(job.startsAt).getTime()
+  return (job.plannedMinutes ?? 60) * 60_000
 }
 
 /** Stunde am Tag -> Abstand von oben in Pixel */

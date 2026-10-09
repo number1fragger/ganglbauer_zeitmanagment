@@ -4,25 +4,34 @@ import type { Job, OverviewWorker } from '@/api/types'
 import { useNow } from '@/composables/useNow'
 import { DAY_END_HOUR, hourToPx, layoutByWorker, segmentOn, type Segment } from '@/utils/calendar'
 import { workerColor } from '@/utils/domain'
-import { addDays, sameDay, startOfDay, weekdayName } from '@/utils/time'
+import type { MoveEvent } from '@/utils/calendar'
+import { addDays, sameDay, startOfDay, toDateKey, weekdayName } from '@/utils/time'
 import CalendarColumn from './CalendarColumn.vue'
 import TimeGrid from './TimeGrid.vue'
 import WeekJobCard from './WeekJobCard.vue'
 
 const FREE_FROM_HOUR = DAY_END_HOUR - 1
 
-const props = defineProps<{ weekStart: Date; workers: OverviewWorker[]; visible: number[]; jobs: Job[] }>()
-defineEmits<{ open: [job: Job]; create: [defaults: { startsAt: Date; assigneeId: number | null }] }>()
+const props = defineProps<{
+  weekStart: Date
+  workers: OverviewWorker[]
+  visible: number[]
+  jobs: Job[]
+  draggable?: boolean
+  canDrag?: (job: Job) => boolean
+  conflicts?: Map<number, string[]>
+}>()
+defineEmits<{
+  open: [job: Job]
+  create: [defaults: { startsAt: Date; assigneeId: number | null }]
+  move: [event: MoveEvent]
+}>()
 
 const now = useNow()
-const neutral = { color: '#64748b', soft: '#f1f5f9' }
 
 const byWorker = (segments: Segment[]) => layoutByWorker(segments, props.workers.map((w) => w.user.id))
 
-const colorOf = (job: Job) => {
-  const index = props.workers.findIndex((w) => w.user.id === job.assignee?.id)
-  return index < 0 ? neutral : workerColor(index)
-}
+const colorOf = (job: Job) => workerColor(props.workers.findIndex((w) => w.user.id === job.assignee?.id))
 
 const days = computed(() =>
   Array.from({ length: 5 }, (_, i) => {
@@ -54,7 +63,7 @@ function freeWorkers(day: Date, segments: Segment[]): number {
 </script>
 
 <template>
-  <TimeGrid :columns="5" :min-column-width="160">
+  <TimeGrid :columns="5" :min-column-width="120">
     <template #head>
       <div
         v-for="{ day } in days"
@@ -74,10 +83,20 @@ function freeWorkers(day: Date, segments: Segment[]): number {
       :segments="segments"
       :gap="2"
       :layout="byWorker"
+      :draggable="draggable"
+      :can-drag="canDrag"
+      :drop-key="toDateKey(day)"
+      drop-assignee="keep"
       @create="$emit('create', { startsAt: $event, assigneeId: null })"
+      @move="$emit('move', $event)"
     >
       <template #default="{ segment }">
-        <WeekJobCard :job="segment.job" :color="colorOf(segment.job)" @open="$emit('open', $event)" />
+        <WeekJobCard
+          :job="segment.job"
+          :color="colorOf(segment.job)"
+          :conflict="conflicts?.get(segment.job.id)"
+          @open="$emit('open', $event)"
+        />
       </template>
       <template #footer>
         <div
@@ -123,7 +142,7 @@ function freeWorkers(day: Date, segments: Segment[]): number {
   padding: 3px 8px;
   border-radius: 15px;
   background: var(--primary);
-  color: #fff;
+  color: var(--on-primary);
   font-size: 15px;
   font-weight: 700;
   text-align: center;

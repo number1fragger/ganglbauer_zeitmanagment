@@ -3,6 +3,7 @@
 namespace App\Controller\Api;
 
 use App\Service\OverviewBuilder;
+use Psr\Clock\ClockInterface;
 use Symfony\Component\HttpFoundation\JsonResponse;
 use Symfony\Component\Routing\Attribute\Route;
 use Symfony\Component\Security\Http\Attribute\IsGranted;
@@ -15,8 +16,8 @@ final class OverviewController extends AbstractApiController
 {
     #[Route('/api/overview', name: 'api_overview', methods: ['GET'])]
     #[IsGranted('ROLE_VORARBEITER')]
-    public function overview(OverviewBuilder $builder): JsonResponse
+    public function overview(OverviewBuilder $builder, ClockInterface $clock): JsonResponse
     {
-        return $this->json($builder->build());
+        return $this->json($builder->build($clock->now()));
     }
 }

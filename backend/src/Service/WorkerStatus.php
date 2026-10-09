@@ -27,8 +27,11 @@ class WorkerStatus
         $openJobs = $this->jobs->findOpen($user);
 
         foreach ($openJobs as $job) {
-            $remaining += $job->getRemainingMinutes();
-            $lastEnd = max($lastEnd, $job->getEndsAt());
+            // Ohne geplante Zeit ist die Restarbeit unbekannt und zaehlt nicht.
+            $remaining += $job->getRemainingMinutes() ?? 0;
+            if (null !== $job->getEndsAt()) {
+                $lastEnd = max($lastEnd, $job->getEndsAt());
+            }
         }
 
         // Frei ist er erst, wenn die Restarbeit getan UND der letzte Termin vorbei ist.

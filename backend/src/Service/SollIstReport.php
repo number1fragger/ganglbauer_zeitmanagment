@@ -28,7 +28,7 @@ class SollIstReport
         $jobs = $this->trackedJobs($from, $to);
         $previous = $this->trackedJobs($from->sub($from->diff($to)), $from);
 
-        $planned = $this->sum($jobs, static fn (Job $job): int => $job->getOriginalPlannedMinutes());
+        $planned = $this->sum($jobs, static fn (Job $job): int => (int) $job->getOriginalPlannedMinutes());
         $actual = $this->sum($jobs, static fn (Job $job): int => $job->getActualMinutes());
         $accuracy = $this->accuracy($jobs);
         $previousAccuracy = $this->accuracy($previous);
@@ -55,13 +55,14 @@ class SollIstReport
     {
         return array_values(array_filter(
             $this->jobs->findCompletedBetween($from, $to),
-            static fn (Job $job): bool => $job->getActualMinutes() > 0,
+            // Ohne Soll-Wert (keine geplante Zeit) ist kein Vergleich moeglich.
+            static fn (Job $job): bool => $job->getActualMinutes() > 0 && null !== $job->getOriginalPlannedMinutes(),
         ));
     }
 
     private function diff(Job $job): int
     {
-        return $job->getActualMinutes() - $job->getOriginalPlannedMinutes();
+        return $job->getActualMinutes() - (int) $job->getOriginalPlannedMinutes();
     }
 
     /**
@@ -72,7 +73,7 @@ class SollIstReport
      */
     private function accuracy(array $jobs): ?float
     {
-        $planned = $this->sum($jobs, static fn (Job $job): int => $job->getOriginalPlannedMinutes());
+        $planned = $this->sum($jobs, static fn (Job $job): int => (int) $job->getOriginalPlannedMinutes());
 
         if (0 === $planned) {
             return null;
@@ -102,7 +103,7 @@ class SollIstReport
                 'plannedMinutes' => 0,
                 'actualMinutes' => 0,
             ];
-            $rows[$key]['plannedMinutes'] += $job->getOriginalPlannedMinutes();
+            $rows[$key]['plannedMinutes'] += (int) $job->getOriginalPlannedMinutes();
             $rows[$key]['actualMinutes'] += $job->getActualMinutes();
         }
 

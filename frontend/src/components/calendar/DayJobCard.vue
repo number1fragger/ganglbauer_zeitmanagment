@@ -1,35 +1,69 @@
 <script setup lang="ts">
 import { computed } from 'vue'
 import type { Job } from '@/api/types'
-import { DONE_COLOR, isDone, priorityColor } from '@/utils/domain'
-import { formatHours } from '@/utils/time'
+import { DONE_COLOR, isDone, isMovable, priorityColor, workState } from '@/utils/domain'
+import { formatDuration } from '@/utils/time'
+import AppIcon from '../AppIcon.vue'
 
-const props = defineProps<{ job: Job }>()
+const props = defineProps<{ job: Job; conflict?: string[] }>()
 defineEmits<{ open: [job: Job] }>()
 
 const done = computed(() => isDone(props.job))
-const state = computed(() => (done.value ? 'done' : props.job.overrun ? 'overrun' : 'open'))
+const state = computed(() =>
+  done.value ? 'done' : props.job.overrun ? 'overrun' : workState(props.job),
+)
 
+/** Soll, Ist und Kalenderdauer sind verschiedene Dinge – hier kurz zusammengefasst. */
 const effort = computed(() => {
-  const soll = `Soll ${formatHours(props.job.plannedMinutes)}`
-  return props.job.actualMinutes > 0 ? `${soll} · Ist ${formatHours(props.job.actualMinutes)}` : soll
+  const soll = props.job.plannedMinutes
+    ? `Soll ${formatDuration(props.job.plannedMinutes * 60)}`
+    : 'ohne Soll'
+  return props.job.actualSeconds > 0
+    ? `${soll} · Ist ${formatDuration(props.job.actualSeconds)}`
+    : soll
 })
 </script>
 
 <template>
   <button
     class="day-job accent"
-    :class="`day-job--${state}`"
+    :class="[`day-job--${state}`, { 'day-job--conflict': conflict?.length }]"
     :style="{ '--accent': done ? DONE_COLOR : priorityColor(job.priority) }"
+    :title="conflict?.length ? `Überschneidung mit ${conflict.join(', ')}` : job.title"
     @click="$emit('open', job)"
   >
     <span class="day-job__top">
       <strong class="day-job__title">{{ job.title }}</strong>
-      <span v-if="done" class="badge" style="background: var(--success)" title="Erledigt">OK</span>
-      <span v-else-if="job.overrun" class="badge day-job__alert" title="Zeit überschritten">!</span>
-      <span v-else-if="job.running" class="badge" style="background: var(--primary)">läuft</span>
+      <AppIcon v-if="!isMovable(job) && !done" class="day-job__lock" name="timer" :size="12" />
+      <span
+        v-if="done"
+        class="badge day-job__badge"
+        style="--b: var(--success)"
+        title="Abgeschlossen"
+        ><AppIcon name="check" :size="10"
+      /></span>
+      <span
+        v-else-if="conflict?.length"
+        class="badge day-job__badge"
+        style="--b: var(--danger)"
+        title="Terminkonflikt"
+        ><AppIcon name="layers" :size="10"
+      /></span>
+      <span
+        v-else-if="job.overrun"
+        class="badge day-job__badge"
+        style="--b: var(--danger)"
+        title="Zeit überschritten"
+        >!</span
+      >
+      <span v-else-if="job.running" class="badge day-job__badge" style="--b: var(--primary)"
+        >läuft</span
+      >
+      <span v-else-if="job.paused" class="badge day-job__badge" style="--b: var(--warning)"
+        >pausiert</span
+      >
     </span>
-    <span v-if="job.customer" class="day-job__customer">Kunde: {{ job.customer }}</span>
+    <span v-if="job.customer" class="day-job__customer">{{ job.customer }}</span>
     <span class="day-job__effort">{{ effort }}</span>
   </button>
 </template>
@@ -40,14 +74,16 @@ const effort = computed(() => {
   display: flex;
   flex: 1;
   flex-direction: column;
-  gap: 4px;
+  gap: 3px;
   min-width: 0;
-  padding: 10px 12px 10px 14px;
+  padding: 8px 10px 8px 13px;
   overflow: hidden;
   border: 0;
   border-radius: var(--radius);
   background: var(--job);
+  color: var(--text);
   text-align: left;
+  transition: filter 0.15s;
 }
 
 .day-job.accent::before {
@@ -55,7 +91,7 @@ const effort = computed(() => {
 }
 
 .day-job:hover {
-  filter: brightness(0.98);
+  filter: brightness(0.97);
 }
 
 .day-job--done {
@@ -66,14 +102,22 @@ const effort = computed(() => {
   background: var(--danger-soft);
 }
 
+.day-job--running {
+  box-shadow: inset 0 0 0 1.5px color-mix(in srgb, var(--primary) 50%, transparent);
+}
+
+.day-job--conflict {
+  box-shadow: inset 0 0 0 1.5px var(--danger);
+}
+
 .day-job__top {
   display: flex;
   align-items: flex-start;
-  justify-content: space-between;
-  gap: 8px;
+  gap: 6px;
 }
 
 .day-job__title {
+  flex: 1;
   overflow: hidden;
   font-size: 12px;
   font-weight: 600;
@@ -85,16 +129,23 @@ const effort = computed(() => {
   color: var(--muted);
 }
 
-.day-job__alert {
-  background: var(--danger);
-  font-size: 11px;
+.day-job__lock {
+  margin-top: 1px;
+  color: var(--muted);
+}
+
+.day-job__badge {
+  height: 17px;
+  background: var(--b);
+  color: var(--on-accent);
+  font-size: 9px;
 }
 
 .day-job__customer,
 .day-job__effort {
   overflow: hidden;
   color: var(--muted);
-  font-size: 10px;
+  font-size: 11px;
   text-overflow: ellipsis;
   white-space: nowrap;
 }

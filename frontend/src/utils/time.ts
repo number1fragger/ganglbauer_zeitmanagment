@@ -132,3 +132,43 @@ export function describeShort(date: Date, now = new Date()): string {
   const day = days === 0 ? 'heute' : days < 7 ? weekdayName(date, 'short') : formatDayMonth(date)
   return `${day} ${formatTime(date)}`
 }
+
+/** 22500 Sekunden -> "6 h 15 min", 300 -> "5 min", 0 -> "0 min" */
+export function formatDuration(seconds: number): string {
+  const minutes = Math.floor(Math.max(0, seconds) / 60)
+  const h = Math.floor(minutes / 60)
+  const m = minutes % 60
+  if (h === 0) return `${m} min`
+  return m === 0 ? `${h} h` : `${h} h ${m} min`
+}
+
+/** Live-Uhr: 3725 -> "1:02:05" */
+export function formatClock(seconds: number): string {
+  const s = Math.max(0, Math.floor(seconds))
+  const pad = (n: number) => String(n).padStart(2, '0')
+  return `${Math.floor(s / 3600)}:${pad(Math.floor((s % 3600) / 60))}:${pad(s % 60)}`
+}
+
+/** Termin als Text; mehrtaegig mit beiden Tagen: "Mo 28.09., 09:00 – Di 29.09., 16:00" */
+export function formatRange(start: Date, end: Date): string {
+  if (sameDay(start, end)) return `${formatDayMonth(start)}, ${formatTime(start)} – ${formatTime(end)}`
+  return `${formatDayMonth(start)}, ${formatTime(start)} – ${formatDayMonth(end)}, ${formatTime(end)}`
+}
+
+/** Anzahl Kalendertage, ueber die sich ein Termin erstreckt. */
+export function spanDays(start: Date, end: Date): number {
+  return Math.round((startOfDay(new Date(end.getTime() - 1)).getTime() - startOfDay(start).getTime()) / DAY_MS) + 1
+}
+
+/** Minuten aus "h" und "min" Eingaben; leer -> null */
+export function minutesFrom(hours: number | string | null, minutes: number | string | null): number | null {
+  const h = Number(hours || 0)
+  const m = Number(minutes || 0)
+  const total = Math.round(h * 60 + m)
+  return total > 0 ? total : null
+}
+
+/** "Mo 28.09., 09:00" */
+export function formatDateTimeShort(date: Date): string {
+  return `${formatDayMonth(date)}, ${formatTime(date)}`
+}

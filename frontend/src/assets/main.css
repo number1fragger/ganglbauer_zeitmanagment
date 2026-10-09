@@ -1,42 +1,129 @@
-/* Design-Tokens aus dem Figma-Entwurf "Werkstatt-Planungs-App". */
+/*
+ * Design-System der Werkstatt-Planung.
+ *
+ * Alle Farben laufen ueber CSS-Variablen. Der Dark Mode setzt nur die
+ * Variablen neu (html[data-theme='dark']) – Komponenten verwenden nie
+ * feste Farben, damit beide Themes lesbar bleiben.
+ */
 :root {
+  /* Flaechen */
   --bg: #f5f6f8;
   --surface: #ffffff;
   --surface-alt: #f7f8fa;
-  --surface-muted: #f3f4f6;
+  --surface-muted: #f0f2f5;
+  --surface-hover: #e9ecf0;
   --sidebar: #fbfbfc;
+  --overlay: rgb(15 23 42 / 0.38);
   --border: #e3e6ea;
-  --grid: #eff1f4;
+  --border-strong: #d3d8de;
+  --grid: #eef0f3;
 
-  --text: #1f2430;
-  --muted: #6b7280;
-  --faint: #9ca3af;
+  /* Text */
+  --text: #1b2130;
+  --muted: #5f6878;
+  --faint: #959eab;
+  --on-primary: #ffffff;
+  --on-accent: #ffffff;
 
+  /* Akzente */
   --primary: #2563eb;
+  --primary-hover: #1d4ed8;
   --primary-soft: #eef3fe;
-  --primary-tint: #e8edfb;
+  --primary-tint: #e1e9fc;
   --job: #f0f4fe;
 
   --danger: #dc2626;
-  --danger-soft: #fef2f2;
-  --warning: #f59e0b;
-  --warning-ink: #b45309;
-  --warning-soft: #fff8e8;
+  --danger-soft: #fdf1f1;
+  --warning: #d97706;
+  --warning-ink: #a85a07;
+  --warning-soft: #fff7e8;
   --success: #16a34a;
-  --success-soft: #e7f6ec;
+  --success-soft: #e9f7ee;
 
-  --night: #1e293b;
-  --night-line: #334155;
-  --night-text: #cbd5e1;
-  --night-muted: #94a3b8;
+  /* Prioritaet und Status */
+  --prio-high: var(--danger);
+  --prio-medium: #f59e0b;
+  --prio-low: var(--success);
+  --status-open: #64748b;
+  --status-progress: var(--primary);
+  --status-paused: var(--warning);
+  --status-done: var(--success);
+
+  /* Farbe je Arbeiter (Woche/Monat) */
+  --worker-1: #2563eb;
+  --worker-2: #7c3aed;
+  --worker-3: #0d9488;
+  --worker-4: #db2777;
+  --worker-5: #ea580c;
+  --worker-6: #4f46e5;
+  --worker-none: #64748b;
+
+  /* Wie stark Akzentfarben fuer Hintergruende aufgehellt werden */
+  --tint: 12%;
+
+  --shadow-sm: 0 1px 2px rgb(15 23 42 / 0.06);
+  --shadow: 0 2px 8px rgb(15 23 42 / 0.08);
+  --shadow-lg: 0 18px 48px rgb(15 23 42 / 0.18);
 
   --radius-sm: 6px;
   --radius: 8px;
-  --radius-lg: 10px;
+  --radius-lg: 12px;
 
   --font: 'Inter Variable', Inter, system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif;
 
   color-scheme: light;
+}
+
+html[data-theme='dark'] {
+  --bg: #0e1116;
+  --surface: #161a21;
+  --surface-alt: #1c212a;
+  --surface-muted: #222833;
+  --surface-hover: #2a313d;
+  --sidebar: #12161c;
+  --overlay: rgb(0 0 0 / 0.6);
+  --border: #2a303b;
+  --border-strong: #39414e;
+  --grid: #20262f;
+
+  --text: #e6e9ee;
+  --muted: #a0a8b6;
+  --faint: #6f7886;
+  --on-primary: #0b1220;
+  --on-accent: #0b1220;
+
+  --primary: #6b9cf5;
+  --primary-hover: #8cb2f7;
+  --primary-soft: #1a2538;
+  --primary-tint: #22314d;
+  --job: #1b2434;
+
+  --danger: #f26b6b;
+  --danger-soft: #34191c;
+  --warning: #f0a83c;
+  --warning-ink: #f5bc66;
+  --warning-soft: #33270f;
+  --success: #4cc27a;
+  --success-soft: #142c1e;
+
+  --prio-medium: #f2b544;
+  --status-open: #8a95a8;
+
+  --worker-1: #6b9cf5;
+  --worker-2: #a98bf5;
+  --worker-3: #3cc6b5;
+  --worker-4: #f07bb0;
+  --worker-5: #f59a5f;
+  --worker-6: #8f8cf5;
+  --worker-none: #8a95a8;
+
+  --tint: 20%;
+
+  --shadow-sm: 0 1px 2px rgb(0 0 0 / 0.4);
+  --shadow: 0 2px 10px rgb(0 0 0 / 0.45);
+  --shadow-lg: 0 18px 48px rgb(0 0 0 / 0.6);
+
+  color-scheme: dark;
 }
 
 *,
@@ -56,8 +143,18 @@ body {
   color: var(--text);
   font-family: var(--font);
   font-size: 13px;
-  line-height: 1.35;
+  line-height: 1.4;
   -webkit-font-smoothing: antialiased;
+  -webkit-tap-highlight-color: transparent;
+}
+
+/* Sanfter Wechsel zwischen hell und dunkel – nur waehrend des Umschaltens. */
+html.theme-switching,
+html.theme-switching * {
+  transition:
+    background-color 0.2s ease,
+    border-color 0.2s ease,
+    color 0.2s ease !important;
 }
 
 h1,
@@ -69,7 +166,8 @@ p {
 
 button,
 input,
-select {
+select,
+textarea {
   font: inherit;
   color: inherit;
 }
@@ -81,6 +179,10 @@ button {
 :focus-visible {
   outline: 2px solid var(--primary);
   outline-offset: 2px;
+}
+
+::selection {
+  background: var(--primary-tint);
 }
 
 @media (prefers-reduced-motion: reduce) {
@@ -95,6 +197,7 @@ button {
 .page-title {
   font-size: 20px;
   font-weight: 700;
+  letter-spacing: -0.01em;
 }
 
 .page-sub {
@@ -118,6 +221,19 @@ button {
   color: var(--muted);
 }
 
+.tabular {
+  font-variant-numeric: tabular-nums;
+}
+
+.visually-hidden {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  overflow: hidden;
+  clip: rect(0 0 0 0);
+  white-space: nowrap;
+}
+
 /* ---- Buttons ---------------------------------------------------------- */
 
 .btn {
@@ -126,8 +242,8 @@ button {
   justify-content: center;
   gap: 6px;
   height: 36px;
-  padding: 0 18px;
-  border: 0;
+  padding: 0 16px;
+  border: 1px solid transparent;
   border-radius: var(--radius);
   background: var(--surface-muted);
   color: var(--text);
@@ -135,10 +251,18 @@ button {
   font-weight: 500;
   text-decoration: none;
   white-space: nowrap;
+  transition:
+    background-color 0.15s,
+    box-shadow 0.15s,
+    transform 0.05s;
 }
 
 .btn:hover {
-  background: #e9ebef;
+  background: var(--surface-hover);
+}
+
+.btn:active:not(:disabled) {
+  transform: translateY(1px);
 }
 
 .btn:disabled {
@@ -148,31 +272,82 @@ button {
 
 .btn--primary {
   background: var(--primary);
-  color: #fff;
+  color: var(--on-primary);
   font-weight: 600;
 }
 
 .btn--primary:hover {
-  background: #1d4ed8;
+  background: var(--primary-hover);
+}
+
+.btn--outline {
+  border-color: var(--border-strong);
+  background: var(--surface);
+}
+
+.btn--outline:hover {
+  background: var(--surface-alt);
+}
+
+.btn--ghost {
+  background: transparent;
+}
+
+.btn--ghost:hover {
+  background: var(--surface-muted);
+}
+
+.btn--success {
+  background: var(--success);
+  color: var(--on-accent);
+  font-weight: 600;
+}
+
+.btn--success:hover {
+  background: color-mix(in srgb, var(--success) 88%, var(--text));
+}
+
+.btn--warning {
+  background: var(--warning-soft);
+  color: var(--warning-ink);
+  font-weight: 600;
+}
+
+.btn--warning:hover {
+  background: color-mix(in srgb, var(--warning) 22%, var(--surface));
+}
+
+.btn--danger {
+  background: var(--danger-soft);
+  color: var(--danger);
+  font-weight: 600;
+}
+
+.btn--danger:hover {
+  background: color-mix(in srgb, var(--danger) 20%, var(--surface));
 }
 
 .btn--large {
   height: 44px;
+  padding: 0 20px;
+  font-size: 13px;
 }
 
 .btn--small {
-  height: 26px;
-  padding: 0 14px;
+  height: 28px;
+  padding: 0 10px;
   border-radius: var(--radius-sm);
-  font-size: 10px;
+  font-size: 11px;
   font-weight: 600;
 }
 
 .btn--icon {
   width: 36px;
   padding: 0;
-  font-size: 14px;
-  font-weight: 600;
+}
+
+.btn--icon.btn--small {
+  width: 28px;
 }
 
 .link {
@@ -180,7 +355,7 @@ button {
   border: 0;
   background: none;
   color: var(--primary);
-  font-size: 11px;
+  font-size: 12px;
   font-weight: 500;
   text-decoration: none;
 }
@@ -189,35 +364,100 @@ button {
   text-decoration: underline;
 }
 
+.link:disabled {
+  opacity: 0.55;
+  cursor: not-allowed;
+}
+
 /* ---- Formulare -------------------------------------------------------- */
 
 .field {
   display: flex;
   flex-direction: column;
-  gap: 5px;
+  gap: 6px;
+  min-width: 0;
 }
 
 .field__label {
   font-size: 11px;
-  font-weight: 500;
+  font-weight: 600;
   color: var(--muted);
+}
+
+.field__hint {
+  font-size: 11px;
+  color: var(--faint);
 }
 
 .input {
   width: 100%;
+  min-width: 0;
   height: 40px;
-  padding: 0 14px;
-  border: 1px solid transparent;
+  padding: 0 12px;
+  border: 1px solid var(--border);
   border-radius: var(--radius);
-  background: var(--surface-alt);
+  background: var(--surface);
   font-size: 13px;
   font-weight: 500;
+  transition:
+    border-color 0.15s,
+    box-shadow 0.15s;
+}
+
+.input:hover {
+  border-color: var(--border-strong);
 }
 
 .input:focus {
   outline: none;
   border-color: var(--primary);
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--primary) 22%, transparent);
+}
+
+.input:disabled {
+  background: var(--surface-alt);
+  color: var(--muted);
+  cursor: not-allowed;
+}
+
+textarea.input {
+  height: auto;
+  min-height: 84px;
+  padding: 10px 12px;
+  line-height: 1.5;
+  resize: vertical;
+}
+
+select.input {
+  padding-right: 32px;
+  appearance: none;
+  background-image:
+    linear-gradient(45deg, transparent 50%, var(--muted) 50%), linear-gradient(135deg, var(--muted) 50%, transparent 50%);
+  background-position:
+    calc(100% - 17px) 50%,
+    calc(100% - 12px) 50%;
+  background-size: 5px 5px;
+  background-repeat: no-repeat;
+}
+
+select.input option {
   background: var(--surface);
+  color: var(--text);
+}
+
+.checkbox {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 12px;
+  cursor: pointer;
+}
+
+.checkbox input {
+  width: 16px;
+  height: 16px;
+  margin: 0;
+  accent-color: var(--primary);
 }
 
 .form-error {
@@ -229,12 +469,23 @@ button {
   font-weight: 500;
 }
 
+.form-note {
+  padding: 10px 14px;
+  border-radius: var(--radius);
+  background: var(--warning-soft);
+  color: var(--warning-ink);
+  font-size: 12px;
+  font-weight: 500;
+}
+
 /* ---- Bausteine -------------------------------------------------------- */
 
 .card {
   position: relative;
+  border: 1px solid var(--border);
   border-radius: var(--radius-lg);
   background: var(--surface);
+  box-shadow: var(--shadow-sm);
 }
 
 /* Farbiger Streifen am linken Rand – Farbe ueber --accent. */
@@ -245,6 +496,11 @@ button {
   width: 3px;
   border-radius: 2px;
   background: var(--accent, var(--primary));
+}
+
+/* Hintergrund in der Akzentfarbe, passend zum Theme abgetoent. */
+.tinted {
+  background: color-mix(in srgb, var(--accent, var(--primary)) var(--tint), var(--surface));
 }
 
 .avatar {
@@ -258,6 +514,12 @@ button {
   color: var(--primary);
   font-size: 11px;
   font-weight: 600;
+}
+
+.avatar--small {
+  width: 22px;
+  height: 22px;
+  font-size: 9px;
 }
 
 .dot {
@@ -277,17 +539,40 @@ button {
   height: 18px;
   padding: 0 6px;
   border-radius: 9px;
-  color: #fff;
-  font-size: 8px;
+  background: var(--primary);
+  color: var(--on-primary);
+  font-size: 9px;
   font-weight: 700;
 }
 
-.empty {
-  padding: 14px 16px;
-  border-radius: var(--radius-lg);
-  background: var(--surface);
-  color: var(--muted);
+/* Kleine Kennzeichnung: Status, Prioritaet, Termin */
+.chip {
+  display: inline-flex;
+  flex: none;
+  align-items: center;
+  gap: 5px;
+  height: 22px;
+  padding: 0 8px;
+  border-radius: 11px;
+  background: color-mix(in srgb, var(--chip, var(--muted)) var(--tint), var(--surface));
+  color: color-mix(in srgb, var(--chip, var(--muted)) 82%, var(--text));
   font-size: 11px;
+  font-weight: 600;
+  white-space: nowrap;
+}
+
+.chip--plain {
+  background: var(--surface-muted);
+  color: var(--muted);
+}
+
+.empty {
+  padding: 16px;
+  border: 1px dashed var(--border-strong);
+  border-radius: var(--radius-lg);
+  color: var(--muted);
+  font-size: 12px;
+  text-align: center;
 }
 
 .segmented {
@@ -298,7 +583,7 @@ button {
 }
 
 .segmented button {
-  min-width: 67px;
+  min-width: 60px;
   height: 30px;
   padding: 0 12px;
   border: 0;
@@ -309,8 +594,68 @@ button {
   font-weight: 500;
 }
 
+.segmented button:hover {
+  color: var(--text);
+}
+
 .segmented button[aria-pressed='true'] {
   background: var(--surface);
   color: var(--text);
   font-weight: 600;
+  box-shadow: var(--shadow-sm);
+}
+
+.spinner {
+  display: inline-block;
+  width: 16px;
+  height: 16px;
+  border: 2px solid var(--border-strong);
+  border-top-color: var(--primary);
+  border-radius: 50%;
+  animation: spin 0.7s linear infinite;
+}
+
+.skeleton {
+  border-radius: var(--radius);
+  background: linear-gradient(90deg, var(--surface-muted) 0%, var(--surface-hover) 50%, var(--surface-muted) 100%);
+  background-size: 200% 100%;
+  animation: shimmer 1.2s ease-in-out infinite;
+}
+
+@keyframes spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+@keyframes shimmer {
+  from {
+    background-position: 200% 0;
+  }
+  to {
+    background-position: -200% 0;
+  }
+}
+
+/* Tooltip ueber data-tip, z. B. fuer Icon-Buttons */
+[data-tip] {
+  position: relative;
+}
+
+[data-tip]:hover::after,
+[data-tip]:focus-visible::after {
+  content: attr(data-tip);
+  position: absolute;
+  z-index: 50;
+  bottom: calc(100% + 6px);
+  left: 50%;
+  padding: 5px 8px;
+  border-radius: var(--radius-sm);
+  background: var(--text);
+  color: var(--bg);
+  font-size: 11px;
+  font-weight: 500;
+  white-space: nowrap;
+  transform: translateX(-50%);
+  pointer-events: none;
 }

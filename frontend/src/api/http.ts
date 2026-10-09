@@ -69,11 +69,28 @@ function messageOf(body: ErrorBody | null, status: number): string {
   return `Unerwarteter Fehler (${status}).`
 }
 
+/**
+ * Gleiche schreibende Anfrage noch unterwegs (z. B. Doppelklick auf
+ * "Starten")? Dann wird keine zweite geschickt, sondern auf die erste
+ * gewartet. Das Backend ist zusaetzlich idempotent abgesichert.
+ */
+const inFlight = new Map<string, Promise<unknown>>()
+
+function once<T>(method: string, path: string, body?: unknown): Promise<T> {
+  const key = `${method} ${path} ${body === undefined ? '' : JSON.stringify(body)}`
+  const pending = inFlight.get(key)
+  if (pending) return pending as Promise<T>
+
+  const promise = request<T>(method, path, body).finally(() => inFlight.delete(key))
+  inFlight.set(key, promise)
+  return promise
+}
+
 export const http = {
   get: <T>(path: string) => request<T>('GET', path),
-  post: <T>(path: string, body?: unknown) => request<T>('POST', path, body),
-  put: <T>(path: string, body?: unknown) => request<T>('PUT', path, body),
-  delete: (path: string) => request<void>('DELETE', path),
+  post: <T>(path: string, body?: unknown) => once<T>('POST', path, body),
+  put: <T>(path: string, body?: unknown) => once<T>('PUT', path, body),
+  delete: (path: string) => once<void>('DELETE', path),
 }
 
 export function errorMessage(error: unknown): string {

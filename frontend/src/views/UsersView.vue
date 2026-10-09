@@ -3,7 +3,6 @@ import { onMounted, ref } from 'vue'
 import { usersApi } from '@/api'
 import { errorMessage } from '@/api/http'
 import type { User } from '@/api/types'
-import RoleBadge from '@/components/RoleBadge.vue'
 import UserDialog from '@/components/UserDialog.vue'
 import { useAuthStore } from '@/stores/auth'
 import { permissions, roleOf, roles } from '@/utils/domain'
@@ -37,9 +36,7 @@ async function onSaved(): Promise<void> {
         <h1 class="page-title">Benutzer &amp; Rechte</h1>
         <p class="page-sub">Nur für die Werkstattleitung sichtbar</p>
       </div>
-      <RouterLink class="link users__back" :to="{ name: 'planning' }">Zur Planung</RouterLink>
-      <RoleBadge />
-      <button class="btn btn--primary" @click="editing = null">+ Benutzer anlegen</button>
+      <button class="btn btn--primary users__new" @click="editing = null">+ Benutzer anlegen</button>
     </header>
 
     <main class="users__main">
@@ -117,16 +114,12 @@ async function onSaved(): Promise<void> {
   display: flex;
   flex-wrap: wrap;
   align-items: center;
+  justify-content: space-between;
   gap: 16px;
-  padding: 22px 32px 18px;
-  border-bottom: 1px solid var(--border);
-  background: var(--surface);
+  padding: 20px 28px 16px;
 }
 
-.users__back {
-  margin-left: auto;
-  font-size: 12px;
-}
+
 
 .users__main {
   display: grid;
@@ -158,7 +151,7 @@ async function onSaved(): Promise<void> {
 
 .users__table td {
   padding: 18px 0;
-  border-bottom: 1px solid #f1f2f4;
+  border-bottom: 1px solid var(--grid);
 }
 
 .users__table tbody tr {

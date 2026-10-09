@@ -3,6 +3,7 @@
 namespace App\Controller\Api;
 
 use App\Dto\PasswordInput;
+use App\Dto\PreferencesInput;
 use App\Service\WorkerStatus;
 use Doctrine\ORM\EntityManagerInterface;
 use Symfony\Component\HttpFoundation\JsonResponse;
@@ -24,6 +25,16 @@ final class MeController extends AbstractApiController
     public function status(WorkerStatus $status): JsonResponse
     {
         return $this->json($status->of($this->currentUser(), new \DateTimeImmutable()));
+    }
+
+    /** Persoenliche Einstellungen, z. B. hell/dunkel. */
+    #[Route('/preferences', name: 'api_me_preferences', methods: ['PUT'])]
+    public function preferences(#[MapRequestPayload] PreferencesInput $input, EntityManagerInterface $em): JsonResponse
+    {
+        $user = $this->currentUser()->setTheme($input->theme);
+        $em->flush();
+
+        return $this->serialized($user, ['user:read']);
     }
 
     #[Route('/password', name: 'api_me_password', methods: ['PUT'])]

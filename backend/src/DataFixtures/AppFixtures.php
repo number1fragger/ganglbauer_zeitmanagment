@@ -90,6 +90,8 @@ final class AppFixtures extends Fixture
             }
         }
 
+        $this->multiDay($manager, $users['b.steiner'], $monday, $now);
+        $this->backlog($manager, $users);
         $this->history($manager, $users, $monday);
 
         // F7 – zwei offene "Brauche Arbeit"-Anfragen.
@@ -98,6 +100,58 @@ final class AppFixtures extends Fixture
         $manager->persist(new WorkRequest($users['d.gruber'], $this->nextWorkday($nextWorkday)->setTime(13, 0), $now));
 
         $manager->flush();
+    }
+
+    /**
+     * Mehrtaegige Arbeit (Mi 07:00 bis Do 15:00 geplant). Gearbeitet wird in
+     * Abschnitten – ueber Nacht laeuft keine Zeit.
+     */
+    private function multiDay(ObjectManager $manager, User $worker, \DateTimeImmutable $monday, \DateTimeImmutable $now): void
+    {
+        $start = $monday->modify('+2 days 07:00');
+        $job = (new Job())
+            ->setTitle('Mähdrescher Generalüberholung')
+            ->setDescription("Schneidwerk, Dreschtrommel und Hydraulik prüfen.\nErsatzteile liegen im Lager, Regal 4.")
+            ->setCustomer('Gut Ebersdorf')
+            ->setPriority(Priority::High)
+            ->setAssignee($worker)
+            ->setPlannedMinutes(12 * 60)
+            ->schedule($start, null, $monday->modify('+3 days 15:00'));
+        $manager->persist($job);
+
+        $sections = [['+2 days 07:00', '+2 days 11:30'], ['+2 days 12:00', '+2 days 15:30'], ['+3 days 07:00', '+3 days 10:00']];
+        foreach ($sections as [$from, $to]) {
+            $from = $monday->modify($from);
+            $to = $monday->modify($to);
+            if ($to <= $now) {
+                $manager->persist((new TimeEntry($worker, $job, $from))->stop($to));
+                $job->markInProgress();
+            }
+        }
+    }
+
+    /**
+     * Aufgaben ohne Termin – stehen nur in der Aufgabenverwaltung, nicht im Kalender.
+     *
+     * @param array<string, User> $users
+     */
+    private function backlog(ObjectManager $manager, array $users): void
+    {
+        $tasks = [
+            ['Hebebühne 2 warten lassen', 'Wartungsfirma anrufen, Termin vereinbaren.', null, Priority::Medium, null],
+            ['Werkzeugwand neu beschriften', null, null, Priority::Low, 'd.gruber'],
+            ['Frontlader Hydraulikleck', 'Kunde bringt den Traktor, sobald die Ernte vorbei ist.', 'Fam. Brunner', Priority::High, 'a.huber'],
+            ['Ersatzteile Lagerinventur', 'Regale 1–6 zählen und Fehlbestände notieren.', null, Priority::Low, 'b.steiner'],
+        ];
+
+        foreach ($tasks as [$title, $description, $customer, $priority, $worker]) {
+            $manager->persist((new Job())
+                ->setTitle($title)
+                ->setDescription($description)
+                ->setCustomer($customer)
+                ->setPriority($priority)
+                ->setAssignee(null !== $worker ? $users[$worker] : null));
+        }
     }
 
     /**

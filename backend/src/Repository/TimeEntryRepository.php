@@ -2,6 +2,7 @@
 
 namespace App\Repository;
 
+use App\Entity\Job;
 use App\Entity\TimeEntry;
 use App\Entity\User;
 use Doctrine\Bundle\DoctrineBundle\Repository\ServiceEntityRepository;
@@ -19,14 +20,37 @@ class TimeEntryRepository extends ServiceEntityRepository
 
     public function findRunning(User $user): ?TimeEntry
     {
-        return $this->createQueryBuilder('e')
+        return $this->findAllRunning($user)[0] ?? null;
+    }
+
+    /**
+     * Laufende Abschnitte – eines Arbeiters oder aller.
+     *
+     * @return list<TimeEntry>
+     */
+    public function findAllRunning(?User $user = null): array
+    {
+        $qb = $this->createQueryBuilder('e')
             ->addSelect('j')
             ->join('e.job', 'j')
-            ->andWhere('e.user = :user')
             ->andWhere('e.endedAt IS NULL')
-            ->setParameter('user', $user)
-            ->setMaxResults(1)
+            ->orderBy('e.startedAt', 'ASC');
+
+        if (null !== $user) {
+            $qb->andWhere('e.user = :user')->setParameter('user', $user);
+        }
+
+        return $qb->getQuery()->getResult();
+    }
+
+    /** @return list<TimeEntry> */
+    public function findRunningForJob(Job $job): array
+    {
+        return $this->createQueryBuilder('e')
+            ->andWhere('e.job = :job')
+            ->andWhere('e.endedAt IS NULL')
+            ->setParameter('job', $job)
             ->getQuery()
-            ->getOneOrNullResult();
+            ->getResult();
     }
 }

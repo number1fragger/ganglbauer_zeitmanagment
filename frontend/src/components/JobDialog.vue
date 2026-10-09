@@ -1,14 +1,36 @@
 <script setup lang="ts">
-import { computed, reactive, ref } from 'vue'
+import { computed, onMounted, reactive, ref } from 'vue'
 import { jobsApi } from '@/api'
 import { errorMessage } from '@/api/http'
 import type { Job, JobInput, Priority, UserRef } from '@/api/types'
-import { priorities } from '@/utils/domain'
-import { addMinutes, formatHours, toLocalInput } from '@/utils/time'
+import { confirmAction } from '@/composables/useConfirm'
+import { useJobActions } from '@/composables/useJobActions'
+import { toast } from '@/composables/useToast'
+import { useAuthStore } from '@/stores/auth'
+import { canStart, canWorkOn, isDone, priorities } from '@/utils/domain'
+import {
+  addMinutes,
+  formatDateTimeShort,
+  formatDuration,
+  formatHours,
+  formatTime,
+  minutesFrom,
+  sameDay,
+  spanDays,
+  toLocalInput,
+} from '@/utils/time'
+import AppIcon from './AppIcon.vue'
 import BaseModal from './BaseModal.vue'
+import FollowUpDialog from './FollowUpDialog.vue'
+import LiveDuration from './LiveDuration.vue'
+import StatusChip from './StatusChip.vue'
 
-const STEP_MINUTES = 30
-
+/**
+ * Detail-, Anlege- und Bearbeitungsdialog einer Arbeit (wie eine
+ * Trello-Karte). Nur der Titel ist Pflicht – Termin und geplante Zeit
+ * sind optional. Arbeiter sehen die Karte, koennen aber nur arbeiten
+ * (starten, pausieren, abschliessen), nicht planen.
+ */
 const props = defineProps<{
   job?: Job | null
   /** Vorbelegung beim Anlegen, z. B. aus einem Klick in den Kalender. */
@@ -16,59 +38,125 @@ const props = defineProps<{
   workers: UserRef[]
 }>()
 
-const emit = defineEmits<{ close: []; saved: [job: Job]; deleted: [id: number] }>()
+const emit = defineEmits<{ close: []; saved: [job: Job]; deleted: [id: number]; changed: [] }>()
 
-const editing = computed(() => !!props.job)
-const start = props.job ? new Date(props.job.startsAt) : (props.defaults?.startsAt ?? defaultStart())
+const auth = useAuthStore()
+const current = ref<Job | null>(props.job ?? null)
+const editing = computed(() => current.value !== null)
+const canEdit = computed(() => auth.isPlanner)
+const done = computed(() => current.value !== null && isDone(current.value))
+const started = computed(() => current.value?.started ?? false)
+
+const initialStart = props.job?.startsAt
+  ? new Date(props.job.startsAt)
+  : (props.defaults?.startsAt ?? null)
+const initialEnd = props.job?.endsAt
+  ? new Date(props.job.endsAt)
+  : initialStart
+    ? addMinutes(initialStart, props.job?.plannedMinutes ?? 120)
+    : null
+const planned = props.job ? props.job.plannedMinutes : props.defaults?.startsAt ? 120 : null
 
 const form = reactive({
   title: props.job?.title ?? '',
+  description: props.job?.description ?? '',
   customer: props.job?.customer ?? '',
   priority: (props.job?.priority ?? 'mittel') as Priority,
-  startsAt: toLocalInput(start),
-  endsAt: toLocalInput(props.job ? new Date(props.job.endsAt) : addMinutes(start, 120)),
-  plannedMinutes: props.job?.plannedMinutes ?? 120,
   assigneeId: props.job?.assignee?.id ?? props.defaults?.assigneeId ?? null,
-  done: props.job?.status === 'erledigt',
+  scheduled: initialStart !== null,
+  startsAt: initialStart ? toLocalInput(initialStart) : '',
+  endsAt: initialEnd ? toLocalInput(initialEnd) : '',
+  plannedHours: planned ? Math.floor(planned / 60) : ('' as number | ''),
+  plannedRest: planned ? planned % 60 : ('' as number | ''),
+  unlockSchedule: false,
 })
 
+/** Der aktuelle Zustaendige muss auswaehlbar sein, auch wenn er nicht in der Liste steht. */
+const workerOptions = computed(() => {
+  const assignee = current.value?.assignee
+  return assignee && !props.workers.some((w) => w.id === assignee.id)
+    ? [...props.workers, assignee]
+    : props.workers
+})
+
+const scheduleLocked = computed(() => done.value || (started.value && !form.unlockSchedule))
 const error = ref('')
 const busy = ref(false)
 
-function defaultStart(): Date {
+const plannedMinutes = computed(() => minutesFrom(form.plannedHours, form.plannedRest))
+
+/** Kalenderdauer – getrennt von der Arbeitszeit, kann mehrere Tage umfassen. */
+const calendarInfo = computed(() => {
+  if (!form.scheduled || !form.startsAt || !form.endsAt) return null
+  const start = new Date(form.startsAt)
+  const end = new Date(form.endsAt)
+  if (!(end > start)) return 'Das Ende muss nach dem Beginn liegen.'
+  const days = spanDays(start, end)
+  const length = formatDuration((end.getTime() - start.getTime()) / 1000)
+  return days > 1 ? `Mehrtägig: ${days} Tage (${length} Kalenderzeit)` : `Kalenderzeit: ${length}`
+})
+
+function toggleSchedule(on: boolean): void {
+  form.scheduled = on
+  if (on && !form.startsAt) {
+    const start = props.defaults?.startsAt ?? nextHalfHour()
+    form.startsAt = toLocalInput(start)
+    form.endsAt = toLocalInput(addMinutes(start, plannedMinutes.value ?? 120))
+  }
+}
+
+function nextHalfHour(): Date {
   const now = new Date()
   now.setMinutes(now.getMinutes() < 30 ? 30 : 60, 0, 0)
   return now
 }
 
-/** Beginn oder Dauer geaendert: das Ende rueckt mit. */
-function syncEnd(): void {
-  if (form.startsAt) form.endsAt = toLocalInput(addMinutes(new Date(form.startsAt), form.plannedMinutes))
-}
-
-function changePlanned(delta: number): void {
-  form.plannedMinutes = Math.max(STEP_MINUTES, form.plannedMinutes + delta)
-  syncEnd()
+/** Beginn verschoben: das Ende rueckt mit, die Kalenderdauer bleibt. */
+let lastStart = form.startsAt
+function onStartChange(): void {
+  if (!form.startsAt) return
+  const previous = lastStart ? new Date(lastStart) : null
+  const end = form.endsAt ? new Date(form.endsAt) : null
+  const duration =
+    previous && end && end > previous
+      ? end.getTime() - previous.getTime()
+      : (plannedMinutes.value ?? 60) * 60_000
+  form.endsAt = toLocalInput(new Date(new Date(form.startsAt).getTime() + duration))
+  lastStart = form.startsAt
 }
 
 function payload(): JobInput {
+  const scheduled = form.scheduled && form.startsAt
   return {
     title: form.title,
+    description: form.description || null,
     customer: form.customer || null,
     priority: form.priority,
-    startsAt: new Date(form.startsAt).toISOString(),
-    endsAt: new Date(form.endsAt).toISOString(),
-    plannedMinutes: form.plannedMinutes,
     assigneeId: form.assigneeId,
-    done: form.done,
+    plannedMinutes: plannedMinutes.value,
+    startsAt: scheduled ? new Date(form.startsAt).toISOString() : null,
+    endsAt: scheduled && form.endsAt ? new Date(form.endsAt).toISOString() : null,
+    confirmStartedChange: form.unlockSchedule,
   }
 }
 
-async function run(action: () => Promise<void>): Promise<void> {
+async function save(): Promise<void> {
+  if (!canEdit.value) return
   error.value = ''
   busy.value = true
   try {
-    await action()
+    const job = current.value
+      ? await jobsApi.update(current.value.id, payload())
+      : await jobsApi.create(payload())
+    toast(
+      current.value
+        ? 'Änderungen gespeichert.'
+        : job.scheduled
+          ? 'Arbeit eingeplant.'
+          : 'Aufgabe angelegt.',
+      'success',
+    )
+    emit('saved', job)
   } catch (e) {
     error.value = errorMessage(e)
   } finally {
@@ -76,129 +164,410 @@ async function run(action: () => Promise<void>): Promise<void> {
   }
 }
 
-const save = () =>
-  run(async () => {
-    const job = props.job ? await jobsApi.update(props.job.id, payload()) : await jobsApi.create(payload())
-    emit('saved', job)
-  })
-
 /** F5 – sofort speichern, damit die Folgetermine im Backend nachruecken. */
-const extendByHour = () =>
-  run(async () => {
-    if (!props.job) return
-    const job = await jobsApi.extend(props.job.id, 60)
-    form.plannedMinutes = job.plannedMinutes
-    form.endsAt = toLocalInput(new Date(job.endsAt))
-    emit('saved', job)
-  })
+async function extendByHour(): Promise<void> {
+  if (!current.value) return
+  busy.value = true
+  try {
+    const job = await jobsApi.extend(current.value.id, 60)
+    current.value = { ...current.value, ...job }
+    form.plannedHours = Math.floor((job.plannedMinutes ?? 0) / 60)
+    form.plannedRest = (job.plannedMinutes ?? 0) % 60
+    if (job.endsAt) form.endsAt = toLocalInput(new Date(job.endsAt))
+    toast('Geplante Zeit um 1 Stunde erhöht. Folgetermine wurden nachgerückt.', 'success')
+    emit('changed')
+  } catch (e) {
+    error.value = errorMessage(e)
+  } finally {
+    busy.value = false
+  }
+}
 
-const remove = () =>
-  run(async () => {
-    if (!props.job || !confirm(`„${props.job.title}“ wirklich löschen?`)) return
-    await jobsApi.remove(props.job.id)
-    emit('deleted', props.job.id)
+async function remove(): Promise<void> {
+  if (!current.value) return
+  const ok = await confirmAction({
+    title: 'Arbeit löschen?',
+    message: `„${current.value.title}“ und alle erfassten Arbeitsabschnitte werden endgültig gelöscht.`,
+    confirmLabel: 'Löschen',
+    tone: 'danger',
   })
+  if (!ok) return
+  try {
+    await jobsApi.remove(current.value.id)
+    toast('Arbeit gelöscht.', 'success')
+    emit('deleted', current.value.id)
+  } catch (e) {
+    error.value = errorMessage(e)
+  }
+}
+
+// ---- Arbeitsablauf (Start/Pause/Abschluss) --------------------------------
+
+async function reload(): Promise<void> {
+  if (!current.value) return
+  try {
+    current.value = await jobsApi.get(current.value.id)
+  } catch {
+    /* Anzeige bleibt beim letzten Stand */
+  }
+}
+
+const actions = useJobActions(async () => {
+  await reload()
+  emit('changed')
+})
+
+onMounted(reload)
+
+async function onFollowUpApplied(): Promise<void> {
+  actions.followUp.value = null
+  await reload()
+  emit('changed')
+}
+
+const entries = computed(() => current.value?.timeEntries ?? [])
+
+function entryLabel(startedAt: string, endedAt: string | null): string {
+  const start = new Date(startedAt)
+  if (!endedAt) return `${formatDateTimeShort(start)} – läuft`
+  const end = new Date(endedAt)
+  return sameDay(start, end)
+    ? `${formatDateTimeShort(start)} – ${formatTime(end)}`
+    : `${formatDateTimeShort(start)} – ${formatDateTimeShort(end)}`
+}
 </script>
 
 <template>
   <BaseModal
-    :title="editing ? 'Arbeit bearbeiten' : 'Arbeit anlegen'"
-    subtitle="Kundentermin planen und Zeit festlegen"
+    :title="editing ? (canEdit ? 'Arbeit bearbeiten' : 'Arbeit') : 'Neue Arbeit'"
+    :subtitle="
+      editing
+        ? undefined
+        : 'Nur der Titel ist Pflicht. Termin und Zeit können später ergänzt werden.'
+    "
+    :width="860"
     @close="emit('close')"
   >
+    <template v-if="current" #header>
+      <div class="job-head">
+        <StatusChip :job="current" />
+        <span v-if="current.overrun && !done" class="chip" style="--chip: var(--danger)">
+          <AppIcon name="alert" :size="11" /> {{ formatHours(current.overrunMinutes) }} über Plan
+        </span>
+      </div>
+    </template>
+
     <form class="job-form" @submit.prevent="save">
-      <label class="field">
-        <span class="field__label">Bezeichnung der Arbeit</span>
-        <input v-model="form.title" class="input" maxlength="150" required autofocus />
-      </label>
-
-      <label class="field">
-        <span class="field__label">Kunde</span>
-        <input v-model="form.customer" class="input" maxlength="150" />
-      </label>
-
-      <fieldset class="field job-form__plain">
-        <legend class="field__label">Priorität</legend>
-        <div class="job-form__priorities">
-          <label
-            v-for="p in priorities"
-            :key="p.value"
-            class="priority-option"
-            :class="{ 'priority-option--active': form.priority === p.value }"
-            :style="{ '--soft': p.soft }"
-          >
-            <input v-model="form.priority" type="radio" name="priority" :value="p.value" />
-            <span class="priority-option__swatch" :style="{ background: p.color }" />
-            {{ p.label }}
-          </label>
-        </div>
-      </fieldset>
-
-      <div class="job-form__pair">
+      <div class="job-form__main">
         <label class="field">
-          <span class="field__label">Arbeitsbeginn</span>
-          <input v-model="form.startsAt" class="input" type="datetime-local" step="900" required @change="syncEnd" />
+          <span class="field__label">Titel</span>
+          <input
+            v-model="form.title"
+            class="input job-form__title"
+            maxlength="150"
+            required
+            :disabled="!canEdit"
+            placeholder="z. B. Bremsen hinten tauschen"
+            autofocus
+          />
         </label>
+
         <label class="field">
-          <span class="field__label">Arbeitsende (geplant)</span>
-          <input v-model="form.endsAt" class="input" type="datetime-local" step="900" :min="form.startsAt" required />
+          <span class="field__label">Beschreibung</span>
+          <textarea
+            v-model="form.description"
+            class="input"
+            rows="4"
+            maxlength="5000"
+            :disabled="!canEdit"
+            placeholder="Was ist zu tun? Teile, Hinweise, Kundenwünsche …"
+          />
         </label>
+
+        <!-- Ist-Zeit: getrennt von Plan und Kalender -->
+        <section v-if="current" class="time-box">
+          <h3 class="section-title">Zeiterfassung</h3>
+          <dl class="time-box__stats">
+            <div>
+              <dt>Ist-Zeit</dt>
+              <dd :class="{ 'time-box__over': current.overrun }">
+                <LiveDuration :job="current" />
+              </dd>
+            </div>
+            <div>
+              <dt>Geplant</dt>
+              <dd>
+                {{ current.plannedMinutes ? formatDuration(current.plannedMinutes * 60) : '–' }}
+              </dd>
+            </div>
+            <div>
+              <dt>Abschnitte</dt>
+              <dd>
+                {{ current.entryCount
+                }}<small v-if="current.workedDays > 1"> an {{ current.workedDays }} Tagen</small>
+              </dd>
+            </div>
+          </dl>
+
+          <ul v-if="entries.length" class="entries">
+            <li
+              v-for="entry in entries"
+              :key="entry.id"
+              :class="{ 'entries--running': entry.running }"
+            >
+              <span class="tabular">{{ entryLabel(entry.startedAt, entry.endedAt) }}</span>
+              <span class="entries__who">{{ entry.user.shortName }}</span>
+              <span class="tabular entries__dur">{{
+                entry.running ? 'läuft' : formatDuration(entry.durationSeconds)
+              }}</span>
+              <span
+                v-if="entry.autoClosed"
+                class="chip"
+                style="--chip: var(--warning)"
+                title="Nicht pausiert – automatisch am Abend beendet"
+              >
+                auto. beendet
+              </span>
+            </li>
+          </ul>
+          <p v-else class="time-box__empty">
+            Noch nicht gestartet – es wurde keine Arbeitszeit erfasst.
+          </p>
+
+          <div class="time-box__actions">
+            <button
+              v-if="canStart(current, auth.user)"
+              type="button"
+              class="btn btn--primary"
+              :disabled="actions.busyId.value !== null"
+              @click="actions.start(current)"
+            >
+              <AppIcon name="play" :size="14" />
+              {{ current.status === 'in_arbeit' ? 'Fortsetzen' : 'Arbeit starten' }}
+            </button>
+            <button
+              v-if="current.running && canWorkOn(current, auth.user)"
+              type="button"
+              class="btn btn--warning"
+              :disabled="actions.busyId.value !== null"
+              @click="actions.pause(current)"
+            >
+              <AppIcon name="pause" :size="14" /> Pausieren
+            </button>
+            <button
+              v-if="!done && canWorkOn(current, auth.user)"
+              type="button"
+              class="btn btn--success"
+              :disabled="actions.busyId.value !== null"
+              @click="actions.complete(current)"
+            >
+              <AppIcon name="check" :size="14" /> Abschließen
+            </button>
+            <button
+              v-if="done && canWorkOn(current, auth.user)"
+              type="button"
+              class="btn btn--outline"
+              :disabled="actions.busyId.value !== null"
+              @click="actions.reopen(current)"
+            >
+              <AppIcon name="reopen" :size="14" /> Wieder öffnen
+            </button>
+            <button
+              v-if="!done && canWorkOn(current, auth.user)"
+              type="button"
+              class="btn btn--ghost"
+              :disabled="busy"
+              title="Geplante Zeit erhöhen – Folgetermine rücken nach"
+              @click="extendByHour"
+            >
+              <AppIcon name="plus" :size="14" /> 1 Stunde mehr
+            </button>
+          </div>
+        </section>
       </div>
 
-      <div class="job-form__pair">
-        <div class="field">
-          <span class="field__label" id="planned-label">Geplante Arbeitszeit</span>
-          <div class="stepper" role="group" aria-labelledby="planned-label">
-            <strong>{{ formatHours(form.plannedMinutes).replace(' h', ' Stunden') }}</strong>
-            <button type="button" aria-label="30 Minuten weniger" @click="changePlanned(-STEP_MINUTES)">–</button>
-            <button type="button" aria-label="30 Minuten mehr" @click="changePlanned(STEP_MINUTES)">+</button>
-          </div>
-        </div>
+      <aside class="job-form__side">
         <label class="field">
-          <span class="field__label">Zugewiesener Arbeiter</span>
-          <select v-model="form.assigneeId" class="input">
+          <span class="field__label">Zuständig</span>
+          <select v-model="form.assigneeId" class="input" :disabled="!canEdit || current?.running">
             <option :value="null">Noch niemand</option>
-            <option v-for="worker in workers" :key="worker.id" :value="worker.id">{{ worker.fullName }}</option>
+            <option v-for="worker in workerOptions" :key="worker.id" :value="worker.id">
+              {{ worker.fullName }}
+            </option>
           </select>
         </label>
-      </div>
 
-      <section v-if="editing && !form.done" class="extend accent">
-        <div>
-          <h3 class="extend__title">Arbeitszeit nachträglich erhöhen</h3>
-          <p class="extend__text">
-            Dauert die Arbeit länger, kann die Zeit hier erweitert werden. Alle Folgetermine verschieben sich
-            automatisch.
-          </p>
-        </div>
-        <button type="button" class="extend__button" :disabled="busy" @click="extendByHour">+ 1 Stunde</button>
-      </section>
+        <fieldset class="field job-form__plain">
+          <legend class="field__label">Priorität</legend>
+          <div class="segmented job-form__priorities">
+            <button
+              v-for="p in priorities"
+              :key="p.value"
+              type="button"
+              :aria-pressed="form.priority === p.value"
+              :disabled="!canEdit"
+              @click="form.priority = p.value"
+            >
+              <span class="dot" :style="{ '--dot': p.color }" />{{ p.label }}
+            </button>
+          </div>
+        </fieldset>
 
-      <div v-if="editing" class="field">
-        <span class="field__label">Status</span>
-        <label class="done-toggle">
-          <input v-model="form.done" type="checkbox" />
-          Arbeit ist erledigt (abhaken)
+        <label class="field">
+          <span class="field__label">Kunde</span>
+          <input
+            v-model="form.customer"
+            class="input"
+            maxlength="150"
+            :disabled="!canEdit"
+            placeholder="optional"
+          />
         </label>
-      </div>
 
-      <p v-if="error" class="form-error" role="alert">{{ error }}</p>
+        <div class="field">
+          <span class="field__label" id="planned-label"
+            >Geplante Arbeitszeit <small>(optional)</small></span
+          >
+          <div class="duration" role="group" aria-labelledby="planned-label">
+            <input
+              v-model.number="form.plannedHours"
+              class="input"
+              type="number"
+              min="0"
+              max="168"
+              inputmode="numeric"
+              aria-label="Stunden"
+              placeholder="–"
+              :disabled="!canEdit"
+            />
+            <span>h</span>
+            <input
+              v-model.number="form.plannedRest"
+              class="input"
+              type="number"
+              min="0"
+              max="59"
+              step="5"
+              inputmode="numeric"
+              aria-label="Minuten"
+              placeholder="–"
+              :disabled="!canEdit"
+            />
+            <span>min</span>
+          </div>
+        </div>
 
-      <footer class="job-form__actions">
-        <button v-if="editing" type="button" class="link job-form__delete" :disabled="busy" @click="remove">
-          Arbeit löschen
+        <div class="field schedule">
+          <label class="checkbox schedule__toggle">
+            <input
+              type="checkbox"
+              :checked="form.scheduled"
+              :disabled="!canEdit || scheduleLocked"
+              @change="toggleSchedule(($event.target as HTMLInputElement).checked)"
+            />
+            <AppIcon name="calendar" :size="15" /> Im Kalender einplanen
+          </label>
+
+          <template v-if="form.scheduled">
+            <label class="field">
+              <span class="field__label">Beginn</span>
+              <input
+                v-model="form.startsAt"
+                class="input"
+                type="datetime-local"
+                step="900"
+                required
+                :disabled="!canEdit || scheduleLocked"
+                @change="onStartChange"
+              />
+            </label>
+            <label class="field">
+              <span class="field__label">Ende</span>
+              <input
+                v-model="form.endsAt"
+                class="input"
+                type="datetime-local"
+                step="900"
+                :min="form.startsAt"
+                required
+                :disabled="!canEdit || scheduleLocked"
+              />
+            </label>
+            <p v-if="calendarInfo" class="field__hint">{{ calendarInfo }}</p>
+          </template>
+          <p v-else class="field__hint">Ohne Termin bleibt die Arbeit in der Aufgabenliste.</p>
+
+          <p v-if="done && canEdit" class="field__hint schedule__lock">
+            <AppIcon name="info" :size="13" /> Abgeschlossen – Termin ist gesperrt.
+          </p>
+          <label v-else-if="started && canEdit" class="checkbox schedule__lock">
+            <input v-model="form.unlockSchedule" type="checkbox" />
+            Bereits begonnen – Termin trotzdem ändern
+          </label>
+        </div>
+      </aside>
+
+      <p v-if="error" class="form-error job-form__wide" role="alert">{{ error }}</p>
+
+      <footer class="job-form__actions job-form__wide">
+        <button
+          v-if="editing && canEdit"
+          type="button"
+          class="btn btn--ghost job-form__delete"
+          :disabled="busy"
+          @click="remove"
+        >
+          <AppIcon name="trash" :size="15" /> Löschen
         </button>
-        <button type="button" class="btn btn--large" @click="emit('close')">Abbrechen</button>
-        <button class="btn btn--primary btn--large" :disabled="busy">Speichern</button>
+        <button type="button" class="btn btn--outline" @click="emit('close')">
+          {{ canEdit ? 'Abbrechen' : 'Schließen' }}
+        </button>
+        <button v-if="canEdit" class="btn btn--primary" :disabled="busy">
+          {{ editing ? 'Speichern' : form.scheduled ? 'Einplanen' : 'Aufgabe anlegen' }}
+        </button>
       </footer>
     </form>
+
+    <FollowUpDialog
+      v-if="actions.followUp.value && current"
+      :follow-up="actions.followUp.value"
+      :title="current.title"
+      @close="actions.followUp.value = null"
+      @applied="onFollowUpApplied"
+    />
   </BaseModal>
 </template>
 
 <style scoped>
+.job-head {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin-top: 8px;
+}
+
 .job-form {
   display: grid;
-  gap: 18px;
+  grid-template-columns: minmax(0, 1fr) 280px;
+  gap: 18px 28px;
+}
+
+.job-form__main,
+.job-form__side {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+  min-width: 0;
+}
+
+.job-form__wide {
+  grid-column: 1 / -1;
+}
+
+.job-form__title {
+  height: 44px;
+  font-size: 15px;
+  font-weight: 600;
 }
 
 .job-form__plain {
@@ -208,147 +577,150 @@ const remove = () =>
 }
 
 .job-form__plain legend {
-  margin-bottom: 5px;
+  margin-bottom: 6px;
 }
 
 .job-form__priorities {
   display: flex;
-  flex-wrap: wrap;
-  gap: 16px;
 }
 
-.priority-option {
-  display: flex;
+.job-form__priorities button {
+  display: inline-flex;
+  flex: 1;
   align-items: center;
-  gap: 8px;
-  width: 150px;
-  height: 40px;
-  padding: 0 14px;
-  border-radius: var(--radius);
-  background: var(--surface-alt);
+  justify-content: center;
+  gap: 6px;
+  min-width: 0;
+}
+
+.field__label small {
+  color: var(--faint);
+  font-weight: 500;
+}
+
+.duration {
+  display: grid;
+  grid-template-columns: 1fr auto 1fr auto;
+  align-items: center;
+  gap: 6px;
   color: var(--muted);
   font-size: 12px;
-  font-weight: 500;
-  cursor: pointer;
 }
 
-.priority-option input {
-  position: absolute;
-  opacity: 0;
+.schedule {
+  gap: 10px;
+  padding: 12px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  background: var(--surface-alt);
 }
 
-.priority-option:has(input:focus-visible) {
-  outline: 2px solid var(--primary);
-}
-
-.priority-option--active {
-  background: var(--soft);
-  color: var(--text);
+.schedule__toggle {
   font-weight: 600;
 }
 
-.priority-option__swatch {
-  width: 10px;
-  height: 10px;
-  border-radius: 3px;
-}
-
-.job-form__pair {
-  display: grid;
-  grid-template-columns: 1fr 1fr;
-  gap: 20px;
-}
-
-.job-form .input[type='datetime-local'],
-.job-form select.input {
+.schedule .input[type='datetime-local'] {
   font-size: 12px;
 }
 
-.stepper {
+.schedule__lock {
   display: flex;
   align-items: center;
   gap: 6px;
-  height: 40px;
-  padding: 0 6px 0 14px;
-  border-radius: var(--radius);
+  color: var(--warning-ink);
+  font-size: 11px;
+}
+
+.time-box {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  padding: 16px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-lg);
   background: var(--surface-alt);
 }
 
-.stepper strong {
-  flex: 1;
+.time-box__stats {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 10px;
+  margin: 0;
+}
+
+.time-box__stats dt {
+  color: var(--muted);
+  font-size: 11px;
   font-weight: 600;
 }
 
-.stepper button {
-  width: 28px;
-  height: 28px;
-  border: 0;
-  border-radius: var(--radius-sm);
-  background: var(--surface);
+.time-box__stats dd {
+  margin: 2px 0 0;
+  font-size: 17px;
   font-weight: 700;
 }
 
-.extend {
-  --accent: var(--warning);
-  position: relative;
-  display: flex;
-  align-items: center;
-  gap: 16px;
-  padding: 14px 16px 14px 16px;
-  border-radius: var(--radius-lg);
-  background: var(--warning-soft);
-}
-
-.extend__title {
-  color: var(--warning-ink);
-  font-size: 12px;
-  font-weight: 600;
-}
-
-.extend__text {
-  margin-top: 4px;
+.time-box__stats small {
   color: var(--muted);
-  font-size: 10px;
+  font-size: 11px;
+  font-weight: 500;
 }
 
-.extend__button {
-  flex: none;
-  width: 108px;
-  height: 28px;
-  border: 0;
-  border-radius: var(--radius-sm);
-  background: var(--surface);
-  color: var(--warning-ink);
-  font-size: 10px;
-  font-weight: 600;
+.time-box__over {
+  color: var(--danger);
 }
 
-.done-toggle {
+.time-box__empty {
+  color: var(--muted);
+  font-size: 12px;
+}
+
+.time-box__actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.entries {
+  display: grid;
+  gap: 4px;
+  max-height: 180px;
+  margin: 0;
+  padding: 0;
+  overflow-y: auto;
+  list-style: none;
+}
+
+.entries li {
   display: flex;
   align-items: center;
   gap: 10px;
-  height: 44px;
-  padding: 0 14px;
-  border-radius: var(--radius);
-  background: var(--surface-alt);
+  padding: 6px 10px;
+  border-radius: var(--radius-sm);
+  background: var(--surface);
   font-size: 12px;
-  font-weight: 500;
-  cursor: pointer;
 }
 
-.done-toggle input {
-  width: 20px;
-  height: 20px;
-  margin: 0;
-  accent-color: var(--success);
+.entries--running {
+  box-shadow: inset 3px 0 0 var(--primary);
+}
+
+.entries__who {
+  color: var(--muted);
+}
+
+.entries__dur {
+  margin-left: auto;
+  font-weight: 600;
 }
 
 .job-form__actions {
   display: flex;
+  flex-wrap: wrap;
   align-items: center;
   justify-content: flex-end;
-  gap: 12px;
-  padding-top: 24px;
+  gap: 10px;
+  padding-top: 18px;
   border-top: 1px solid var(--border);
 }
 
@@ -361,14 +733,18 @@ const remove = () =>
   color: var(--danger);
 }
 
-@media (max-width: 560px) {
-  .job-form__pair {
+@media (max-width: 760px) {
+  .job-form {
     grid-template-columns: 1fr;
   }
 
-  .priority-option {
+  .job-form__actions .btn {
     flex: 1;
-    width: auto;
+  }
+
+  .job-form__delete {
+    flex-basis: 100%;
+    order: 3;
   }
 }
 </style>

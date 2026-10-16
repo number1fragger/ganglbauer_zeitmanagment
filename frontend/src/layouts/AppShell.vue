@@ -6,14 +6,17 @@ import type { IconName } from '@/components/icons'
 import PasswordDialog from '@/components/PasswordDialog.vue'
 import ThemeToggle from '@/components/ThemeToggle.vue'
 import { useAuthStore } from '@/stores/auth'
+import { useThemeStore } from '@/stores/theme'
 import { roleOf } from '@/utils/domain'
 import logoUrl from '../../images/Logo_ohne_Rand.png'
+import darkLogoUrl from '../../images/Logo_ohne_Rand_dark.png'
 
 /**
  * Rahmen der angemeldeten App: Seitenleiste am Desktop, schmale
  * Icon-Leiste am Tablet, obere Leiste + Navigation unten am Smartphone.
  */
 const auth = useAuthStore()
+const theme = useThemeStore()
 const route = useRoute()
 
 interface NavItem {
@@ -80,7 +83,11 @@ const isActive = (name: string) => route.name === name
     <!-- Desktop / Tablet -->
     <aside class="sidebar" aria-label="Hauptnavigation">
       <RouterLink :to="{ name: 'home' }" class="sidebar__brand">
-        <img class="sidebar__logo" :src="logoUrl" alt="Ganglbauer Landtechnik" />
+        <img
+          class="sidebar__logo"
+          :src="theme.effective === 'dark' ? darkLogoUrl : logoUrl"
+          alt="Ganglbauer Landtechnik"
+        />
       </RouterLink>
 
       <nav class="sidebar__nav">
@@ -132,7 +139,11 @@ const isActive = (name: string) => route.name === name
     <!-- Smartphone: obere Leiste -->
     <header class="topbar">
       <RouterLink :to="{ name: 'home' }" class="topbar__brand">
-        <img class="sidebar__logo" :src="logoUrl" alt="Ganglbauer Landtechnik" />
+        <img
+          class="sidebar__logo"
+          :src="theme.effective === 'dark' ? darkLogoUrl : logoUrl"
+          alt="Ganglbauer Landtechnik"
+        />
       </RouterLink>
       <ThemeToggle compact />
       <div v-if="auth.user" class="account account--top">
@@ -244,6 +255,9 @@ const isActive = (name: string) => route.name === name
 .sidebar__logo {
   display: block;
   flex: none;
+  color-scheme: light;
+  filter: none;
+  forced-color-adjust: none;
   width: 200px;
   height: auto;
 }

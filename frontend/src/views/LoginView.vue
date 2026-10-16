@@ -5,7 +5,7 @@ import { errorMessage } from '@/api/http'
 import AppIcon from '@/components/AppIcon.vue'
 import ThemeToggle from '@/components/ThemeToggle.vue'
 import { useAuthStore } from '@/stores/auth'
-import logoUrl from '../../images/Logo_ohne_Rand.png'
+import darkLogoUrl from '../../images/Logo_ohne_Rand_dark.png'
 
 const auth = useAuthStore()
 const router = useRouter()
@@ -39,7 +39,11 @@ async function submit(): Promise<void> {
   <div class="login">
     <aside class="login__intro">
       <h1 class="login__brand">
-        <img class="login__logo" :src="logoUrl" alt="Ganglbauer Landtechnik" />
+        <img
+          class="login__logo"
+          :src="darkLogoUrl"
+          alt="Ganglbauer Landtechnik"
+        />
       </h1>
       <p class="login__claim">Arbeitseinteilung, Zeitplanung und Auswertung für die Werkstätte.</p>
 
@@ -159,6 +163,9 @@ async function submit(): Promise<void> {
 
 .login__logo {
   display: block;
+  color-scheme: light;
+  filter: none;
+  forced-color-adjust: none;
   width: 290px;
   height: auto;
 }

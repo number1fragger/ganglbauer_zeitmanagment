@@ -1,5 +1,10 @@
 name: werkstatt
 
+# Grundaufbau fuer Docker. Ohne .env laufen die Entwicklungswerte unten
+# (nur fuer den eigenen Rechner bzw. das lokale Netz gedacht).
+# Am Server legt deploy/init-env.sh eine .env mit eigenen Passwoertern an und
+# schaltet ueber COMPOSE_FILE zusaetzlich docker-compose.server.yml ein (HTTPS).
+
 services:
   database:
     image: mariadb:11.4
@@ -7,12 +12,13 @@ services:
     environment:
       MARIADB_DATABASE: werkstatt
       MARIADB_USER: werkstatt
-      MARIADB_PASSWORD: werkstatt
-      MARIADB_ROOT_PASSWORD: mariadb
+      MARIADB_PASSWORD: ${DB_PASSWORD:-werkstatt}
+      MARIADB_ROOT_PASSWORD: ${DB_ROOT_PASSWORD:-mariadb}
     volumes:
       - db-data:/var/lib/mysql
     ports:
-      - '127.0.0.1:3307:3306'
+      # nur vom Rechner selbst erreichbar (lokale Entwicklung, Backups)
+      - '127.0.0.1:${DB_PORT:-3307}:3306'
     healthcheck:
       test: ['CMD', 'healthcheck.sh', '--connect', '--innodb_initialized']
       interval: 10s
@@ -24,12 +30,13 @@ services:
     restart: unless-stopped
     environment:
       APP_ENV: prod
-      APP_SECRET: dev-secret-nicht-fuer-produktion
-      JWT_PASSPHRASE: dev-passphrase-nicht-fuer-produktion
+      APP_SECRET: ${APP_SECRET:-dev-secret-nicht-fuer-produktion}
+      JWT_PASSPHRASE: ${JWT_PASSPHRASE:-dev-passphrase-nicht-fuer-produktion}
       JWT_SECRET_KEY: /app/config/jwt/private.pem
       JWT_PUBLIC_KEY: /app/config/jwt/public.pem
-      JWT_TTL: '3600'
-      DATABASE_URL: 'mysql://werkstatt:werkstatt@database:3306/werkstatt?serverVersion=11.4.0-MariaDB&charset=utf8mb4'
+      # Gueltigkeit des Logins in Sekunden
+      JWT_TTL: ${JWT_TTL:-3600}
+      DATABASE_URL: 'mysql://werkstatt:${DB_PASSWORD:-werkstatt}@database:3306/werkstatt?serverVersion=11.4.0-MariaDB&charset=utf8mb4'
     volumes:
       - jwt-keys:/app/config/jwt
     depends_on:
@@ -40,7 +47,8 @@ services:
     build: ./frontend
     restart: unless-stopped
     ports:
-      - '8080:80'
+      # Am Server nur 127.0.0.1 – von aussen geht es ueber Caddy (HTTPS).
+      - '${HTTP_BIND:-0.0.0.0}:${HTTP_PORT:-8080}:80'
     depends_on:
       - backend
 

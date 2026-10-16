@@ -26,6 +26,11 @@ security:
                 password_path: password
                 success_handler: lexik_jwt_authentication.handler.authentication_success
                 failure_handler: lexik_jwt_authentication.handler.authentication_failure
+            # Schutz gegen Passwort-Raten: hoechstens 5 Fehlversuche je Konto und
+            # IP-Adresse in 15 Minuten (je IP insgesamt das Fuenffache).
+            login_throttling:
+                max_attempts: 5
+                interval: '15 minutes'
 
         api:
             pattern: ^/api

@@ -5,6 +5,11 @@ framework:
     session: false
     php_errors:
         log: true
+    # Vor der App steht nginx (und am Server ggf. Caddy fuer HTTPS). Nur deren
+    # X-Forwarded-*-Angaben gelten – damit sieht das Backend die echte IP der
+    # Anfrage (wichtig fuer die Login-Sperre) statt der des Proxys.
+    trusted_proxies: '%env(TRUSTED_PROXIES)%'
+    trusted_headers: ['x-forwarded-for', 'x-forwarded-proto', 'x-forwarded-host', 'x-forwarded-port']
 
 when@test:
     framework:

@@ -60,7 +60,10 @@ function messageOf(body: ErrorBody | null, status: number): string {
   if (body?.errors?.length) return body.errors.map((error) => error.message).join(' ')
   if (body?.title) return body.title
   if (status === 401) {
-    // Lexik meldet falsche Zugangsdaten englisch, eigene Meldungen (z. B. deaktiviert) deutsch.
+    // Lexik/Symfony melden englisch, eigene Meldungen (z. B. deaktiviert) sind deutsch.
+    const throttled = body?.message?.match(/^Too many failed login attempts.* (\d+) minute/)
+    if (throttled)
+      return `Zu viele Fehlversuche. Bitte in ${throttled[1]} Minuten noch einmal versuchen.`
     return body?.message && body.message !== 'Invalid credentials.'
       ? body.message
       : 'Benutzername oder Passwort stimmt nicht.'

@@ -1,0 +1,37 @@
+# Zusatz fuer den Server (wird ueber COMPOSE_FILE in der .env eingebunden):
+#  - Passwoerter und Secrets muessen in der .env stehen, sonst startet nichts
+#  - Caddy nimmt Port 80/443 an, holt das HTTPS-Zertifikat (Let's Encrypt)
+#    selbst und reicht alles an den nginx im Frontend-Container weiter.
+
+services:
+  database:
+    environment:
+      MARIADB_PASSWORD: ${DB_PASSWORD:?DB_PASSWORD fehlt in .env - siehe deploy/init-env.sh}
+      MARIADB_ROOT_PASSWORD: ${DB_ROOT_PASSWORD:?DB_ROOT_PASSWORD fehlt in .env}
+
+  backend:
+    environment:
+      APP_SECRET: ${APP_SECRET:?APP_SECRET fehlt in .env}
+      JWT_PASSPHRASE: ${JWT_PASSPHRASE:?JWT_PASSPHRASE fehlt in .env}
+      DATABASE_URL: 'mysql://werkstatt:${DB_PASSWORD:?DB_PASSWORD fehlt in .env}@database:3306/werkstatt?serverVersion=11.4.0-MariaDB&charset=utf8mb4'
+
+  caddy:
+    image: caddy:2.8-alpine
+    restart: unless-stopped
+    environment:
+      # Domain, z. B. zeit.ganglbauer.at – oder ":80" fuer reines HTTP im Firmennetz
+      DOMAIN: ${DOMAIN:?DOMAIN fehlt in .env}
+    ports:
+      - '80:80'
+      - '443:443'
+      - '443:443/udp'
+    volumes:
+      - ./deploy/Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddy-data:/data
+      - caddy-config:/config
+    depends_on:
+      - frontend
+
+volumes:
+  caddy-data:
+  caddy-config:

@@ -9,6 +9,7 @@ Das Aussehen folgt dem Figma-Entwurf „Werkstatt-Planungs-App“.
 | Frontend  | Vue 3, TypeScript, Vite, Pinia                  | `frontend/` |
 | Datenbank | MariaDB 11.4                                    | Docker      |
 | Webserver | nginx: liefert die App aus, `/api` → PHP-FPM    | Docker      |
+| HTTPS     | Caddy mit Let's-Encrypt-Zertifikat (nur Server) | Docker      |
 
 ## Rollen
 
@@ -34,36 +35,23 @@ Umplanung anwenden, Abwesenheiten eintragen) bleibt Sekretärin und Chef vorbeha
 Die Rechte prüft das Backend bei jeder Anfrage (`#[IsGranted]`, `JobVoter`).
 Der Vue-Router blendet Ansichten nur aus.
 
-## Am Server installieren (SSH)
+## Am Server installieren
 
-Voraussetzung: Docker mit dem Compose-Plugin.
-
-```bash
-git clone https://github.com/number1fragger/ganglbauer_zeitmanagment.git
-cd ganglbauer_zeitmanagment
-
-cp .env.example .env
-# In .env alle Passwörter und Secrets ändern, z. B. mit: openssl rand -hex 24
-nano .env
-
-docker compose up -d --build
-```
-
-Beim Start legt das Backend die JWT-Schlüssel an und bringt die Datenbank per
-Migration auf den aktuellen Stand. Die App läuft danach auf Port `HTTP_PORT`
-(Standard 8080). Die Datenbank ist nur vom Server selbst erreichbar.
-
-Ersten Chef anlegen (der Befehl fragt nach dem Passwort):
+Die ausführliche Anleitung steht in **[DEPLOY.md](DEPLOY.md)**: Domain, HTTPS, Umzug der
+bestehenden Daten, Backups, Cronjobs und Updates. Kurzfassung (Docker mit Compose-Plugin
+vorausgesetzt):
 
 ```bash
-docker compose exec backend php bin/console app:create-user p.hofer Peter Hofer --role=chef
+git clone https://github.com/number1fragger/ganglbauer_zeitmanagment.git /opt/werkstatt
+cd /opt/werkstatt
+./deploy/init-env.sh zeit.ganglbauer.at   # .env mit zufaelligen Passwoertern
+docker compose up -d --build              # inkl. Caddy mit HTTPS-Zertifikat
+docker compose exec -u www-data backend php bin/console app:create-user p.hofer Peter Hofer --role=chef
 ```
 
-Alle weiteren Konten legt der Chef in der App unter „Benutzer & Rechte“ an.
-
-- **Update:** `git pull && docker compose up -d --build`
-- **Logs:** `docker compose logs -f backend` bzw. `frontend`
-- **HTTPS:** einen Reverse-Proxy (z. B. Caddy oder den nginx am Host) vor Port `HTTP_PORT` setzen.
+Beim Start legt das Backend die JWT-Schlüssel an und bringt die Datenbank per Migration auf den
+aktuellen Stand. Ohne `.env` (lokal, im LAN) startet `docker compose up -d --build` wie bisher
+auf Port 8080 mit Entwicklungs-Passwörtern, ohne HTTPS.
 
 ## Lokal entwickeln
 

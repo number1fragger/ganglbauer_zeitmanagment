@@ -7,7 +7,6 @@ cd "$(dirname "$0")"
 case "${1:-help}" in
   # MariaDB starten und warten, bis sie bereit ist
   db)
-    [ -f .env ] || cp .env.example .env
     docker compose up -d --wait database
     ;;
 

@@ -20,7 +20,12 @@
     <open-files />
   </component>
   <component name="DBNavigator.Project.Settings">
-    <states />
+    <states>
+      <state category="SECRET_STORAGE_MIGRATION">
+        <cleaned value="true" />
+        <migrated value="true" />
+      </state>
+    </states>
     <connections />
     <browser-settings>
       <general>
@@ -184,6 +189,7 @@
         <enable-spellchecking value="true" />
         <enable-reference-spellchecking value="false" />
         <show-parser-issue-notifications value="true" />
+        <show-dialect-suggestion-notifications value="true" />
       </general>
       <confirmations>
         <save-changes value="false" />

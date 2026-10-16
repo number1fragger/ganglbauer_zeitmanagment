@@ -5,6 +5,7 @@ import { errorMessage } from '@/api/http'
 import AppIcon from '@/components/AppIcon.vue'
 import ThemeToggle from '@/components/ThemeToggle.vue'
 import { useAuthStore } from '@/stores/auth'
+import logoUrl from '../../images/Logo_ohne_Rand.png'
 
 const auth = useAuthStore()
 const router = useRouter()
@@ -38,8 +39,7 @@ async function submit(): Promise<void> {
   <div class="login">
     <aside class="login__intro">
       <h1 class="login__brand">
-        <span class="login__logo" aria-hidden="true"><AppIcon name="wrench" :size="20" /></span>
-        Werkstatt-Planung
+        <img class="login__logo" :src="logoUrl" alt="Ganglbauer Landtechnik" />
       </h1>
       <p class="login__claim">Arbeitseinteilung, Zeitplanung und Auswertung für die Werkstätte.</p>
 
@@ -153,19 +153,14 @@ async function submit(): Promise<void> {
 .login__brand {
   display: flex;
   align-items: center;
-  gap: 12px;
   font-size: 22px;
   font-weight: 700;
 }
 
 .login__logo {
-  display: grid;
-  place-items: center;
-  width: 38px;
-  height: 38px;
-  border-radius: 10px;
-  background: #2563eb;
-  color: #fff;
+  display: block;
+  width: 290px;
+  height: auto;
 }
 
 .login__claim {

@@ -7,6 +7,7 @@ import PasswordDialog from '@/components/PasswordDialog.vue'
 import ThemeToggle from '@/components/ThemeToggle.vue'
 import { useAuthStore } from '@/stores/auth'
 import { roleOf } from '@/utils/domain'
+import logoUrl from '../../images/Logo_ohne_Rand.png'
 
 /**
  * Rahmen der angemeldeten App: Seitenleiste am Desktop, schmale
@@ -79,11 +80,7 @@ const isActive = (name: string) => route.name === name
     <!-- Desktop / Tablet -->
     <aside class="sidebar" aria-label="Hauptnavigation">
       <RouterLink :to="{ name: 'home' }" class="sidebar__brand">
-        <span class="sidebar__logo" aria-hidden="true"><AppIcon name="wrench" :size="18" /></span>
-        <span class="sidebar__brand-text">
-          <strong>Werkstatt</strong>
-          <small>Ganglbauer Landtechnik</small>
-        </span>
+        <img class="sidebar__logo" :src="logoUrl" alt="Ganglbauer Landtechnik" />
       </RouterLink>
 
       <nav class="sidebar__nav">
@@ -135,8 +132,7 @@ const isActive = (name: string) => route.name === name
     <!-- Smartphone: obere Leiste -->
     <header class="topbar">
       <RouterLink :to="{ name: 'home' }" class="topbar__brand">
-        <span class="sidebar__logo" aria-hidden="true"><AppIcon name="wrench" :size="16" /></span>
-        <strong>Werkstatt</strong>
+        <img class="sidebar__logo" :src="logoUrl" alt="Ganglbauer Landtechnik" />
       </RouterLink>
       <ThemeToggle compact />
       <div v-if="auth.user" class="account account--top">
@@ -246,33 +242,10 @@ const isActive = (name: string) => route.name === name
 }
 
 .sidebar__logo {
-  display: grid;
+  display: block;
   flex: none;
-  place-items: center;
-  width: 32px;
-  height: 32px;
-  border-radius: 9px;
-  background: var(--primary);
-  color: var(--on-primary);
-}
-
-.sidebar__brand-text {
-  display: flex;
-  flex-direction: column;
-  min-width: 0;
-}
-
-.sidebar__brand-text strong {
-  font-size: 14px;
-  font-weight: 700;
-}
-
-.sidebar__brand-text small {
-  overflow: hidden;
-  color: var(--muted);
-  font-size: 11px;
-  text-overflow: ellipsis;
-  white-space: nowrap;
+  width: 200px;
+  height: auto;
 }
 
 .sidebar__nav {
@@ -448,7 +421,12 @@ const isActive = (name: string) => route.name === name
     padding: 4px 0 18px;
   }
 
-  .sidebar__brand-text,
+  .sidebar__logo {
+    width: 44px;
+    height: 44px;
+    object-fit: contain;
+  }
+
   .nav-link__label,
   .account__text,
   .account__caret,
@@ -523,9 +501,8 @@ const isActive = (name: string) => route.name === name
   }
 
   .topbar__brand .sidebar__logo {
-    width: 28px;
-    height: 28px;
-    border-radius: 8px;
+    width: 150px;
+    height: auto;
   }
 
   .topbar__avatar {

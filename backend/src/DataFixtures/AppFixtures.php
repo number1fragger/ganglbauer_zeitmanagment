@@ -2,10 +2,12 @@
 
 namespace App\DataFixtures;
 
+use App\Entity\Absence;
 use App\Entity\Job;
 use App\Entity\TimeEntry;
 use App\Entity\User;
 use App\Entity\WorkRequest;
+use App\Enum\AbsenceType;
 use App\Enum\Priority;
 use App\Enum\UserRole;
 use Doctrine\Bundle\FixturesBundle\Fixture;
@@ -24,30 +26,30 @@ final class AppFixtures extends Fixture
 
     /** [Tag ab Montag, Beginn, Stunden im Kalender, Stunden tatsaechlich, Arbeiter, Titel, Kunde, Prioritaet] */
     private const CURRENT_WEEK = [
-        [0, '07:00', 2.5, 2.0, 'a.huber', 'Bremsen hinten', 'Fam. Wagner', Priority::High],
+        [0, '07:30', 2.5, 2.0, 'a.huber', 'Bremsen hinten', 'Fam. Wagner', Priority::High],
         [0, '09:30', 2.0, 2.0, 'a.huber', 'Service 60.000 km', 'M. Berger', Priority::Medium],
-        [0, '12:00', 3.0, 4.0, 'a.huber', 'Kupplung tauschen', 'Fa. Leitner', Priority::High],
-        [0, '07:00', 1.5, 1.5, 'b.steiner', 'Reifenwechsel', 'S. Pichler', Priority::Low],
+        [0, '13:00', 3.0, 4.0, 'a.huber', 'Kupplung tauschen', 'Fa. Leitner', Priority::High],
+        [0, '07:30', 1.5, 1.5, 'b.steiner', 'Reifenwechsel', 'S. Pichler', Priority::Low],
         [0, '08:30', 2.0, 3.5, 'b.steiner', 'Pickerl §57a', 'R. Hofer', Priority::Medium],
-        [0, '07:00', 4.0, 4.0, 'c.mayr', 'Motorschaden', 'T. Novak', Priority::High],
-        [0, '11:30', 1.5, 1.0, 'c.mayr', 'Ölwechsel', 'A. Maier', Priority::Low],
+        [0, '07:30', 4.0, 4.0, 'c.mayr', 'Motorschaden', 'T. Novak', Priority::High],
+        [0, '13:00', 1.5, 1.0, 'c.mayr', 'Ölwechsel', 'A. Maier', Priority::Low],
         [0, '07:30', 2.0, 2.0, 'd.gruber', 'Auspuff schweißen', 'K. Sturm', Priority::Low],
         [0, '10:00', 2.5, 2.5, 'd.gruber', 'Lichtmaschine', 'Fa. Ebner', Priority::High],
-        [1, '07:00', 3.0, 3.0, 'a.huber', 'Getriebe prüfen', 'Hofer Landwirtschaft', Priority::Medium],
-        [1, '07:00', 6.0, 6.5, 'c.mayr', 'Motor Zusammenbau', 'T. Novak', Priority::High],
+        [1, '07:30', 3.0, 3.0, 'a.huber', 'Getriebe prüfen', 'Hofer Landwirtschaft', Priority::Medium],
+        [1, '07:30', 6.0, 6.5, 'c.mayr', 'Motor Zusammenbau', 'T. Novak', Priority::High],
         [1, '10:30', 2.0, 1.5, 'd.gruber', 'Klimaservice', 'Fam. Brunner', Priority::Low],
         [1, '13:00', 2.5, 2.5, 'd.gruber', 'Stoßdämpfer', 'L. Winkler', Priority::Medium],
-        [2, '07:00', 7.0, 7.0, 'a.huber', 'Karosserie', 'Gut Ebersdorf', Priority::Medium],
-        [2, '07:00', 3.0, 3.0, 'c.mayr', 'Pickerl §57a', 'Lagerhaus Tulln', Priority::Medium],
+        [2, '07:30', 7.0, 7.0, 'a.huber', 'Karosserie', 'Gut Ebersdorf', Priority::Medium],
+        [2, '07:30', 3.0, 3.0, 'c.mayr', 'Pickerl §57a', 'Lagerhaus Tulln', Priority::Medium],
         [2, '10:30', 2.0, 2.0, 'd.gruber', 'Batterie', 'Gemeinde Sitzendorf', Priority::Low],
-        [3, '07:00', 3.0, 3.0, 'c.mayr', 'Endkontrolle', 'T. Novak', Priority::High],
+        [3, '07:30', 3.0, 3.0, 'c.mayr', 'Endkontrolle', 'T. Novak', Priority::High],
         [3, '08:00', 2.0, 2.0, 'd.gruber', 'Zahnriemen', 'Fa. Ebner', Priority::High],
         [4, '08:00', 1.5, 1.5, 'a.huber', 'Reifen', 'S. Pichler', Priority::Low],
-        [7, '07:00', 2.0, 2.0, 'a.huber', 'Inspektion', 'M. Berger', Priority::Medium],
-        [7, '07:00', 2.5, 2.5, 'b.steiner', 'Bremsen vorne', 'L. Winkler', Priority::High],
+        [7, '07:30', 2.0, 2.0, 'a.huber', 'Inspektion', 'M. Berger', Priority::Medium],
+        [7, '07:30', 2.5, 2.5, 'b.steiner', 'Bremsen vorne', 'L. Winkler', Priority::High],
         [7, '09:30', 1.5, 1.5, 'c.mayr', 'Ölwechsel', 'Fam. Wagner', Priority::Low],
-        [8, '07:00', 4.0, 4.0, 'c.mayr', 'Achsvermessung', 'Fa. Leitner', Priority::Medium],
-        [8, '07:00', 3.0, 3.0, 'd.gruber', 'Service', 'K. Sturm', Priority::Medium],
+        [8, '07:30', 4.0, 4.0, 'c.mayr', 'Achsvermessung', 'Fa. Leitner', Priority::Medium],
+        [8, '07:30', 3.0, 3.0, 'd.gruber', 'Service', 'K. Sturm', Priority::Medium],
     ];
 
     /** Titel fuer die erledigten Arbeiten der Vorwochen (Ist-Zeit-Auswertung). */
@@ -67,9 +69,11 @@ final class AppFixtures extends Fixture
             'p.hofer' => $this->user($manager, 'p.hofer', 'Peter', 'Hofer', UserRole::Chef),
             'a.huber' => $this->user($manager, 'a.huber', 'Anton', 'Huber', UserRole::Worker),
             'b.steiner' => $this->user($manager, 'b.steiner', 'Bernd', 'Steiner', UserRole::Worker),
-            'c.mayr' => $this->user($manager, 'c.mayr', 'Clara', 'Mayr', UserRole::Foreman),
+            'c.mayr' => $this->user($manager, 'c.mayr', 'Clara', 'Mayr', UserRole::Secretary),
             'd.gruber' => $this->user($manager, 'd.gruber', 'David', 'Gruber', UserRole::Worker),
+            'l.wimmer' => $this->user($manager, 'l.wimmer', 'Lukas', 'Wimmer', UserRole::Apprentice),
         ];
+        $jobs = [];
 
         $now = new \DateTimeImmutable();
         $monday = new \DateTimeImmutable('monday this week');
@@ -78,6 +82,7 @@ final class AppFixtures extends Fixture
         foreach (self::CURRENT_WEEK as [$day, $time, $slotHours, $actualHours, $worker, $title, $customer, $priority]) {
             $start = $monday->modify(sprintf('+%d days %s', $day, $time));
             $job = $this->job($manager, $users[$worker], $title, $customer, $priority, $start, (int) ($slotHours * 60));
+            $jobs[$title] ??= $job;
             $actualEnd = $start->modify(sprintf('+%d minutes', (int) ($actualHours * 60)));
 
             if ($actualEnd <= $now) {
@@ -90,25 +95,31 @@ final class AppFixtures extends Fixture
             }
         }
 
+        // Der Lehrling unterstuetzt bei einigen Auftraegen – sie stehen auch in seinem Kalender.
+        foreach (['Motorschaden', 'Motor Zusammenbau', 'Getriebe prüfen', 'Achsvermessung'] as $title) {
+            $jobs[$title]->setApprentice($users['l.wimmer']);
+        }
+
+        $this->absences($manager, $users, $monday, $now);
         $this->multiDay($manager, $users['b.steiner'], $monday, $now);
         $this->backlog($manager, $users);
         $this->history($manager, $users, $monday);
 
         // F7 – zwei offene "Brauche Arbeit"-Anfragen.
         $nextWorkday = $this->nextWorkday($now);
-        $manager->persist(new WorkRequest($users['b.steiner'], $nextWorkday->setTime(7, 0), $now));
+        $manager->persist(new WorkRequest($users['b.steiner'], $nextWorkday->setTime(7, 30), $now));
         $manager->persist(new WorkRequest($users['d.gruber'], $this->nextWorkday($nextWorkday)->setTime(13, 0), $now));
 
         $manager->flush();
     }
 
     /**
-     * Mehrtaegige Arbeit (Mi 07:00 bis Do 15:00 geplant). Gearbeitet wird in
+     * Mehrtaegige Arbeit (Mi 07:30 bis Do 15:00 geplant). Gearbeitet wird in
      * Abschnitten – ueber Nacht laeuft keine Zeit.
      */
     private function multiDay(ObjectManager $manager, User $worker, \DateTimeImmutable $monday, \DateTimeImmutable $now): void
     {
-        $start = $monday->modify('+2 days 07:00');
+        $start = $monday->modify('+2 days 07:30');
         $job = (new Job())
             ->setTitle('Mähdrescher Generalüberholung')
             ->setDescription("Schneidwerk, Dreschtrommel und Hydraulik prüfen.\nErsatzteile liegen im Lager, Regal 4.")
@@ -118,7 +129,7 @@ final class AppFixtures extends Fixture
             ->schedule($start, $monday->modify('+3 days 15:00'));
         $manager->persist($job);
 
-        $sections = [['+2 days 07:00', '+2 days 11:30'], ['+2 days 12:00', '+2 days 15:30'], ['+3 days 07:00', '+3 days 10:00']];
+        $sections = [['+2 days 07:30', '+2 days 12:00'], ['+2 days 13:00', '+2 days 15:30'], ['+3 days 07:30', '+3 days 10:00']];
         foreach ($sections as [$from, $to]) {
             $from = $monday->modify($from);
             $to = $monday->modify($to);
@@ -127,6 +138,23 @@ final class AppFixtures extends Fixture
                 $job->markInProgress();
             }
         }
+    }
+
+    /**
+     * Urlaub, Arzttermin und Berufsschule. Der Arzttermin von David Gruber
+     * ueberschneidet sich absichtlich mit einem Auftrag (Konflikthinweis).
+     *
+     * @param array<string, User> $users
+     */
+    private function absences(ObjectManager $manager, array $users, \DateTimeImmutable $monday, \DateTimeImmutable $now): void
+    {
+        $manager->persist((new Absence($users['b.steiner'], AbsenceType::Vacation, $users['p.hofer'], $now))
+            ->setDays($monday->modify('+10 days'), $monday->modify('+14 days')));
+        $manager->persist((new Absence($users['d.gruber'], AbsenceType::Doctor, $users['c.mayr'], $now))
+            ->setPeriod($monday->modify('+8 days 08:30'), $monday->modify('+8 days 10:00'))
+            ->setNote('Kontrolle Knie, ggf. länger.'));
+        $manager->persist((new Absence($users['l.wimmer'], AbsenceType::School, $users['c.mayr'], $now))
+            ->setDays($monday->modify('+4 days'), $monday->modify('+4 days')));
     }
 
     /**

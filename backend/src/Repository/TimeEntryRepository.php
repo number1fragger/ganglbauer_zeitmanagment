@@ -65,7 +65,7 @@ class TimeEntryRepository extends ServiceEntityRepository
         return $this->createQueryBuilder('e')
             ->addSelect('j', 'u')
             ->join('e.job', 'j')
-            ->join('e.user', 'u')
+            ->leftJoin('e.user', 'u')
             ->andWhere('e.startedAt < :to')
             ->andWhere('e.endedAt IS NULL OR e.endedAt > :from')
             ->setParameter('from', $from)

@@ -12,14 +12,24 @@ Das Aussehen folgt dem Figma-Entwurf „Werkstatt-Planungs-App“.
 
 ## Rollen
 
-| Rolle       | Planung | Eigene Arbeiten | Zeit ändern | Auswertung | Benutzer |
-| ----------- | :-----: | :-------------: | :---------: | :--------: | :------: |
-| Chef        |    ✓    |        ✓        |      ✓      |     ✓      |    ✓     |
-| Vorarbeiter |    ✓    |        ✓        |      ✓      |     ✓      |    –     |
-| Arbeiter    |    –    |        ✓        | ✓ (eigene)  |     –      |    –     |
+| Rolle       | Planung | Eigene Arbeiten | Zeit ändern | Als Lehrling einteilbar | Abwesenheiten | Auswertung | Benutzer |
+| ----------- | :-----: | :-------------: | :---------: | :---------------------: | :-----------: | :--------: | :------: |
+| Chef        |    ✓    |        ✓        |      ✓      |            –            |       ✓       |     ✓      | ✓ (inkl. löschen) |
+| Sekretärin  |    ✓    |        ✓        |      ✓      |            –            |       ✓       |     ✓      |    –     |
+| Arbeiter    |    –    |        ✓        | ✓ (eigene)  |            –            |       –       |     –      |    –     |
+| Lehrling    |    –    |        ✓        | ✓ (eigene)  |            ✓            |       –       |     –      |    –     |
 
 Arbeiter starten, pausieren und schließen ihre eigenen Arbeiten ab; Planung (anlegen, verschieben,
-Umplanung anwenden) bleibt Vorarbeiter und Chef vorbehalten.
+Umplanung anwenden, Abwesenheiten eintragen) bleibt Sekretärin und Chef vorbehalten.
+
+- **Sekretärin** ist die frühere Rolle „Vorarbeiter“ – nur umbenannt, mit denselben Rechten. Die
+  Migration `Version20261016090000` stellt bestehende Benutzer um (`vorarbeiter` → `sekretaerin`,
+  Security-Rolle `ROLE_VORARBEITER` → `ROLE_SEKRETAERIN`). `app:create-user --role=vorarbeiter`
+  wird weiterhin als Sekretärin angenommen.
+- **Lehrling** (`lehrling`, `ROLE_LEHRLING`): eigene Aufträge wie ein Arbeiter. Zusätzlich kann er
+  einem Auftrag als Unterstützung zugeordnet werden – dann sieht er den Auftrag in Kalender,
+  „Meine Arbeiten“ und den Details (`JobVoter::VIEW`), Zeiterfassung und Abschluss bleiben beim
+  Zuständigen (`JobVoter::WORK`). Nur Lehrlinge können so zugeordnet werden.
 
 Die Rechte prüft das Backend bei jeder Anfrage (`#[IsGranted]`, `JobVoter`).
 Der Vue-Router blendet Ansichten nur aus.
@@ -68,31 +78,111 @@ Voraussetzung: PHP 8.4 mit `intl` und `pdo_mysql`, Composer, Node 22, Docker.
 ```
 
 Demo-Konten mit dem Passwort `werkstatt`: `p.hofer` (Chef), `c.mayr`
-(Vorarbeiterin), `a.huber`, `b.steiner` und `d.gruber` (Arbeiter).
+(Sekretärin), `a.huber`, `b.steiner` und `d.gruber` (Arbeiter), `l.wimmer` (Lehrling).
 
 Tests: `./dev.sh test`
+
+> Lokal muss PHP in Wiener Zeit laufen (im Docker-Image über `docker/php.ini` gesetzt). Ist in der
+> lokalen `php.ini` keine Zeitzone eingetragen, Backend und Demodaten mit
+> `php -d date.timezone=Europe/Vienna …` starten.
 
 ## Ansichten
 
 | Ansicht        | Wer          | Inhalt                                                                 |
 | -------------- | ------------ | ---------------------------------------------------------------------- |
-| Dashboard      | Vorarbeiter+ | Wer arbeitet gerade woran, heute geplant, Hinweise (Konflikte, Umplanung, Anfragen) |
+| Dashboard      | Sekretärin+ | Wer arbeitet gerade woran, heute geplant, Hinweise (Konflikte, Umplanung, Anfragen) |
 | Kalender       | alle¹        | Links die To-do-Liste (Aufträge ohne Termin), rechts Tag/Woche/Monat. Drag & Drop zum Einplanen, mobil als Liste |
 | Aufgaben       | alle¹        | Kanban (Offen / In Bearbeitung / Abgeschlossen), Suche und Filter      |
-| Meine Arbeiten | Arbeiter, Vorarbeiter | Starten, Pausieren, Fortsetzen, Abschließen, „Brauche Arbeit“ |
-| Auswertung     | Vorarbeiter+ | Ist-Zeit je Arbeiter, je Tag und aufwändigste Aufträge                 |
+| Meine Arbeiten | Arbeiter, Lehrling, Sekretärin | Starten, Pausieren, Fortsetzen, Abschließen, „Brauche Arbeit“ |
+| Auswertung     | Sekretärin+ | Ist-Zeit je Arbeiter, je Tag und aufwändigste Aufträge                 |
 
 Hell/Dunkel/System lässt sich unten in der Seitenleiste (mobil oben) umschalten. Die Wahl
 wird im Browser und im Benutzerkonto gespeichert.
 
+## Arbeitszeiten
+
+| Tag        | Arbeitszeit   | Mittagspause  |
+| ---------- | ------------- | ------------- |
+| Mo – Do    | 07:30 – 17:00 | 12:00 – 13:00 |
+| Fr         | 07:30 – 14:00 | 12:00 – 13:00 |
+| Sa, So     | arbeitsfrei   |               |
+
+Die Zeiten stehen **nur** in `backend/src/Util/WorkingHours.php`. Das Frontend lädt sie nach der
+Anmeldung über `GET /api/working-hours` (Kalenderraster, Schattierung, Dauer-Berechnung) – es gibt
+keine zweite Kopie. Der Kalender schattiert Mittagspause und Zeiten außerhalb der Arbeitszeit.
+
+Termine dürfen bewusst außerhalb der Arbeitszeit liegen – es wird **gewarnt, nicht verhindert oder
+verschoben**: Liegt Beginn oder Ende in der Mittagspause, vor 07:30, nach Arbeitsschluss oder am
+Wochenende, zeigen Dialog (vor dem Speichern), Rückmeldung nach dem Speichern und ein Uhr-Symbol am
+Kalendereintrag einen Hinweis. Ein Termin, der *über* die Mittagspause oder über Nacht läuft, ist in
+Ordnung – diese Zeit zählt nur nicht zur Dauer.
+
 ## Aufgaben, Termine und Ist-Zeit
 
-Ein Auftrag hat zwei voneinander unabhängige Zeitangaben – eine geplante Arbeitsdauer gibt es nicht:
+Ein Auftrag hat zwei voneinander unabhängige Zeitangaben:
 
 | Angabe                | Feld(er)                 | Pflicht | Bedeutung                                              |
 | --------------------- | ------------------------ | :-----: | ------------------------------------------------------ |
 | Termin im Kalender    | `startsAt`, `endsAt`     |  nein   | Wann der Auftrag eingeplant ist – darf mehrere Tage umfassen |
+| Dauer                 | `workMinutes` (berechnet) |    –    | Arbeitszeit innerhalb des Termins (siehe unten)        |
 | Ist-Zeit              | Summe der `time_entry`   |    –    | Wie lange tatsächlich gearbeitet wurde                  |
+
+### Dauer, Beginn und Ende
+
+Die **Dauer** ist die Arbeitszeit innerhalb des Termins: Minuten, die in die Arbeitszeit fallen –
+Mittagspause, Abende, Nächte und Wochenenden zählen nicht. Sie wird nicht gespeichert, sondern aus
+Beginn und Ende berechnet; Dauer und Termin können daher nie auseinanderlaufen.
+
+- **Dauer ändern** → Ende = frühester Zeitpunkt ab Beginn, an dem so viel Arbeitszeit erreicht ist.
+  Beispiel: Mo 10:00 + 3 h → 14:00 (10–12 und 13–14). Mo 15:00 + 4 h → Di 09:30.
+  Fr 13:00 + 3 h → Mo 09:30.
+- **Beginn ändern** (auch Verschieben im Kalender) → die Dauer bleibt, das Ende rückt nach.
+- **Ende ändern** (auch Ziehen am unteren Rand) → die Dauer wird neu berechnet.
+- Beginnt ein Termin bewusst **außerhalb** der Arbeitszeit (z. B. Samstag 09:00), zählt die Uhrzeit
+  (Samstag 09:00 + 2 h = 11:00) – sonst würde er unbemerkt auf Montag springen. Dazu gibt es eine
+  Warnung.
+- Die API nimmt beim Anlegen/Einplanen entweder `endsAt` oder `durationMinutes` (Arbeitsminuten).
+  Dieselben Regeln rechnen im Frontend (`frontend/src/utils/workTime.ts`) und im Backend
+  (`WorkingHours`); beide sind mit denselben Fällen getestet.
+
+### Im Kalender verschieben, verlängern, verkürzen
+
+- **Verschieben:** Termin per Drag & Drop an einen anderen Tag/Zeitpunkt (Tagesansicht: auch in
+  eine andere Personen-Spalte) ziehen – die Dauer bleibt.
+- **Verlängern/verkürzen:** am oberen bzw. unteren Rand eines Termins ziehen (15-Minuten-Raster).
+  Beim Ziehen zeigt der Termin die neue Zeit und Dauer an. Mehrtägige Termine haben die Griffe am
+  ersten bzw. letzten Tag; über mehrere Tage hinweg verlängert man im Auftrag.
+- Die Anzeige reagiert sofort; gespeichert wird über `PUT /api/jobs/{id}/schedule`. Schlägt das
+  Speichern fehl, erscheint die Fehlermeldung und der Kalender lädt den Stand des Servers neu.
+
+### Überschneidungen und Konflikte
+
+Eine Person darf mehreren Aufträgen zur gleichen Zeit zugeteilt sein – nichts wird blockiert oder
+automatisch verschoben. Gleichzeitige Termine stehen **nebeneinander** (beide sichtbar und
+anklickbar/ziehbar), sind rot umrandet und schraffiert, und eine Hinweisleiste über dem Kalender
+nennt, wer wann für welche Aufträge gleichzeitig eingeplant ist. Das gilt auch für Lehrlinge und für
+Abwesenheiten. Das Backend liefert dieselben Hinweise bei jedem Speichern (`warnings`), in der
+Vorschau `GET /api/jobs/check` und im Dashboard (`/api/overview`: `conflicts`, `absenceConflicts`).
+
+### Lehrling am Auftrag
+
+Im Auftrag gibt es neben „Zuständig“ das Feld **Lehrling** (optional). Die Auswahl enthält nur
+Benutzer mit der Rolle Lehrling; das Backend prüft das zusätzlich (`Job::setApprentice`). Zuständige
+Person und Lehrling müssen verschieden sein. Der Auftrag erscheint in der Tagesansicht in beiden
+Spalten (die Lehrlings-Kopie ist gestrichelt und als „Lehrling“ markiert), in der Woche in beiden
+Spuren – beide verweisen auf denselben Auftrag. Eine Lehrlings-Rolle kann nicht geändert werden,
+solange der Lehrling noch offenen Aufträgen zugeordnet ist.
+
+### Urlaub und persönliche Termine
+
+Chef und Sekretärin tragen Abwesenheiten über „Abwesenheit“ im Kalender ein (Art, Person,
+ganztägig von–bis **oder** Beginn/Ende mit Uhrzeit, optional interne Notiz; gespeichert werden auch
+Ersteller und Erstellungszeitpunkt). Arten: Urlaub, Arzttermin, Persönlicher Termin, Berufsschule –
+weitere kommen als neuer Fall in `App\Enum\AbsenceType` dazu (die Liste liefert
+`GET /api/absences/types`). Im Kalender stehen Abwesenheiten violett gestreift als
+„Abwesend: Urlaub“, „Abwesend: Arzttermin“ usw. Die Notiz sehen nur Chef und Sekretärin; andere
+sehen nur ihre eigenen Abwesenheiten. Bereits eingeplante Aufträge werden nie verschoben oder
+gelöscht – betroffene Aufträge werden beim Speichern gemeldet und im Kalender als Konflikt markiert.
 
 Status (offen / in Bearbeitung / abgeschlossen) und Einplanung sind getrennt: ein offener Auftrag
 kann einen Termin haben oder nicht.
@@ -145,9 +235,33 @@ Cronjob: `php bin/console app:time:close-stale`.
 
 Wird eine eingeplante Arbeit früher fertig, schlägt die App vor, die direkt anschließenden, noch nicht
 begonnenen Termine desselben Arbeiters nach vorne zu ziehen (Vorschau mit Auswahl, Anwenden nur durch
-Vorarbeiter/Chef). Geplante Lücken (z. B. Kunde kommt erst um 13:00), begonnene oder abgeschlossene
+Sekretärin/Chef). Geplante Lücken (z. B. Kunde kommt erst um 13:00), begonnene oder abgeschlossene
 Arbeiten, Tagesgrenzen und Überschneidungen beenden die Kette; Termine nach Arbeitsschluss werden nur
 mit Warnung vorgeschlagen. Die Ist-Zeit abgeschlossener Arbeiten wird dabei nie verändert.
+
+## Benutzer endgültig löschen
+
+Der Chef kann Benutzer im Dialog „Benutzer bearbeiten“ endgültig löschen (`DELETE /api/users/{id}`,
+nur `ROLE_CHEF`). Vorher zeigt eine Sicherheitsabfrage, was passiert, und verlangt die Eingabe des
+Benutzernamens. Löschstrategie (`App\Service\UserDeletion`, eine Transaktion):
+
+- Aufträge bleiben erhalten; die Zuteilung (zuständig/Lehrling) wird entfernt.
+- Arbeitsabschnitte bleiben als Ist-Zeit-Nachweis mit dem gespeicherten Namen (`time_entry.user_name`).
+- „Brauche Arbeit“-Anfragen bleiben für die Statistik (offene werden zurückgezogen).
+- Abwesenheiten der Person werden gelöscht; von ihr angelegte Abwesenheiten anderer bleiben.
+- Abgelehnt wird das eigene Konto und, solange die Person gerade Zeit erfasst.
+
+## Statistik der Arbeitsanfragen
+
+Unter „Auswertung“ zeigt der Abschnitt **Arbeitsanfragen** (Woche, Monat oder frei wählbarer
+Zeitraum) die Anfragen je Mitarbeiter, die Gesamtzahl, den Anteil und den Vergleich zum
+gleich langen Zeitraum davor (`GET /api/reports/arbeitsanfragen`, Chef und Sekretärin).
+
+**Zählregel:** Eine Arbeitsanfrage ist eine über „Brauche Arbeit“ abgeschickte Anfrage – ein
+Datensatz in `work_request`, gezählt nach dem Zeitpunkt der Anfrage. Ansehen und Neuladen erzeugen
+keinen Datensatz. Ändert ein Mitarbeiter eine noch offene Anfrage, wird derselbe Datensatz angepasst
+(vorher entstand ein neuer und der alte wurde zurückgezogen). Zurückgezogene Anfragen zählen nicht –
+dadurch zählen auch die älteren Datensätze richtig. Es werden nur gespeicherte Anfragen ausgewertet.
 
 ## Datenbank
 
@@ -157,6 +271,11 @@ Migrationen liegen in `backend/migrations/`:
   `time_entry.auto_closed` (+ Index) und `user.theme`.
 - `Version20261010090000` entfernt die geplante Arbeitszeit (`job.planned_minutes`,
   `job.original_planned_minutes`). Termine, Auftragsdaten und Ist-Zeiten bleiben unverändert.
+- `Version20261016090000` benennt die Rolle `vorarbeiter` in `sekretaerin` um, ergänzt
+  `job.apprentice_id` (Lehrling), die Tabelle `absence` und `user_name` in `time_entry` und
+  `work_request` (mit den bestehenden Namen befüllt). Diese beiden Tabellen verweisen beim Löschen
+  eines Benutzers künftig auf `NULL` statt mitgelöscht zu werden. Nichts wird gelöscht; `down()`
+  bricht ab, falls inzwischen Daten existieren, die das alte Schema nicht speichern kann.
 
 Beim Docker-Start läuft die Migration automatisch, lokal:
 
@@ -166,7 +285,8 @@ Beim Docker-Start läuft die Migration automatisch, lokal:
 
 ## Tests
 
-`./dev.sh test` führt PHPUnit (Unit- und API-Tests), den TypeScript-Check und den Linter aus.
+`./dev.sh test` führt PHPUnit (Unit- und API-Tests), die Tests der Zeitberechnung im Frontend
+(`npm run test:unit`, Node-Testrunner), den TypeScript-Check und den Linter aus.
 Die API-Tests laufen gegen SQLite (`backend/.env.test`, braucht `pdo_sqlite`) und erzeugen ihre
 JWT-Schlüssel selbst unter `backend/var/jwt-test/`.
 
@@ -178,19 +298,25 @@ JWT-Schlüssel selbst unter `backend/var/jwt-test/`.
 | GET         | `/api/jobs?from=&to=`                     | alle¹           | Kalender (nur eingeplante Arbeiten)    |
 | GET         | `/api/jobs/board?assignee=&priority=&q=&doneDays=` | alle¹  | Aufgabenverwaltung (mit und ohne Termin) |
 | GET         | `/api/jobs/mine`                          | alle            | Meine offenen Arbeiten + heute erledigt |
-| GET         | `/api/jobs/{id}`                          | Zuständige²     | Details inkl. Arbeitsabschnitte        |
-| POST        | `/api/jobs`, PUT/DELETE `/api/jobs/{id}`  | Vorarbeiter+    | Arbeiten anlegen/planen (nur Titel Pflicht) |
-| PUT/DELETE  | `/api/jobs/{id}/schedule`                 | Vorarbeiter+    | Einplanen/verschieben bzw. aus dem Kalender nehmen |
+| GET         | `/api/jobs/{id}`                          | Zuständige², Lehrling | Details inkl. Arbeitsabschnitte und Hinweise |
+| POST        | `/api/jobs`, PUT/DELETE `/api/jobs/{id}`  | Sekretärin+    | Arbeiten anlegen/planen (nur Titel Pflicht) |
+| PUT/DELETE  | `/api/jobs/{id}/schedule`                 | Sekretärin+    | Einplanen/verschieben bzw. aus dem Kalender nehmen |
 | POST        | `/api/jobs/{id}/start`                    | zugeteilter Arbeiter | Starten bzw. Fortsetzen           |
 | POST        | `/api/jobs/{id}/pause`                    | Zuständige²     | Pausieren                              |
 | POST        | `/api/jobs/{id}/complete`, `/reopen`      | Zuständige²     | Abschließen bzw. wieder öffnen         |
-| GET/POST    | `/api/jobs/{id}/follow-up`                | Zuständige² / Vorarbeiter+ | Umplanungsvorschlag ansehen / anwenden |
+| GET/POST    | `/api/jobs/{id}/follow-up`                | Zuständige² / Sekretärin+ | Umplanungsvorschlag ansehen / anwenden |
 | POST        | `/api/time/stop`                          | alle            | Eigene laufende Zeiterfassung stoppen  |
 | PUT         | `/api/me/preferences`                     | alle            | Farbschema (light/dark/system)         |
 | POST        | `/api/work-requests`                      | alle            | „Brauche Arbeit“ ab morgen (F7, F8)    |
-| GET         | `/api/overview`                           | Vorarbeiter+    | Frei ab (laut Kalender), Anfragen, Konflikte, Umplanung |
-| GET         | `/api/reports/ist-zeit?from=&to=`         | Vorarbeiter+    | Auswertung der Ist-Zeit                |
+| GET         | `/api/overview`                           | Sekretärin+    | Frei ab (laut Kalender), Anfragen, Konflikte, Umplanung |
+| GET         | `/api/reports/ist-zeit?from=&to=`         | Sekretärin+    | Auswertung der Ist-Zeit                |
 | GET/POST/PUT | `/api/users`                             | Chef            | Benutzer & Rechte                      |
+| GET/DELETE  | `/api/users/{id}/deletion-impact`, `/api/users/{id}` | Chef | Auswirkung prüfen / endgültig löschen |
+| GET         | `/api/working-hours`                      | alle            | Arbeitszeiten und Pausen (einzige Quelle) |
+| GET         | `/api/jobs/check?startsAt=&endsAt=\|durationMinutes=&assigneeId=&apprenticeId=&jobId=` | Sekretärin+ | Vorschau: Ende/Dauer und Hinweise |
+| GET         | `/api/absences?from=&to=`, `/api/absences/types` | alle¹ | Abwesenheiten im Kalender, Arten       |
+| POST/PUT/DELETE | `/api/absences`, `/api/absences/{id}`  | Sekretärin+     | Urlaub/persönliche Termine verwalten   |
+| GET         | `/api/reports/arbeitsanfragen?from=&to=`  | Sekretärin+     | Statistik der Arbeitsanfragen          |
 
-¹ Arbeiter sehen nur ihre eigenen Arbeiten.
-² Der zugeteilte Arbeiter oder Vorarbeiter/Chef.
+¹ Arbeiter und Lehrlinge sehen nur ihre eigenen Arbeiten (Lehrlinge auch die, bei denen sie als Lehrling eingetragen sind) und ihre eigenen Abwesenheiten.
+² Der zugeteilte Arbeiter oder Sekretärin/Chef.

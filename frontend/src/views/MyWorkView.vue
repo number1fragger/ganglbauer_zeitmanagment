@@ -12,12 +12,15 @@ import { useJobActions } from '@/composables/useJobActions'
 import { useNow } from '@/composables/useNow'
 import { toast } from '@/composables/useToast'
 import { useAuthStore } from '@/stores/auth'
+import { workingHours } from '@/composables/useWorkingHours'
 import { isDone, priorityWeight } from '@/utils/domain'
+import { windowsOn } from '@/utils/workTime'
 import {
   addDays,
   describeMoment,
   formatDayMonth,
   formatRange,
+  formatTime,
   isWeekend,
   nextWorkday,
   relativeDay,
@@ -67,7 +70,10 @@ const actions = useJobActions(() => load())
 const today = computed(() => startOfDay(now.value))
 const tomorrow = computed(() => addDays(today.value, 1))
 
-const running = computed(() => jobs.value.find((job) => job.running) ?? null)
+/** Eigene laufende Arbeit – nicht die des Zustaendigen, bei der man nur als Lehrling dabei ist. */
+const running = computed(
+  () => jobs.value.find((job) => job.running && job.assignee?.id === auth.user?.id) ?? null,
+)
 
 const byImportance = (a: Job, b: Job) =>
   (a.startsAt ?? '9999').localeCompare(b.startsAt ?? '9999') ||
@@ -155,28 +161,41 @@ function slotLabel(at: Date): string {
   return `${day.charAt(0).toUpperCase()}${day.slice(1)} ${part}`
 }
 
+/**
+ * Arbeitsbeginn und Beginn nach der Mittagspause eines Tages – aus den
+ * zentralen Arbeitszeiten (GET /api/working-hours).
+ */
+function dayParts(day: Date): { morning: Date; afternoon: Date; end: Date } {
+  const windows = workingHours.value ? windowsOn(workingHours.value, day) : []
+  const first = windows[0]
+  const last = windows[windows.length - 1]
+  if (!first || !last) {
+    const fallback = new Date(day.getFullYear(), day.getMonth(), day.getDate(), 8)
+    return { morning: fallback, afternoon: fallback, end: fallback }
+  }
+  return { morning: first[0], afternoon: (windows[1] ?? first)[0], end: last[1] }
+}
+
 /** Drei waehlbare Zeitpunkte ab dem naechsten Werktag; heute ist zu kurzfristig. */
 const slots = computed<Slot[]>(() => {
-  const first = nextWorkday(now.value)
-  const second = nextWorkday(first)
-  const at = (day: Date, hour: number) =>
-    new Date(day.getFullYear(), day.getMonth(), day.getDate(), hour)
+  const first = dayParts(nextWorkday(now.value))
+  const second = dayParts(nextWorkday(nextWorkday(now.value)))
 
-  const options = [at(first, 7), at(first, 13), at(second, 7)].map((date) => ({
+  const options = [first.morning, first.afternoon, second.morning].map((date) => ({
     key: date.toISOString(),
     label: slotLabel(date),
-    detail: `${formatDayMonth(date)} · ab ${date.getHours() === 7 ? '07:00' : '13:00'}`,
+    detail: `${formatDayMonth(date)} · ab ${formatTime(date)}`,
     at: date,
     locked: false,
   }))
 
-  if (!isWeekend(now.value) && now.value.getHours() < 17) {
-    const afternoon = at(startOfDay(now.value), 13)
+  const today = dayParts(startOfDay(now.value))
+  if (!isWeekend(now.value) && now.value < today.end) {
     options.push({
       key: 'today',
-      label: slotLabel(afternoon),
+      label: slotLabel(today.afternoon),
       detail: 'Zu kurzfristig',
-      at: afternoon,
+      at: today.afternoon,
       locked: true,
     })
   }

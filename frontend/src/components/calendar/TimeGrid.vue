@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { DAY_HEIGHT, HOUR_PX, hourToPx, hours } from '@/utils/calendar'
+import { dayHeight, gridHours, HOUR_PX, hourToPx } from '@/utils/calendar'
 
 defineProps<{ columns: number; minColumnWidth: number }>()
 </script>
@@ -12,11 +12,11 @@ defineProps<{ columns: number; minColumnWidth: number }>()
     </div>
     <div class="time-grid__body">
       <div class="time-grid__axis" aria-hidden="true">
-        <span v-for="hour in hours" :key="hour" :style="{ top: `${hourToPx(hour) - 6}px` }">
+        <span v-for="hour in gridHours()" :key="hour" :style="{ top: `${hourToPx(hour) - 6}px` }">
           {{ String(hour).padStart(2, '0') }}:00
         </span>
       </div>
-      <div class="time-grid__columns" :style="{ height: `${DAY_HEIGHT + 1}px`, '--hour': `${HOUR_PX}px` }">
+      <div class="time-grid__columns" :style="{ height: `${dayHeight() + 1}px`, '--hour': `${HOUR_PX}px` }">
         <slot />
       </div>
     </div>

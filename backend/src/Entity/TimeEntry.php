@@ -16,6 +16,10 @@ use Symfony\Component\Serializer\Attribute\Groups;
  * Ein Abschnitt, der nie gestoppt wurde (Arbeiter hat vergessen zu
  * pausieren), zaehlt hoechstens bis zur Kappungsgrenze und wird beim
  * naechsten Zugriff automatisch dort beendet (autoClosed = true).
+ *
+ * Wird ein Benutzer endgueltig geloescht, bleiben seine Abschnitte als
+ * Nachweis der Ist-Zeit erhalten: user wird null, der Name bleibt in
+ * userName gespeichert.
  */
 #[ORM\Entity(repositoryClass: TimeEntryRepository::class)]
 #[ORM\Index(name: 'idx_entry_user_end', columns: ['user_id', 'ended_at'])]
@@ -35,9 +39,13 @@ class TimeEntry
     private ?int $id = null;
 
     #[ORM\ManyToOne]
-    #[ORM\JoinColumn(nullable: false, onDelete: 'CASCADE')]
+    #[ORM\JoinColumn(nullable: true, onDelete: 'SET NULL')]
     #[Groups(['job:entries'])]
-    private User $user;
+    private ?User $user;
+
+    /** Name zum Zeitpunkt der Erfassung – bleibt nach dem Loeschen des Benutzers lesbar. */
+    #[ORM\Column(length: 201, options: ['default' => ''])]
+    private string $userName;
 
     #[ORM\ManyToOne(inversedBy: 'timeEntries')]
     #[ORM\JoinColumn(nullable: false, onDelete: 'CASCADE')]
@@ -59,6 +67,7 @@ class TimeEntry
     public function __construct(User $user, Job $job, ?\DateTimeImmutable $startedAt = null)
     {
         $this->user = $user;
+        $this->userName = $user->getFullName();
         $this->startedAt = LocalTime::of($startedAt ?? new \DateTimeImmutable());
         $job->addTimeEntry($this);
     }
@@ -68,9 +77,16 @@ class TimeEntry
         return $this->id;
     }
 
-    public function getUser(): User
+    /** null, wenn der Benutzer inzwischen geloescht wurde. */
+    public function getUser(): ?User
     {
         return $this->user;
+    }
+
+    #[Groups(['job:entries'])]
+    public function getUserName(): string
+    {
+        return $this->user?->getFullName() ?? $this->userName;
     }
 
     public function getJob(): Job

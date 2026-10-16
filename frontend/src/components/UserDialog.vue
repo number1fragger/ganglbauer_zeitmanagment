@@ -3,11 +3,14 @@ import { reactive, ref } from 'vue'
 import { usersApi } from '@/api'
 import { errorMessage } from '@/api/http'
 import type { User, UserInput } from '@/api/types'
-import { roles } from '@/utils/domain'
+import { confirmAction } from '@/composables/useConfirm'
+import { toast } from '@/composables/useToast'
+import { roleOf, roles } from '@/utils/domain'
+import AppIcon from './AppIcon.vue'
 import BaseModal from './BaseModal.vue'
 
 const props = defineProps<{ user?: User | null; isSelf?: boolean }>()
-const emit = defineEmits<{ close: []; saved: [] }>()
+const emit = defineEmits<{ close: []; saved: []; deleted: [] }>()
 
 const form = reactive({
   username: props.user?.username ?? '',
@@ -21,6 +24,58 @@ const form = reactive({
 
 const error = ref('')
 const busy = ref(false)
+
+/**
+ * Endgueltig loeschen – mit Sicherheitsabfrage, die zeigt, was mit Auftraegen
+ * und Historie passiert. Das Backend prueft die Berechtigung (nur Chef) erneut.
+ */
+async function remove(): Promise<void> {
+  const user = props.user
+  if (!user || props.isSelf) return
+  error.value = ''
+  try {
+    const impact = await usersApi.deletionImpact(user.id)
+    if (impact.running) {
+      error.value = `${user.fullName} erfasst gerade Arbeitszeit. Bitte die Arbeit zuerst pausieren oder abschließen.`
+      return
+    }
+    const details = [
+      impact.openJobs
+        ? `${impact.openJobs} offene(r) Auftrag/Aufträge bleiben erhalten und sind danach „Nicht zugeteilt“.`
+        : null,
+      impact.apprenticeJobs
+        ? `Bei ${impact.apprenticeJobs} Auftrag/Aufträgen wird die Lehrlings-Zuordnung entfernt.`
+        : null,
+      impact.timeEntries
+        ? `${impact.timeEntries} erfasste Arbeitsabschnitte bleiben als Ist-Zeit-Nachweis mit dem Namen erhalten.`
+        : null,
+      impact.workRequests
+        ? `${impact.workRequests} Arbeitsanfrage(n) bleiben für die Statistik erhalten (offene werden zurückgezogen).`
+        : null,
+      impact.absences ? `${impact.absences} Abwesenheit(en) werden gelöscht.` : null,
+      'Die Anmeldung ist danach nicht mehr möglich. Das lässt sich nicht rückgängig machen.',
+    ].filter((line): line is string => line !== null)
+
+    const ok = await confirmAction({
+      title: `${user.fullName} endgültig löschen?`,
+      message: `Das Konto „${user.username}“ (${roleOf(user.role).label}) wird vollständig gelöscht – nicht nur deaktiviert.`,
+      details,
+      requireText: user.username,
+      confirmLabel: 'Endgültig löschen',
+      tone: 'danger',
+    })
+    if (!ok) return
+
+    busy.value = true
+    await usersApi.remove(user.id)
+    toast(`${user.fullName} wurde gelöscht.`, 'success')
+    emit('deleted')
+  } catch (e) {
+    error.value = errorMessage(e)
+  } finally {
+    busy.value = false
+  }
+}
 
 async function save(): Promise<void> {
   const input: UserInput = {
@@ -83,6 +138,8 @@ async function save(): Promise<void> {
         </label>
       </div>
 
+      <p class="field__hint user-form__role-hint">{{ roleOf(form.role).description }}</p>
+
       <label class="field">
         <span class="field__label">{{ user ? 'Neues Passwort (leer lassen = unverändert)' : 'Passwort (mindestens 8 Zeichen)' }}</span>
         <input
@@ -103,6 +160,15 @@ async function save(): Promise<void> {
       <p v-if="error" class="form-error" role="alert">{{ error }}</p>
 
       <footer class="user-form__actions">
+        <button
+          v-if="user && !isSelf"
+          type="button"
+          class="btn btn--ghost user-form__delete"
+          :disabled="busy"
+          @click="remove"
+        >
+          <AppIcon name="trash" :size="15" /> Endgültig löschen
+        </button>
         <button type="button" class="btn btn--large" @click="emit('close')">Abbrechen</button>
         <button class="btn btn--primary btn--large" :disabled="busy">Speichern</button>
       </footer>
@@ -137,8 +203,18 @@ async function save(): Promise<void> {
   accent-color: var(--primary);
 }
 
+.user-form__role-hint {
+  margin-top: -6px;
+}
+
+.user-form__delete {
+  margin-right: auto;
+  color: var(--danger);
+}
+
 .user-form__actions {
   display: flex;
+  flex-wrap: wrap;
   justify-content: flex-end;
   gap: 12px;
   padding-top: 20px;

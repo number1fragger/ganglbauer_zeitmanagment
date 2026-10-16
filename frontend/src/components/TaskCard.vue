@@ -60,7 +60,16 @@ const when = computed(() => {
       <span v-if="job.assignee" class="avatar avatar--small" :title="job.assignee.fullName">{{
         job.assignee.initials
       }}</span>
+      <span
+        v-if="job.apprentice"
+        class="avatar avatar--small task__apprentice"
+        :title="`Lehrling: ${job.apprentice.fullName}`"
+        >{{ job.apprentice.initials }}</span
+      >
     </header>
+    <p v-if="user && job.apprentice?.id === user.id" class="task__role">
+      Als Lehrling eingeteilt · zuständig: {{ job.assignee?.fullName ?? 'noch niemand' }}
+    </p>
 
     <p v-if="job.customer" class="task__customer">{{ job.customer }}</p>
 
@@ -304,5 +313,18 @@ const when = computed(() => {
     width: 40px;
     height: 40px;
   }
+}
+.task__apprentice {
+  margin-left: -6px;
+  outline: 2px solid var(--surface);
+  background: color-mix(in srgb, var(--worker-3) 18%, var(--surface));
+  color: var(--worker-3);
+}
+
+.task__role {
+  margin: 2px 0 0;
+  color: var(--worker-3);
+  font-size: 11px;
+  font-weight: 600;
 }
 </style>

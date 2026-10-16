@@ -46,7 +46,7 @@ class User implements UserInterface, PasswordAuthenticatedUserInterface
     private string $lastName = '';
 
     #[ORM\Column(type: 'string', length: 20, enumType: UserRole::class)]
-    #[Groups(['user:read'])]
+    #[Groups(['user:read', 'user:ref'])]
     private UserRole $role = UserRole::Worker;
 
     /** Wochenarbeitszeit in Stunden – Basis fuer Auslastung und Prognose. */

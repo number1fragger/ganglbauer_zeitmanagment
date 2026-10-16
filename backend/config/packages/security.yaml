@@ -8,10 +8,12 @@ security:
                 class: App\Entity\User
                 property: username
 
-    # Chef darf alles, was der Vorarbeiter darf, und der alles, was der Arbeiter darf.
+    # Chef darf alles, was die Sekretaerin darf (Planung, Abwesenheiten, Auswertung),
+    # und die alles, was ein Arbeiter darf. Lehrlinge haben eigene, engere Rechte:
+    # eigene Arbeiten plus die Auftraege, bei denen sie als Lehrling eingetragen sind.
     role_hierarchy:
-        ROLE_CHEF: [ROLE_VORARBEITER]
-        ROLE_VORARBEITER: [ROLE_ARBEITER]
+        ROLE_CHEF: [ROLE_SEKRETAERIN]
+        ROLE_SEKRETAERIN: [ROLE_ARBEITER]
 
     firewalls:
         login:

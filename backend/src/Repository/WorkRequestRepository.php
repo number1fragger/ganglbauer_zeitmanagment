@@ -31,6 +31,25 @@ class WorkRequestRepository extends ServiceEntityRepository
             ->getResult();
     }
 
+    /**
+     * Anfragen, die im Zeitraum gestellt wurden (nach Erstellungszeitpunkt).
+     *
+     * @return WorkRequest[]
+     */
+    public function findCreatedBetween(\DateTimeImmutable $from, \DateTimeImmutable $to): array
+    {
+        return $this->createQueryBuilder('r')
+            ->addSelect('u')
+            ->leftJoin('r.user', 'u')
+            ->andWhere('r.createdAt >= :from')
+            ->andWhere('r.createdAt < :to')
+            ->setParameter('from', $from)
+            ->setParameter('to', $to)
+            ->orderBy('r.createdAt', 'ASC')
+            ->getQuery()
+            ->getResult();
+    }
+
     public function findOpenFor(User $user): ?WorkRequest
     {
         return $this->createQueryBuilder('r')

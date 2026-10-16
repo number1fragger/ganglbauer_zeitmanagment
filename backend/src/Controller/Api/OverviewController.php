@@ -15,7 +15,7 @@ use Symfony\Component\Security\Http\Attribute\IsGranted;
 final class OverviewController extends AbstractApiController
 {
     #[Route('/api/overview', name: 'api_overview', methods: ['GET'])]
-    #[IsGranted('ROLE_VORARBEITER')]
+    #[IsGranted('ROLE_SEKRETAERIN')]
     public function overview(OverviewBuilder $builder, ClockInterface $clock): JsonResponse
     {
         return $this->json($builder->build($clock->now()));

@@ -6,6 +6,7 @@ use App\Entity\Job;
 use App\Entity\TimeEntry;
 use App\Entity\User;
 use App\Enum\JobStatus;
+use App\Enum\UserRole;
 use App\Exception\InvalidInputException;
 use App\Exception\WorkflowException;
 use PHPUnit\Framework\TestCase;
@@ -143,5 +144,31 @@ final class JobTest extends TestCase
 
         self::assertTrue($job->isPaused());
         self::assertFalse($job->isRunning());
+    }
+
+    public function testDurationIsWorkingTimeWithinTheAppointment(): void
+    {
+        // Mo 11:00–14:00 = 2 h Arbeit (Mittagspause zaehlt nicht).
+        $job = (new Job())->schedule(new \DateTimeImmutable('2026-09-28 11:00'), new \DateTimeImmutable('2026-09-28 14:00'));
+        self::assertSame(120, $job->getWorkMinutes());
+        self::assertSame(180, $job->getCalendarMinutes());
+
+        // Dauer 3 h ab 10:00 -> Ende 14:00.
+        $job->scheduleFor(new \DateTimeImmutable('2026-09-28 10:00'), 180);
+        self::assertSame('2026-09-28 14:00', $job->getEndsAt()?->format('Y-m-d H:i'));
+        self::assertNull((new Job())->getWorkMinutes());
+    }
+
+    public function testOnlyApprenticesCanBeAssignedAsApprentice(): void
+    {
+        $apprentice = (new User())->setFirstName('Lukas')->setLastName('Wimmer')->setRole(UserRole::Apprentice);
+        $job = (new Job())->setApprentice($apprentice);
+        self::assertSame($apprentice, $job->getApprentice());
+
+        $job->setApprentice(null);
+        self::assertNull($job->getApprentice());
+
+        $this->expectException(InvalidInputException::class);
+        $job->setApprentice((new User())->setFirstName('Anton')->setLastName('Huber')->setRole(UserRole::Worker));
     }
 }

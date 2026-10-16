@@ -80,7 +80,7 @@ final class TimeTrackingController extends AbstractApiController
 
     /** Bestaetigten Vorschlag anwenden – Planung ist Sache von Vorarbeiter/Chef. */
     #[Route('/api/jobs/{id}/follow-up', name: 'api_jobs_follow_up_apply', methods: ['POST'], requirements: ['id' => '\d+'])]
-    #[IsGranted('ROLE_VORARBEITER')]
+    #[IsGranted('ROLE_SEKRETAERIN')]
     public function applyFollowUp(Job $job, FollowUpPlanner $planner, #[MapRequestPayload] RescheduleInput $input): JsonResponse
     {
         return $this->serialized(['moved' => $planner->apply($job, $input->jobIds), 'job' => $job], JobController::GROUPS);

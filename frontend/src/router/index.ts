@@ -3,7 +3,7 @@ import { ApiError } from '@/api/http'
 import type { Role } from '@/api/types'
 import { useAuthStore } from '@/stores/auth'
 
-const planners: Role[] = ['chef', 'vorarbeiter']
+const planners: Role[] = ['chef', 'sekretaerin']
 
 declare module 'vue-router' {
   interface RouteMeta {

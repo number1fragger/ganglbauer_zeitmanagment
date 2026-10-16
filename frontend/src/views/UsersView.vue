@@ -34,7 +34,9 @@ async function onSaved(): Promise<void> {
     <header class="users__header">
       <div>
         <h1 class="page-title">Benutzer &amp; Rechte</h1>
-        <p class="page-sub">Nur für die Werkstattleitung sichtbar</p>
+        <p class="page-sub">
+          Nur für den Chef sichtbar · deaktivieren oder endgültig löschen im jeweiligen Benutzer
+        </p>
       </div>
       <button class="btn btn--primary users__new" @click="editing = null">+ Benutzer anlegen</button>
     </header>
@@ -105,6 +107,7 @@ async function onSaved(): Promise<void> {
       :is-self="editing?.id === auth.user?.id"
       @close="editing = undefined"
       @saved="onSaved"
+      @deleted="onSaved"
     />
   </div>
 </template>

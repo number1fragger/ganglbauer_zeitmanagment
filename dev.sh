@@ -43,7 +43,7 @@ case "${1:-help}" in
 
   test)
     (cd backend && vendor/bin/phpunit)
-    (cd frontend && npm run type-check && npm run lint)
+    (cd frontend && npm run test:unit && npm run type-check && npm run lint)
     ;;
 
   # Achtung: loescht die Datenbank samt Inhalt
@@ -62,7 +62,7 @@ Verwendung: ./dev.sh <befehl>
   backend    Symfony-Devserver auf http://127.0.0.1:8000
   frontend   Vite-Devserver auf http://localhost:5173
   console    Symfony-Befehl, z. B. ./dev.sh console debug:router
-  test       PHPUnit, TypeScript-Check und Lint
+  test       PHPUnit, Frontend-Zeitberechnung, TypeScript-Check und Lint
   db-reset   Datenbank samt Inhalt loeschen
 USAGE
     ;;

@@ -12,6 +12,14 @@ use Symfony\Component\Serializer\Attribute\Groups;
  * F7/F8 – "Brauche Arbeit": Ein Arbeiter meldet, ab wann er wieder eine
  * neue Arbeit braucht. Frueheste Anfrage ist der naechste Kalendertag,
  * damit noch ein Kunde in die Werkstatt bestellt werden kann.
+ *
+ * Zaehlregel fuer die Statistik: Jede abgeschickte Anfrage ist genau ein
+ * Datensatz. Aendert der Mitarbeiter eine noch offene Anfrage (neues Datum),
+ * wird derselbe Datensatz angepasst (reschedule) – es entsteht keine zweite
+ * Anfrage. Zurueckgezogene Anfragen zaehlen nicht als Arbeitsanfrage.
+ *
+ * Nach dem endgueltigen Loeschen eines Benutzers bleibt die Anfrage fuer die
+ * Statistik erhalten (user = null, Name in userName).
  */
 #[ORM\Entity(repositoryClass: WorkRequestRepository::class)]
 class WorkRequest
@@ -23,9 +31,13 @@ class WorkRequest
     private ?int $id = null;
 
     #[ORM\ManyToOne]
-    #[ORM\JoinColumn(nullable: false, onDelete: 'CASCADE')]
+    #[ORM\JoinColumn(nullable: true, onDelete: 'SET NULL')]
     #[Groups(['request:read'])]
-    private User $user;
+    private ?User $user;
+
+    /** Name zum Zeitpunkt der Anfrage – bleibt nach dem Loeschen des Benutzers lesbar. */
+    #[ORM\Column(length: 201, options: ['default' => ''])]
+    private string $userName;
 
     /** Zeitpunkt, ab dem neue Arbeit gebraucht wird. */
     #[ORM\Column]
@@ -53,7 +65,30 @@ class WorkRequest
         }
 
         $this->user = $user;
+        $this->userName = $user->getFullName();
         $this->neededAt = $neededAt;
+    }
+
+    /**
+     * Offene Anfrage auf einen anderen Zeitpunkt aendern – bleibt dieselbe
+     * Anfrage (zaehlt in der Statistik einmal).
+     *
+     * @throws \DomainException wenn die Vorlaufzeit (F8) nicht eingehalten ist
+     */
+    public function reschedule(\DateTimeImmutable $neededAt, ?\DateTimeImmutable $now = null): static
+    {
+        if (!$this->isOpen()) {
+            throw new \DomainException('Diese Anfrage ist nicht mehr offen.');
+        }
+
+        $neededAt = LocalTime::of($neededAt);
+        if ($neededAt < self::earliestFor($now ?? new \DateTimeImmutable())) {
+            throw new \DomainException('Neue Arbeit kann fruehestens fuer morgen angefragt werden.');
+        }
+
+        $this->neededAt = $neededAt;
+
+        return $this;
     }
 
     /** F8 – fruehester erlaubter Zeitpunkt: der naechste Tag, 00:00. */
@@ -67,9 +102,15 @@ class WorkRequest
         return $this->id;
     }
 
-    public function getUser(): User
+    /** null, wenn der Benutzer inzwischen geloescht wurde. */
+    public function getUser(): ?User
     {
         return $this->user;
+    }
+
+    public function getUserName(): string
+    {
+        return $this->user?->getFullName() ?? $this->userName;
     }
 
     public function getNeededAt(): \DateTimeImmutable

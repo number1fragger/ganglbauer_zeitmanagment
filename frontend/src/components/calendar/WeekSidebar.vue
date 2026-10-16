@@ -1,9 +1,10 @@
 <script setup lang="ts">
 import { computed } from 'vue'
 import type { Job, OverviewWorker } from '@/api/types'
-import { segmentOn } from '@/utils/calendar'
+import { workingHours } from '@/composables/useWorkingHours'
 import { workerColor } from '@/utils/domain'
 import { addDays, describeShort, formatHours } from '@/utils/time'
+import { workingMinutesBetween } from '@/utils/workTime'
 import PriorityLegend from '../PriorityLegend.vue'
 
 const props = defineProps<{ weekStart: Date; workers: OverviewWorker[]; jobs: Job[] }>()
@@ -13,22 +14,30 @@ function toggle(id: number): void {
   visible.value = visible.value.includes(id) ? visible.value.filter((v) => v !== id) : [...visible.value, id]
 }
 
-/** Im Kalender belegte Stunden (Mo–Fr) gegenueber der Wochenarbeitszeit – keine Arbeitszeit-Planung. */
+/**
+ * Im Kalender belegte Arbeitszeit (Mo–Fr, ohne Mittagspause) gegenueber der
+ * Wochenarbeitszeit – auch Auftraege, bei denen die Person als Lehrling dabei ist.
+ */
 const load = computed(() =>
   props.workers.map((worker, index) => {
-    const booked = Array.from({ length: 5 }, (_, i) => addDays(props.weekStart, i)).reduce((sum, day) => {
-      const hours = props.jobs
-        .filter((job) => job.assignee?.id === worker.user.id)
-        .map((job) => segmentOn(job, day))
-        .reduce((daySum, s) => daySum + (s ? s.to - s.from : 0), 0)
-      return sum + hours
-    }, 0)
+    const weekEnd = addDays(props.weekStart, 5)
+    const config = workingHours.value
+    const bookedMinutes = config
+      ? props.jobs
+          .filter((job) => job.assignee?.id === worker.user.id || job.apprentice?.id === worker.user.id)
+          .reduce((sum, job) => {
+            if (!job.startsAt || !job.endsAt) return sum
+            const from = new Date(Math.max(new Date(job.startsAt).getTime(), props.weekStart.getTime()))
+            const to = new Date(Math.min(new Date(job.endsAt).getTime(), weekEnd.getTime()))
+            return to > from ? sum + workingMinutesBetween(config, from, to) : sum
+          }, 0)
+      : 0
 
     return {
       worker,
       color: workerColor(index),
-      bookedMinutes: booked * 60,
-      percent: Math.min(100, (booked / worker.user.weeklyHours) * 100),
+      bookedMinutes,
+      percent: Math.min(100, (bookedMinutes / 60 / worker.user.weeklyHours) * 100),
     }
   }),
 )

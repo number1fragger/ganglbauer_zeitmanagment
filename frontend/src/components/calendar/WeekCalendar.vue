@@ -1,45 +1,56 @@
 <script setup lang="ts">
 import { computed } from 'vue'
-import type { Job, OverviewWorker } from '@/api/types'
+import type { Absence, Job, OverviewWorker } from '@/api/types'
 import { useNow } from '@/composables/useNow'
-import { DAY_END_HOUR, hourToPx, layoutByWorker, segmentOn, type Segment } from '@/utils/calendar'
+import {
+  gridEndHour,
+  hourToPx,
+  layoutByWorker,
+  segmentsOn,
+  type MoveEvent,
+  type ResizeEvent,
+  type Segment,
+} from '@/utils/calendar'
 import { workerColor } from '@/utils/domain'
-import type { MoveEvent } from '@/utils/calendar'
 import { addDays, sameDay, startOfDay, toDateKey, weekdayName } from '@/utils/time'
+import AbsenceCard from './AbsenceCard.vue'
 import CalendarColumn from './CalendarColumn.vue'
 import TimeGrid from './TimeGrid.vue'
 import WeekJobCard from './WeekJobCard.vue'
-
-const FREE_FROM_HOUR = DAY_END_HOUR - 1
 
 const props = defineProps<{
   weekStart: Date
   workers: OverviewWorker[]
   visible: number[]
   jobs: Job[]
+  absences?: Absence[]
   draggable?: boolean
   canDrag?: (job: Job) => boolean
   conflicts?: Map<number, string[]>
+  canOpenAbsence?: boolean
 }>()
 defineEmits<{
   open: [job: Job]
+  openAbsence: [absence: Absence]
   create: [defaults: { startsAt: Date; assigneeId: number | null }]
   move: [event: MoveEvent]
+  resize: [event: ResizeEvent]
 }>()
 
 const now = useNow()
 
 const byWorker = (segments: Segment[]) => layoutByWorker(segments, props.workers.map((w) => w.user.id))
 
-const colorOf = (job: Job) => workerColor(props.workers.findIndex((w) => w.user.id === job.assignee?.id))
+/** Farbe der Person, in deren Spur der Eintrag steht (Lehrlings-Kopie in Lehrlingsfarbe). */
+const colorOf = (personId: number | null) =>
+  workerColor(props.workers.findIndex((w) => w.user.id === personId))
 
 const days = computed(() =>
   Array.from({ length: 5 }, (_, i) => {
     const day = addDays(props.weekStart, i)
-    const segments = props.jobs
-      .filter((job) => job.assignee === null || props.visible.includes(job.assignee.id))
-      .map((job) => segmentOn(job, day))
-      .filter((s): s is Segment => s !== null)
+    const segments = segmentsOn(props.jobs, props.absences ?? [], day).filter(
+      (s) => s.personId === null || props.visible.includes(s.personId),
+    )
 
     return { day, segments, free: freeWorkers(day, segments) }
   }),
@@ -55,7 +66,7 @@ function freeWorkers(day: Date, segments: Segment[]): number {
   return props.workers.filter((w) => {
     if (!props.visible.includes(w.user.id)) return false
     const bookedHours = segments
-      .filter((s) => s.job.assignee?.id === w.user.id)
+      .filter((s) => s.personId === w.user.id)
       .reduce((sum, s) => sum + (s.to - s.from), 0)
     return bookedHours < w.user.weeklyHours / 10
   }).length
@@ -89,12 +100,22 @@ function freeWorkers(day: Date, segments: Segment[]): number {
       drop-assignee="keep"
       @create="$emit('create', { startsAt: $event, assigneeId: null })"
       @move="$emit('move', $event)"
+      @resize="$emit('resize', $event)"
     >
-      <template #default="{ segment }">
+      <template #default="{ placed }">
+        <AbsenceCard
+          v-if="placed.segment.kind === 'absence'"
+          :absence="placed.segment.absence"
+          compact
+          :clickable="canOpenAbsence"
+          @open="$emit('openAbsence', $event)"
+        />
         <WeekJobCard
-          :job="segment.job"
-          :color="colorOf(segment.job)"
-          :conflict="conflicts?.get(segment.job.id)"
+          v-else
+          :job="placed.segment.job"
+          :color="colorOf(placed.segment.personId)"
+          :as-apprentice="placed.segment.role === 'apprentice'"
+          :conflict="conflicts?.get(placed.segment.job.id)"
           @open="$emit('open', $event)"
         />
       </template>
@@ -102,7 +123,7 @@ function freeWorkers(day: Date, segments: Segment[]): number {
         <div
           v-if="free > 0"
           class="week-free"
-          :style="{ top: `${hourToPx(FREE_FROM_HOUR) + 2}px` }"
+          :style="{ top: `${hourToPx(gridEndHour() - 1) + 2}px` }"
           title="Arbeiter, die an diesem Tag noch mindestens einen halben Tag frei haben"
         >
           frei: {{ free }} Arbeiter

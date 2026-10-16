@@ -5,6 +5,10 @@ export interface ConfirmRequest {
   message?: string
   confirmLabel?: string
   tone?: 'primary' | 'danger' | 'success'
+  /** Weitere Zeilen, z. B. was beim Loeschen erhalten bleibt */
+  details?: string[]
+  /** Bei unwiderruflichen Aktionen: dieser Text muss zur Bestaetigung eingetippt werden */
+  requireText?: string
   resolve: (ok: boolean) => void
 }
 

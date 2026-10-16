@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { computed } from 'vue'
-import type { Job, OverviewWorker } from '@/api/types'
+import type { Absence, Job, OverviewWorker } from '@/api/types'
 import { useNow } from '@/composables/useNow'
 import { workerColor } from '@/utils/domain'
 import { addDays, isWeekend, sameDay, startOfDay, startOfMonth, startOfWeek } from '@/utils/time'
@@ -8,8 +8,15 @@ import { addDays, isWeekend, sameDay, startOfDay, startOfMonth, startOfWeek } fr
 const MAX_CHIPS = 3
 const WEEKDAYS = ['Mo', 'Di', 'Mi', 'Do', 'Fr', 'Sa', 'So']
 
-const props = defineProps<{ month: Date; workers: OverviewWorker[]; jobs: Job[]; conflicts?: Map<number, string[]> }>()
-defineEmits<{ open: [job: Job]; showDay: [day: Date] }>()
+const props = defineProps<{
+  month: Date
+  workers: OverviewWorker[]
+  jobs: Job[]
+  absences?: Absence[]
+  conflicts?: Map<number, string[]>
+  canOpenAbsence?: boolean
+}>()
+defineEmits<{ open: [job: Job]; openAbsence: [absence: Absence]; showDay: [day: Date] }>()
 
 const now = useNow()
 
@@ -26,10 +33,12 @@ const cells = computed(() => {
     const day = addDays(start, i)
     const next = addDays(day, 1)
     const jobs = props.jobs.filter((job) => !!job.startsAt && !!job.endsAt && new Date(job.startsAt) < next && new Date(job.endsAt) > day)
+    const absences = (props.absences ?? []).filter((a) => new Date(a.startsAt) < next && new Date(a.endsAt) > day)
 
     return {
       day,
       jobs,
+      absences,
       inMonth: day.getMonth() === first.getMonth(),
       weekend: isWeekend(day),
       today: sameDay(day, now.value),
@@ -61,16 +70,27 @@ const cells = computed(() => {
           {{ cell.day.getDate() }}
         </button>
 
+        <component
+          :is="canOpenAbsence ? 'button' : 'span'"
+          v-for="absence in cell.absences"
+          :key="`a${absence.id}`"
+          class="month__absence"
+          :title="`${absence.user.fullName} – Abwesend: ${absence.label}`"
+          @click="canOpenAbsence && $emit('openAbsence', absence)"
+        >
+          {{ absence.user.initials }} · {{ absence.label }}
+        </component>
+
         <button
           v-for="job in cell.jobs.slice(0, MAX_CHIPS)"
           :key="job.id"
           class="month__chip accent tinted"
           :class="{ 'month__chip--done': job.status === 'erledigt', 'month__chip--conflict': conflicts?.has(job.id) }"
           :style="{ '--accent': colorOf(job) }"
-          :title="`${job.title}${job.assignee ? ' · ' + job.assignee.fullName : ''}${conflicts?.has(job.id) ? ' – Terminkonflikt' : ''}`"
+          :title="`${job.title}${job.assignee ? ' · ' + job.assignee.fullName : ''}${job.apprentice ? ' + Lehrling ' + job.apprentice.fullName : ''}${conflicts?.has(job.id) ? '\n' + conflicts.get(job.id)!.join('\n') : ''}`"
           @click="$emit('open', job)"
         >
-          {{ job.assignee?.initials ?? '–' }} · {{ job.title }}
+          {{ job.assignee?.initials ?? '–' }}<template v-if="job.apprentice">+{{ job.apprentice.initials }}</template> · {{ job.title }}
         </button>
 
         <button v-if="cell.jobs.length > MAX_CHIPS" class="link month__more" @click="$emit('showDay', cell.day)">
@@ -85,6 +105,24 @@ const cells = computed(() => {
 <style scoped>
 .month {
   min-width: 840px;
+}
+
+.month__absence {
+  display: block;
+  width: 100%;
+  margin-top: 4px;
+  padding: 3px 6px;
+  overflow: hidden;
+  border: 1px dashed var(--absence);
+  border-radius: var(--radius-sm);
+  background: var(--absence-soft);
+  color: var(--absence-ink);
+  font: inherit;
+  font-size: 10px;
+  font-weight: 600;
+  text-align: left;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .month__weekdays,

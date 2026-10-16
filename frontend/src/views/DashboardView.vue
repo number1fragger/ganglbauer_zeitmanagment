@@ -94,7 +94,7 @@ const backlogTop = computed(() =>
 const notices = computed(() => {
   const o = overview.value
   if (!o) return 0
-  return o.followUps.length + o.conflicts.length + o.requests.length
+  return o.followUps.length + o.conflicts.length + o.absenceConflicts.length + o.requests.length
 })
 
 // ---- Dialoge ---------------------------------------------------------------
@@ -268,6 +268,21 @@ async function onSaved(): Promise<void> {
               <button class="btn btn--small btn--outline" @click="openJob(c.jobs[1]!.id)">
                 Lösen
               </button>
+            </li>
+            <li
+              v-for="(c, i) in overview.absenceConflicts"
+              :key="`a${i}`"
+              class="notice"
+              style="--tone: var(--absence)"
+            >
+              <AppIcon name="calendar-off" :size="16" />
+              <span>
+                <strong>{{ c.worker }} ist abwesend ({{ c.absence.label }})</strong>
+                <small
+                  >„{{ c.job.title }}“ ist trotzdem eingeplant · {{ c.absence.period }}</small
+                >
+              </span>
+              <button class="btn btn--small btn--outline" @click="openJob(c.job.id)">Lösen</button>
             </li>
             <li
               v-for="r in overview.requests"

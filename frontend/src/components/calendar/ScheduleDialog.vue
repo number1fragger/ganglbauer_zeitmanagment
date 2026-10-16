@@ -61,7 +61,7 @@ async function save(): Promise<void> {
 const endHint = computed(() =>
   form.end
     ? ''
-    : `Ohne Ende wird ein Kalenderblock bis ${addMinutes(startsAt.value, DEFAULT_SLOT_MINUTES).toLocaleTimeString('de-AT', { hour: '2-digit', minute: '2-digit' })} angezeigt.`,
+    : `Ohne Ende wird ein Kalenderblock bis ${addMinutes(startsAt.value, DEFAULT_SLOT_MINUTES).toLocaleTimeString('de-AT', { hour: '2-digit', minute: '2-digit', hourCycle: 'h23' })} angezeigt.`,
 )
 </script>
 

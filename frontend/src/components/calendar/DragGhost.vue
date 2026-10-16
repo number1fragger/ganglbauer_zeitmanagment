@@ -4,7 +4,7 @@ import { drag } from '@/composables/useJobDrag'
 import { priorityColor } from '@/utils/domain'
 
 const time = (date: Date) =>
-  date.toLocaleTimeString('de-AT', { hour: '2-digit', minute: '2-digit' })
+  date.toLocaleTimeString('de-AT', { hour: '2-digit', minute: '2-digit', hourCycle: 'h23' })
 const day = (date: Date) =>
   date.toLocaleDateString('de-AT', { weekday: 'short', day: '2-digit', month: '2-digit' })
 

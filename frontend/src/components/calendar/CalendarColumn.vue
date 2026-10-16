@@ -33,7 +33,8 @@ defineSlots<{ default(props: { segment: Placed }): unknown; footer?(): unknown }
 const now = useNow()
 const movable = (job: Job) => !!props.draggable && (props.canDrag?.(job) ?? true)
 const placed = computed(() => (props.layout ?? layoutLanes)(props.segments))
-const time = (date: Date) => date.toLocaleTimeString('de-AT', { hour: '2-digit', minute: '2-digit' })
+const time = (date: Date) =>
+  date.toLocaleTimeString('de-AT', { hour: '2-digit', minute: '2-digit', hourCycle: 'h23' })
 
 const preview = computed(() => {
   const target = drag.target

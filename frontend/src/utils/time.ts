@@ -81,7 +81,11 @@ export function formatSignedHours(minutes: number): string {
 }
 
 export function formatTime(date: Date): string {
-  return date.toLocaleTimeString(LOCALE, { hour: '2-digit', minute: '2-digit' })
+  return date.toLocaleTimeString(LOCALE, {
+    hour: '2-digit',
+    minute: '2-digit',
+    hourCycle: 'h23',
+  })
 }
 
 /** "Montag, 28. September 2026" */

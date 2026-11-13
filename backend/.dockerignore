@@ -4,5 +4,8 @@ var/
 .env.local
 .env.*.local
 config/jwt/*.pem
+# Login-Schluessel, egal wo sie liegen
+*.pem
+.env.bak
 .phpunit.cache/
 tests/

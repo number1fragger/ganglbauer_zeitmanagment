@@ -25,7 +25,7 @@ export type ThemePreference = 'light' | 'dark' | 'system'
 
 /** Hinweis zu einem Termin – gespeichert wird trotzdem. */
 export interface ScheduleWarning {
-  type: 'arbeitszeit' | 'ueberschneidung' | 'abwesenheit'
+  type: 'arbeitszeit' | 'ueberschneidung' | 'abwesenheit' | 'verschoben'
   message: string
   jobId?: number
   absenceId?: number
@@ -50,6 +50,8 @@ export interface Job {
   endsAt: string | null
   calendarMinutes: number | null
   workMinutes: number | null
+  /** Geplanter Zeitaufwand in Minuten (auch ohne Termin) */
+  plannedMinutes: number | null
   assignee: UserRef | null
   /** Optional: Lehrling als zusaetzliche Unterstuetzung */
   apprentice: UserRef | null
@@ -68,6 +70,8 @@ export interface Job {
   timeEntries?: TimeEntry[]
   /** Nach dem Speichern bzw. in der Detailansicht */
   warnings?: ScheduleWarning[]
+  /** Nach dem Speichern: andere Jobs, die der Server wegen deaktivierter Parallelarbeit verschoben hat */
+  shifted?: Job[]
 }
 
 /** Eingeplante Arbeit – startsAt/endsAt sind gesetzt. */
@@ -90,6 +94,7 @@ export interface JobInput {
   description: string | null
   customer: string | null
   priority: Priority
+  plannedMinutes?: number | null
   startsAt: string | null
   endsAt: string | null
   assigneeId: number | null
@@ -256,6 +261,14 @@ export interface ScheduleCheck {
   endsAt: string
   workMinutes: number
   warnings: ScheduleWarning[]
+  /** Nur bei deaktivierter Parallelarbeit: wohin der Auftrag kommt und was nach hinten rutscht */
+  shift: ScheduleShift | null
+}
+
+export interface ScheduleShift {
+  startsAt: string
+  endsAt: string
+  moved: { id: number; title: string; customer: string | null; startsAt: string; endsAt: string }[]
 }
 
 export interface DeletionImpact {
@@ -293,4 +306,20 @@ export interface WorkRequestReport {
     withdrawn: number
     share: number
   }[]
+}
+
+/** Betriebsweite Einstellungen. */
+export interface Settings {
+  /** false: ein Mitarbeiter arbeitet immer nur an einem Auftrag, spaetere werden verschoben */
+  parallelScheduling: boolean
+}
+
+export interface SettingsInput extends Settings {
+  /** true: nur berechnen, was sich verschieben wuerde, nichts speichern */
+  dryRun?: boolean
+}
+
+export interface SettingsResult extends Settings {
+  /** Beim Ausschalten: die verschobenen (bzw. bei dryRun: die zu verschiebenden) Auftraege */
+  shifted: Job[]
 }

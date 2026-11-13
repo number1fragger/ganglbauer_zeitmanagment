@@ -4,6 +4,7 @@ import type { Job, User } from '@/api/types'
 import { canStart, canWorkOn, isDone, isOverdue, priorityColor, workState } from '@/utils/domain'
 import { formatDayMonth, formatRange, formatTime, sameDay, spanDays } from '@/utils/time'
 import AppIcon from './AppIcon.vue'
+import CustomerTag from './CustomerTag.vue'
 import LiveDuration from './LiveDuration.vue'
 import PriorityChip from './PriorityChip.vue'
 
@@ -57,6 +58,7 @@ const when = computed(() => {
   >
     <header class="task__head">
       <h3 class="task__title">{{ job.title }}</h3>
+      <CustomerTag v-if="job.customer" :customer="job.customer" />
       <span v-if="job.assignee" class="avatar avatar--small" :title="job.assignee.fullName">{{
         job.assignee.initials
       }}</span>
@@ -70,8 +72,6 @@ const when = computed(() => {
     <p v-if="user && job.apprentice?.id === user.id" class="task__role">
       Als Lehrling eingeteilt · zuständig: {{ job.assignee?.fullName ?? 'noch niemand' }}
     </p>
-
-    <p v-if="job.customer" class="task__customer">{{ job.customer }}</p>
 
     <div class="task__chips">
       <PriorityChip v-if="!isDone(job)" :priority="job.priority" />
@@ -188,22 +188,23 @@ const when = computed(() => {
 .task__head {
   display: flex;
   align-items: flex-start;
-  gap: 8px;
+  gap: 6px;
+  min-width: 0;
 }
 
 .task__title {
   flex: 1;
   min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
   font-size: 13px;
   font-weight: 600;
   line-height: 1.35;
   overflow-wrap: anywhere;
 }
 
-.task__customer {
-  margin-top: -4px;
-  color: var(--muted);
-  font-size: 12px;
+.task__head :deep(.customer-tag) {
+  margin-top: 1px;
 }
 
 .task__chips {

@@ -3,7 +3,7 @@ import { computed, reactive, ref } from 'vue'
 import { jobsApi } from '@/api'
 import { errorMessage } from '@/api/http'
 import type { Job, UserRef } from '@/api/types'
-import { toastSaved } from '@/composables/useToast'
+import { toastSaved, toastShifted } from '@/composables/useToast'
 import { workEnd, workingHours } from '@/composables/useWorkingHours'
 import { DEFAULT_SLOT_MINUTES } from '@/utils/calendar'
 import { nextWorkday, toDateKey } from '@/utils/time'
@@ -58,6 +58,7 @@ async function save(): Promise<void> {
       changeAssignee: true,
     })
     toastSaved(`„${job.title}“ eingeplant.`, job.warnings)
+    toastShifted(job.shifted)
     emit('scheduled', job)
   } catch (e) {
     error.value = errorMessage(e)

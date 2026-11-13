@@ -4,6 +4,7 @@ import type { Absence, Job, OverviewWorker } from '@/api/types'
 import { useNow } from '@/composables/useNow'
 import { workerColor } from '@/utils/domain'
 import { addDays, isWeekend, sameDay, startOfDay, startOfMonth, startOfWeek } from '@/utils/time'
+import CustomerTag from '../CustomerTag.vue'
 
 const MAX_CHIPS = 3
 const WEEKDAYS = ['Mo', 'Di', 'Mi', 'Do', 'Fr', 'Sa', 'So']
@@ -90,7 +91,8 @@ const cells = computed(() => {
           :title="`${job.title}${job.assignee ? ' · ' + job.assignee.fullName : ''}${job.apprentice ? ' + Lehrling ' + job.apprentice.fullName : ''}${conflicts?.has(job.id) ? '\n' + conflicts.get(job.id)!.join('\n') : ''}`"
           @click="$emit('open', job)"
         >
-          {{ job.assignee?.initials ?? '–' }}<template v-if="job.apprentice">+{{ job.apprentice.initials }}</template> · {{ job.title }}
+          <span class="month__chip-title">{{ job.assignee?.initials ?? '–' }}<template v-if="job.apprentice">+{{ job.apprentice.initials }}</template> · {{ job.title }}</span>
+          <CustomerTag v-if="job.customer" class="month__chip-tag" :customer="job.customer" />
         </button>
 
         <button v-if="cell.jobs.length > MAX_CHIPS" class="link month__more" @click="$emit('showDay', cell.day)">
@@ -187,6 +189,9 @@ const cells = computed(() => {
 
 .month__chip {
   position: relative;
+  display: flex;
+  align-items: center;
+  gap: 4px;
   height: 21px;
   padding: 0 8px;
   overflow: hidden;
@@ -197,6 +202,19 @@ const cells = computed(() => {
   text-align: left;
   text-overflow: ellipsis;
   white-space: nowrap;
+}
+
+.month__chip-title {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.month__chip-tag {
+  min-width: 0;
+  padding: 0 4px;
+  font-size: 9px;
+  line-height: 1.4;
 }
 
 .month__chip--conflict {

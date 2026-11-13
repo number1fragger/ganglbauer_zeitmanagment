@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { computed, ref, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
-import { absencesApi, jobsApi, planningApi, requestsApi } from '@/api'
+import { absencesApi, jobsApi, planningApi, requestsApi, settingsApi } from '@/api'
 import { errorMessage } from '@/api/http'
 import type { Absence, Job, Overview, OverviewWorker } from '@/api/types'
 import { useAuthStore } from '@/stores/auth'
@@ -18,8 +18,9 @@ import WeekCalendar from '@/components/calendar/WeekCalendar.vue'
 import WeekSidebar from '@/components/calendar/WeekSidebar.vue'
 import JobDialog from '@/components/JobDialog.vue'
 import { useBreakpoint } from '@/composables/useBreakpoint'
+import { confirmAction } from '@/composables/useConfirm'
 import { drag } from '@/composables/useJobDrag'
-import { toast, toastSaved } from '@/composables/useToast'
+import { toast, toastSaved, toastShifted } from '@/composables/useToast'
 import { endAfterMove, type MoveEvent, type ResizeEvent } from '@/utils/calendar'
 import { findConflicts, isMovable, listConflicts } from '@/utils/domain'
 import {
@@ -27,6 +28,7 @@ import {
   formatLongDate,
   formatHours,
   formatMonth,
+  formatRange,
   formatTime,
   fromDateKey,
   isoWeek,
@@ -60,7 +62,28 @@ const anchor = computed(
 )
 
 function show(nextMode: Mode, date: Date): void {
-  void router.replace({ query: { ansicht: nextMode, datum: toDateKey(date) } })
+  void router.replace({
+    query: {
+      ansicht: nextMode,
+      datum: toDateKey(date),
+      ...(selectedWorkerId.value !== null && { mitarbeiter: String(selectedWorkerId.value) }),
+    },
+  })
+}
+
+// ---- Mitarbeiter-Kalender -------------------------------------------------
+
+/** Gewaehlter Mitarbeiter (nur Planer); steht in der URL (?mitarbeiter=<id>). null = alle. */
+const selectedWorkerId = computed<number | null>(() => {
+  if (!auth.isPlanner) return null
+  const id = Number(route.query.mitarbeiter)
+  return Number.isInteger(id) && id > 0 ? id : null
+})
+
+function selectWorker(value: string): void {
+  const query = { ...route.query }
+  delete query.mitarbeiter
+  void router.replace({ query: { ...query, ...(value && { mitarbeiter: value }) } })
 }
 
 function step(direction: -1 | 1): void {
@@ -108,11 +131,34 @@ const visibleWorkers = ref<number[]>([])
 
 const workers = computed(() => overview.value?.workers ?? [])
 const workerRefs = computed(() => workers.value.map((w) => w.user))
-const conflicts = computed(() => findConflicts(jobs.value, absences.value))
+
+const involves = (job: Job, id: number) => job.assignee?.id === id || job.apprentice?.id === id
+
+/** Angezeigte Auftraege/Abwesenheiten: alle oder nur die des gewaehlten Mitarbeiters. */
+const shownJobs = computed(() =>
+  selectedWorkerId.value === null
+    ? jobs.value
+    : jobs.value.filter((job) => involves(job, selectedWorkerId.value!)),
+)
+const shownAbsences = computed(() =>
+  selectedWorkerId.value === null
+    ? absences.value
+    : absences.value.filter((a) => a.user.id === selectedWorkerId.value),
+)
+/** Tagesansicht: nur die Spur des Mitarbeiters. Woche: ueber `visible`, damit die Farben stabil bleiben. */
+const shownWorkers = computed(() =>
+  selectedWorkerId.value === null
+    ? workers.value
+    : workers.value.filter((w) => w.user.id === selectedWorkerId.value),
+)
+const calendarVisible = computed(() =>
+  selectedWorkerId.value === null ? visibleWorkers.value : [selectedWorkerId.value],
+)
+const conflicts = computed(() => findConflicts(shownJobs.value, shownAbsences.value))
 
 /** Hinweisleiste: wer ist gleichzeitig doppelt eingeplant oder abwesend? */
 const conflictList = computed(() =>
-  listConflicts(jobs.value, absences.value).map((c) => ({
+  listConflicts(shownJobs.value, shownAbsences.value).map((c) => ({
     job: c.kind === 'overlap' ? c.b : c.job,
     text:
       c.kind === 'overlap'
@@ -124,12 +170,80 @@ const conflictList = computed(() =>
 const formatDayTime = (date: Date) =>
   `${date.toLocaleDateString('de-AT', { weekday: 'short', day: '2-digit', month: '2-digit' })} ${formatTime(date)}`
 
+// ---- Parallele Auftraege ------------------------------------------------------
+
+/** null = noch nicht geladen. */
+const parallel = ref<boolean | null>(null)
+const parallelBusy = ref(false)
+
+async function loadSettings(): Promise<void> {
+  if (!auth.isPlanner) return
+  try {
+    parallel.value = (await settingsApi.get()).parallelScheduling
+  } catch {
+    /* Schalter bleibt ausgeblendet */
+  }
+}
+
+/** Zeile fuer die Rueckfrage: "Titel · Kunde · Zustaendiger → Di 17.11., 07:30 – 09:00" */
+function shiftLine(job: Job): string {
+  const parts = [job.title, job.customer, job.assignee?.fullName].filter(Boolean)
+  const range = job.startsAt && job.endsAt ? formatRange(new Date(job.startsAt), new Date(job.endsAt)) : ''
+  return range ? `${parts.join(' · ')} → ${range}` : parts.join(' · ')
+}
+
+async function setParallel(value: boolean): Promise<void> {
+  const previous = parallel.value
+  parallel.value = value
+  parallelBusy.value = true
+  try {
+    if (!value && previous) {
+      // Ausschalten: erst nachsehen, was sich verschieben wuerde, und nachfragen
+      const preview = await settingsApi.update({ parallelScheduling: false, dryRun: true })
+      if (preview.shifted.length) {
+        const lines = preview.shifted.slice(0, 10).map(shiftLine)
+        const rest = preview.shifted.length - lines.length
+        if (rest > 0) lines.push(`… und ${rest} weitere`)
+        const ok = await confirmAction({
+          title: 'Parallele Aufträge ausschalten?',
+          message:
+            'Bestehende Überschneidungen werden aufgelöst: Spätere Aufträge rutschen auf die nächste freie Zeit. Arbeitszeiten, Mittagspause und Abwesenheiten werden beachtet, bereits begonnene Aufträge bleiben.',
+          confirmLabel: 'Ausschalten und verschieben',
+          details: lines,
+        })
+        if (!ok) {
+          parallel.value = previous
+          return
+        }
+      }
+    }
+    const result = await settingsApi.update({ parallelScheduling: value })
+    parallel.value = result.parallelScheduling
+    toast(
+      parallel.value
+        ? 'Parallele Aufträge sind erlaubt.'
+        : 'Parallele Aufträge sind ausgeschaltet – spätere Aufträge werden automatisch verschoben.',
+      'success',
+    )
+    if (result.shifted?.length) {
+      toastShifted(result.shifted)
+      await load()
+    }
+  } catch (e) {
+    parallel.value = previous
+    toast(errorMessage(e), 'error')
+  } finally {
+    parallelBusy.value = false
+  }
+}
+
 let loadToken = 0
 /** Laedt Kalender, To-do-Liste und Uebersicht – nach jeder Aenderung aufgerufen. */
 async function load(): Promise<void> {
   const token = ++loadToken
   error.value = ''
   loading.value = true
+  void loadSettings() // kann inzwischen jemand anderer umgestellt haben
   try {
     const [nextJobs, nextOverview, board, nextAbsences] = await Promise.all([
       jobsApi.inRange(range.value.from, range.value.to),
@@ -264,9 +378,18 @@ function assignRequest(request: Overview['requests'][number]): void {
   }
 }
 
+/** Vom Server verschobene Auftraege sofort uebernehmen (load gleicht danach ab) und melden. */
+function applyShifted(shifted: Job[] = []): void {
+  if (!shifted.length) return
+  const byId = new Map(shifted.map((job) => [job.id, job]))
+  jobs.value = jobs.value.map((job) => byId.get(job.id) ?? job)
+  toastShifted(shifted)
+}
+
 async function onSaved(job: Job): Promise<void> {
   const requestId = dialog.value?.requestId
   dialog.value = null
+  jobs.value = jobs.value.map((item) => job.shifted?.find((s) => s.id === item.id) ?? item)
   if (requestId) await requestsApi.fulfil(requestId).catch(() => undefined)
   if (!job.scheduled && job.status !== 'erledigt') {
     if (isDesktop.value) setCollapsed(false)
@@ -332,6 +455,7 @@ async function moveJob(event: MoveEvent): Promise<void> {
       assigneeId,
       changeAssignee,
     })
+    applyShifted(saved.shifted)
     toastSaved(
       `„${job.title}“ ${wasScheduled ? 'verschoben' : 'eingeplant'}: ${formatDayTime(startsAt)} Uhr.`,
       saved.warnings,
@@ -362,6 +486,7 @@ async function resizeJob(event: ResizeEvent): Promise<void> {
       startsAt: startsAt.toISOString(),
       endsAt: endsAt.toISOString(),
     })
+    applyShifted(saved.shifted)
     const duration = saved.workMinutes ? ` (${formatHours(saved.workMinutes)} Arbeitszeit)` : ''
     toastSaved(
       `„${job.title}“: ${formatTime(startsAt)} – ${formatTime(endsAt)} Uhr${duration}.`,
@@ -423,6 +548,31 @@ const showRightPanel = computed(() => isDesktop.value && mode.value !== 'monat' 
             {{ m.label }}
           </button>
         </div>
+        <label v-if="auth.isPlanner && workerRefs.length" class="toolbar__select">
+          <span class="toolbar__select-label">Kalender:</span>
+          <select
+            class="input"
+            aria-label="Kalender"
+            :value="selectedWorkerId ?? ''"
+            @change="selectWorker(($event.target as HTMLSelectElement).value)"
+          >
+            <option value="">Alle Mitarbeiter</option>
+            <option v-for="w in workerRefs" :key="w.id" :value="w.id">{{ w.fullName }}</option>
+          </select>
+        </label>
+        <label
+          v-if="auth.isPlanner && parallel !== null"
+          class="checkbox toolbar__parallel"
+          title="Aus: Ein Mitarbeiter kann immer nur einen Auftrag gleichzeitig machen – später eingeplante Aufträge werden automatisch nach hinten verschoben."
+        >
+          <input
+            type="checkbox"
+            :checked="parallel"
+            :disabled="parallelBusy"
+            @change="setParallel(($event.target as HTMLInputElement).checked)"
+          />
+          Parallele Aufträge erlauben
+        </label>
         <button
           v-if="auth.canManageAbsences"
           class="btn btn--outline"
@@ -519,8 +669,8 @@ const showRightPanel = computed(() => isDesktop.value && mode.value !== 'monat' 
           v-if="isMobile"
           :from="range.from"
           :to="range.to"
-          :jobs="jobs"
-          :absences="absences"
+          :jobs="shownJobs"
+          :absences="shownAbsences"
           :conflicts="conflicts"
           :can-open-absence="auth.canManageAbsences"
           @open-absence="openAbsence"
@@ -530,9 +680,9 @@ const showRightPanel = computed(() => isDesktop.value && mode.value !== 'monat' 
         <DayCalendar
           v-else-if="mode === 'tag'"
           :day="anchor"
-          :workers="workers"
-          :jobs="jobs"
-          :absences="absences"
+          :workers="shownWorkers"
+          :jobs="shownJobs"
+          :absences="shownAbsences"
           :draggable="auth.isPlanner"
           :can-drag="isMovable"
           :conflicts="conflicts"
@@ -547,9 +697,9 @@ const showRightPanel = computed(() => isDesktop.value && mode.value !== 'monat' 
           v-else-if="mode === 'woche'"
           :week-start="range.from"
           :workers="workers"
-          :visible="visibleWorkers"
-          :jobs="jobs"
-          :absences="absences"
+          :visible="calendarVisible"
+          :jobs="shownJobs"
+          :absences="shownAbsences"
           :draggable="auth.isPlanner"
           :can-drag="isMovable"
           :conflicts="conflicts"
@@ -564,8 +714,8 @@ const showRightPanel = computed(() => isDesktop.value && mode.value !== 'monat' 
           v-else
           :month="anchor"
           :workers="workers"
-          :jobs="jobs"
-          :absences="absences"
+          :jobs="shownJobs"
+          :absences="shownAbsences"
           :conflicts="conflicts"
           :can-open-absence="auth.canManageAbsences"
           @open="openJob"
@@ -660,8 +810,28 @@ const showRightPanel = computed(() => isDesktop.value && mode.value !== 'monat' 
 
 .toolbar__right {
   display: flex;
+  flex-wrap: wrap;
   align-items: center;
   gap: 10px;
+}
+
+.toolbar__select {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 13px;
+  color: var(--muted);
+}
+
+.toolbar__select .input {
+  width: auto;
+  min-width: 150px;
+  padding-block: 6px;
+}
+
+.toolbar__parallel {
+  font-size: 13px;
+  white-space: nowrap;
 }
 
 .planning__error {
@@ -851,6 +1021,7 @@ const showRightPanel = computed(() => isDesktop.value && mode.value !== 'monat' 
     min-width: 0;
   }
 
+  .toolbar__select-label,
   .toolbar__new-label,
   .toolbar__todo-label {
     display: none;

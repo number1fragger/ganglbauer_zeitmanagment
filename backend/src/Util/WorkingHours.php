@@ -121,6 +121,7 @@ final class WorkingHours
      */
     public static function durationMinutes(\DateTimeImmutable $startsAt, \DateTimeImmutable $endsAt): int
     {
+        $startsAt = self::skipBreak($startsAt);
         if (!self::isWorkingStart($startsAt)) {
             return max(0, intdiv($endsAt->getTimestamp() - $startsAt->getTimestamp(), 60));
         }
@@ -135,7 +136,7 @@ final class WorkingHours
             throw new \InvalidArgumentException('Die Dauer muss positiv sein.');
         }
 
-        $startsAt = LocalTime::of($startsAt);
+        $startsAt = self::skipBreak(LocalTime::of($startsAt));
         if (!self::isWorkingStart($startsAt)) {
             return $startsAt->modify(sprintf('+%d minutes', $minutes));
         }
@@ -156,6 +157,62 @@ final class WorkingHours
         }
 
         throw new \InvalidArgumentException('Die Dauer ist zu lang.');
+    }
+
+    /**
+     * Pause (z. B. Mittagspause), in der der Zeitpunkt liegt – null ausserhalb.
+     * $asEnd: Pausenende zaehlt dazu, Pausenbeginn nicht (wie bei isWorkingEnd).
+     *
+     * @return array{0: \DateTimeImmutable, 1: \DateTimeImmutable}|null
+     */
+    public static function breakAt(\DateTimeImmutable $moment, bool $asEnd = false): ?array
+    {
+        $moment = LocalTime::of($moment);
+        if (null === (self::DAYS[(int) $moment->format('N')] ?? null)) {
+            return null;
+        }
+
+        foreach (self::BREAKS as [$from, $to]) {
+            $breakStart = self::at($moment, $from);
+            $breakEnd = self::at($moment, $to);
+            $inside = $asEnd ? $moment > $breakStart && $moment <= $breakEnd : $moment >= $breakStart && $moment < $breakEnd;
+            if ($inside) {
+                return [$breakStart, $breakEnd];
+            }
+        }
+
+        return null;
+    }
+
+    /** Beginn in einer Pause -> Pausenende, sonst unveraendert. */
+    public static function skipBreak(\DateTimeImmutable $moment): \DateTimeImmutable
+    {
+        return self::breakAt($moment)[1] ?? LocalTime::of($moment);
+    }
+
+    /**
+     * Termin aus der Pause heraushalten: Beginn in der Pause -> Pausenende,
+     * Ende in der Pause -> Pausenbeginn. Die Arbeitszeit bleibt gleich, weil
+     * in der Pause ohnehin nicht gearbeitet wird. Liegt der ganze Termin in
+     * der Pause, wird er mit seiner Laenge hinter die Pause gelegt.
+     *
+     * @return array{0: \DateTimeImmutable, 1: \DateTimeImmutable}
+     */
+    public static function fitAroundBreaks(\DateTimeImmutable $startsAt, \DateTimeImmutable $endsAt): array
+    {
+        $start = self::skipBreak($startsAt);
+        $end = LocalTime::of($endsAt);
+
+        $breakStart = self::breakAt($end, asEnd: true)[0] ?? null;
+        if (null !== $breakStart && $breakStart > $start) {
+            $end = $breakStart;
+        }
+        if ($end <= $start) {
+            $clockMinutes = max(1, intdiv($endsAt->getTimestamp() - $startsAt->getTimestamp(), 60));
+            $end = self::endFor($start, $clockMinutes);
+        }
+
+        return [$start, $end];
     }
 
     /** Naechster Zeitpunkt in der Arbeitszeit ab $moment (oder $moment selbst). */

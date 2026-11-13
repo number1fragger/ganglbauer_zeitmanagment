@@ -12,7 +12,11 @@ use App\Exception\WorkflowException;
 use App\Repository\JobRepository;
 use App\Repository\UserRepository;
 use App\Security\JobVoter;
+use App\Service\PlannedMove;
 use App\Service\ScheduleChecker;
+use App\Service\ScheduleShifter;
+use App\Service\SchedulingSettings;
+use App\Service\ShiftResult;
 use App\Service\TimeTracker;
 use App\Util\LocalTime;
 use App\Util\WorkingHours;
@@ -48,6 +52,8 @@ final class JobController extends AbstractApiController
         private readonly JobRepository $jobs,
         private readonly UserRepository $users,
         private readonly ScheduleChecker $checker,
+        private readonly SchedulingSettings $settings,
+        private readonly ScheduleShifter $shifter,
         private readonly NormalizerInterface $normalizer,
     ) {
     }
@@ -114,7 +120,7 @@ final class JobController extends AbstractApiController
     /**
      * Vorschau fuer das Formular: Ende bzw. Dauer nach den Arbeitszeiten und
      * alle Hinweise, bevor gespeichert wird.
-     * ?startsAt=&endsAt=|durationMinutes=&assigneeId=&apprenticeId=&jobId=
+     * ?startsAt=&endsAt=|durationMinutes=&plannedMinutes=&assigneeId=&apprenticeId=&jobId=
      */
     #[Route('/check', name: 'api_jobs_check', methods: ['GET'])]
     #[IsGranted('ROLE_SEKRETAERIN')]
@@ -124,22 +130,54 @@ final class JobController extends AbstractApiController
             ?? throw new BadRequestHttpException('Bitte den Beginn angeben.');
         $endsAt = $this->parseDate($request->query->getString('endsAt'), 'endsAt');
         $duration = $request->query->has('durationMinutes') ? $request->query->getInt('durationMinutes') : null;
+        $planned = $request->query->has('plannedMinutes') ? $request->query->getInt('plannedMinutes') : null;
 
-        $endsAt = $this->resolveEnd($startsAt, $endsAt, $duration);
+        $endsAt = $this->resolveEnd($startsAt, $endsAt, $duration, $planned);
         if ($endsAt <= $startsAt) {
             throw new InvalidInputException('Das Ende des Termins muss nach dem Beginn liegen.');
         }
+        // Wie beim Speichern (Job::schedule): nicht in der Mittagspause beginnen oder enden.
+        [$startsAt, $endsAt] = WorkingHours::fitAroundBreaks($startsAt, $endsAt);
 
         $person = fn (string $key): ?User => '' !== $request->query->getString($key)
             ? ($this->users->find($request->query->getInt($key)) ?? throw new BadRequestHttpException('Diese Person gibt es nicht.'))
             : null;
         $jobId = '' !== $request->query->getString('jobId') ? $request->query->getInt('jobId') : null;
 
+        $assignee = $person('assigneeId');
+        $apprentice = $person('apprenticeId');
+
+        // Bei ausgeschaltetem parallelem Einplanen wird verschoben statt gewarnt.
+        $plan = (null !== $assignee || null !== $apprentice) && !$this->settings->allowsParallel()
+            ? $this->shifter->planFor($startsAt, $endsAt, $assignee, $apprentice, null !== $jobId ? $this->jobs->find($jobId) : null)
+            : null;
+        $finalStart = $plan?->startsAt ?? $startsAt;
+        $finalEnd = $plan?->endsAt ?? $endsAt;
+
+        $warnings = $this->checker->check($finalStart, $finalEnd, $assignee, $apprentice, $jobId);
+        if (null !== $plan) {
+            $warnings = array_values(array_filter($warnings, static fn (array $w): bool => ScheduleChecker::UEBERSCHNEIDUNG !== $w['type']));
+            if ($plan->selfMoved) {
+                array_unshift($warnings, ['type' => ScheduleChecker::VERSCHOBEN, 'message' => 'Wird wegen Überschneidung verschoben auf '.$this->describeSlot($finalStart, $finalEnd).'.']);
+            }
+        }
+
         return $this->json([
             'startsAt' => $startsAt->format(\DATE_ATOM),
             'endsAt' => $endsAt->format(\DATE_ATOM),
             'workMinutes' => WorkingHours::durationMinutes($startsAt, $endsAt),
-            'warnings' => $this->checker->check($startsAt, $endsAt, $person('assigneeId'), $person('apprenticeId'), $jobId),
+            'warnings' => $warnings,
+            'shift' => null === $plan ? null : [
+                'startsAt' => $finalStart->format(\DATE_ATOM),
+                'endsAt' => $finalEnd->format(\DATE_ATOM),
+                'moved' => array_map(static fn (PlannedMove $move): array => [
+                    'id' => (int) $move->job->getId(),
+                    'title' => $move->job->getTitle(),
+                    'customer' => $move->job->getCustomer(),
+                    'startsAt' => $move->startsAt->format(\DATE_ATOM),
+                    'endsAt' => $move->endsAt->format(\DATE_ATOM),
+                ], $plan->moved),
+            ],
         ]);
     }
 
@@ -149,6 +187,7 @@ final class JobController extends AbstractApiController
     {
         $job = new Job();
         $this->apply($job, $input);
+        $shift = $this->shiftOverlaps($job);
 
         $this->em->persist($job);
         $this->em->flush();
@@ -157,7 +196,7 @@ final class JobController extends AbstractApiController
             $tracker->complete($job);
         }
 
-        return $this->withWarnings($job, Response::HTTP_CREATED);
+        return $this->withWarnings($job, Response::HTTP_CREATED, shift: $shift);
     }
 
     #[Route('/{id}', name: 'api_jobs_update', methods: ['PUT'], requirements: ['id' => '\d+'])]
@@ -165,6 +204,7 @@ final class JobController extends AbstractApiController
     public function update(Job $job, #[MapRequestPayload] JobInput $input, TimeTracker $tracker): JsonResponse
     {
         $this->apply($job, $input);
+        $shift = $this->shiftOverlaps($job);
         $this->em->flush();
 
         // Abwaertskompatibel: Abhaken ueber das Formular laeuft ueber dieselbe Logik wie /complete.
@@ -174,7 +214,7 @@ final class JobController extends AbstractApiController
             $tracker->reopen($job);
         }
 
-        return $this->withWarnings($job);
+        return $this->withWarnings($job, shift: $shift);
     }
 
     #[Route('/{id}', name: 'api_jobs_delete', methods: ['DELETE'], requirements: ['id' => '\d+'])]
@@ -214,12 +254,13 @@ final class JobController extends AbstractApiController
             $job->setAssignee($assignee);
         }
 
-        $endsAt = $this->resolveEnd($input->startsAt, $input->endsAt, $input->durationMinutes);
+        $endsAt = $this->resolveEnd($input->startsAt, $input->endsAt, $input->durationMinutes, $job->getPlannedMinutes());
         $this->guardSchedule($job, $input->startsAt, $endsAt, $input->confirmStartedChange);
         $job->schedule($input->startsAt, $endsAt);
+        $shift = $this->shiftOverlaps($job);
         $this->em->flush();
 
-        return $this->withWarnings($job);
+        return $this->withWarnings($job, shift: $shift);
     }
 
     /**
@@ -264,12 +305,13 @@ final class JobController extends AbstractApiController
 
         $this->guardTeam($assignee, $apprentice);
 
-        $endsAt = null !== $input->startsAt ? $this->resolveEnd($input->startsAt, $input->endsAt, $input->durationMinutes) : null;
+        $endsAt = null !== $input->startsAt ? $this->resolveEnd($input->startsAt, $input->endsAt, $input->durationMinutes, $input->plannedMinutes) : null;
         $this->guardSchedule($job, $input->startsAt, $endsAt, $input->confirmStartedChange);
 
         $job->setTitle($input->title)
             ->setDescription($input->description)
             ->setCustomer($input->customer)
+            ->setPlannedMinutes($input->plannedMinutes)
             ->setPriority($input->priority)
             ->setAssignee($assignee)
             ->setApprentice($apprentice);
@@ -281,8 +323,8 @@ final class JobController extends AbstractApiController
         }
     }
 
-    /** Ende aus Angabe, aus der Dauer (Arbeitszeit) oder Standardlaenge. */
-    private function resolveEnd(\DateTimeImmutable $startsAt, ?\DateTimeImmutable $endsAt, ?int $durationMinutes): \DateTimeImmutable
+    /** Ende aus Angabe, aus der Dauer (Arbeitszeit), der geplanten Dauer oder Standardlaenge. */
+    private function resolveEnd(\DateTimeImmutable $startsAt, ?\DateTimeImmutable $endsAt, ?int $durationMinutes, ?int $plannedMinutes = null): \DateTimeImmutable
     {
         if (null !== $endsAt) {
             return LocalTime::of($endsAt);
@@ -296,7 +338,20 @@ final class JobController extends AbstractApiController
             return WorkingHours::endFor($startsAt, $durationMinutes);
         }
 
-        return Job::defaultEndFor($startsAt);
+        return Job::defaultEndFor($startsAt, $plannedMinutes);
+    }
+
+    /**
+     * Bei ausgeschaltetem parallelem Einplanen Ueberschneidungen mit anderen
+     * Terminen desselben Arbeiters durch Verschieben aufloesen.
+     */
+    private function shiftOverlaps(Job $job): ShiftResult
+    {
+        if ($this->settings->allowsParallel() || !$job->isScheduled() || $job->isDone() || [] === $job->getPeople()) {
+            return new ShiftResult();
+        }
+
+        return $this->shifter->resolve($job);
     }
 
     /** Lehrling und zustaendige Person muessen verschiedene Personen sein. */
@@ -310,13 +365,34 @@ final class JobController extends AbstractApiController
     /**
      * @param string[]|null $groups
      */
-    private function withWarnings(Job $job, int $status = Response::HTTP_OK, ?array $groups = null): JsonResponse
+    private function withWarnings(Job $job, int $status = Response::HTTP_OK, ?array $groups = null, ?ShiftResult $shift = null): JsonResponse
     {
-        $data = $this->normalizer->normalize($job, 'json', ['groups' => $groups ?? self::GROUPS]);
+        $groups ??= self::GROUPS;
+        $data = $this->normalizer->normalize($job, 'json', ['groups' => $groups]);
         \assert(\is_array($data));
         $data['warnings'] = $this->checker->forJob($job);
+        if ($shift?->selfMoved) {
+            $start = $job->getStartsAt();
+            $end = $job->getEndsAt();
+            \assert(null !== $start && null !== $end);
+            array_unshift($data['warnings'], ['type' => ScheduleChecker::VERSCHOBEN, 'message' => 'Wegen Überschneidung verschoben auf '.$this->describeSlot($start, $end).'.']);
+        }
+        $data['shifted'] = array_map(
+            fn (Job $moved): mixed => $this->normalizer->normalize($moved, 'json', ['groups' => $groups]),
+            $shift?->moved ?? [],
+        );
 
         return $this->json($data, $status);
+    }
+
+    /** "Mo 28.09. 10:00–11:00" bzw. "Fr 02.10. 13:30–Mo 05.10. 08:00" bei mehrtaegigen Terminen. */
+    private function describeSlot(\DateTimeImmutable $start, \DateTimeImmutable $end): string
+    {
+        $days = [1 => 'Mo', 'Di', 'Mi', 'Do', 'Fr', 'Sa', 'So'];
+        $label = static fn (\DateTimeImmutable $d): string => $days[(int) $d->format('N')].' '.$d->format('d.m. H:i');
+        $until = $start->format('Y-m-d') === $end->format('Y-m-d') ? $end->format('H:i') : $label($end);
+
+        return $label($start).'–'.$until;
     }
 
     /**

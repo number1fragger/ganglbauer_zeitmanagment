@@ -126,6 +126,7 @@ final class AppFixtures extends Fixture
             ->setCustomer('Gut Ebersdorf')
             ->setPriority(Priority::High)
             ->setAssignee($worker)
+            ->setPlannedMinutes(960)
             ->schedule($start, $monday->modify('+3 days 15:00'));
         $manager->persist($job);
 
@@ -165,18 +166,19 @@ final class AppFixtures extends Fixture
     private function backlog(ObjectManager $manager, array $users): void
     {
         $tasks = [
-            ['Hebebühne 2 warten lassen', 'Wartungsfirma anrufen, Termin vereinbaren.', null, Priority::Medium, null],
-            ['Werkzeugwand neu beschriften', null, null, Priority::Low, 'd.gruber'],
-            ['Frontlader Hydraulikleck', 'Kunde bringt den Traktor, sobald die Ernte vorbei ist.', 'Fam. Brunner', Priority::High, 'a.huber'],
-            ['Ersatzteile Lagerinventur', 'Regale 1–6 zählen und Fehlbestände notieren.', null, Priority::Low, 'b.steiner'],
+            ['Hebebühne 2 warten lassen', 'Wartungsfirma anrufen, Termin vereinbaren.', null, Priority::Medium, null, 90],
+            ['Werkzeugwand neu beschriften', null, null, Priority::Low, 'd.gruber', 60],
+            ['Frontlader Hydraulikleck', 'Kunde bringt den Traktor, sobald die Ernte vorbei ist.', 'Fam. Brunner', Priority::High, 'a.huber', 180],
+            ['Ersatzteile Lagerinventur', 'Regale 1–6 zählen und Fehlbestände notieren.', null, Priority::Low, 'b.steiner', 240],
         ];
 
-        foreach ($tasks as [$title, $description, $customer, $priority, $worker]) {
+        foreach ($tasks as [$title, $description, $customer, $priority, $worker, $planned]) {
             $manager->persist((new Job())
                 ->setTitle($title)
                 ->setDescription($description)
                 ->setCustomer($customer)
                 ->setPriority($priority)
+                ->setPlannedMinutes($planned)
                 ->setAssignee(null !== $worker ? $users[$worker] : null));
         }
     }
@@ -232,6 +234,7 @@ final class AppFixtures extends Fixture
             ->setTitle($title)
             ->setCustomer($customer)
             ->setPriority($priority)
+            ->setPlannedMinutes($slotMinutes)
             ->setAssignee($assignee)
             ->schedule($start, $start->modify(sprintf('+%d minutes', $slotMinutes)));
         $manager->persist($job);

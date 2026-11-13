@@ -17,6 +17,9 @@ import type {
   WorkRequest,
   WorkRequestReport,
   ScheduleCheck,
+  SettingsInput,
+  SettingsResult,
+  Settings,
 } from './types'
 import type { WorkingHoursConfig } from '@/utils/workTime'
 
@@ -123,4 +126,9 @@ export const usersApi = {
   deletionImpact: (id: number) => http.get<DeletionImpact>(`/api/users/${id}/deletion-impact`),
   /** Endgueltig loeschen – Auftraege und Ist-Zeit bleiben als Historie. */
   remove: (id: number) => http.delete(`/api/users/${id}`),
+}
+
+export const settingsApi = {
+  get: () => http.get<Settings>('/api/settings'),
+  update: (input: SettingsInput) => http.put<SettingsResult>('/api/settings', input),
 }

@@ -3,6 +3,8 @@ import { configApi } from '@/api'
 import {
   durationMinutes,
   endFor,
+  fitAroundBreaks,
+  skipBreak,
   timeWarnings,
   type WorkingHoursConfig,
 } from '@/utils/workTime'
@@ -31,6 +33,16 @@ export function workDuration(startsAt: Date, endsAt: Date): number {
 /** Ende aus Beginn und Dauer in Arbeitsminuten. */
 export function workEnd(startsAt: Date, minutes: number): Date {
   return endFor(config(), startsAt, minutes)
+}
+
+/** Beginn in der Mittagspause -> Pausenende (vor dem Laden: unveraendert). */
+export function workStart(moment: Date): Date {
+  return workingHours.value ? skipBreak(workingHours.value, moment) : moment
+}
+
+/** Termin aus der Mittagspause heraushalten (wie das Backend beim Speichern). */
+export function fitToWork(startsAt: Date, endsAt: Date): [Date, Date] {
+  return workingHours.value ? fitAroundBreaks(workingHours.value, startsAt, endsAt) : [startsAt, endsAt]
 }
 
 /** Hinweise zu Beginn/Ende ausserhalb der Arbeitszeit. */

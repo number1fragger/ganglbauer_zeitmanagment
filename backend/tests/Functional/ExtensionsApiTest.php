@@ -83,10 +83,16 @@ final class ExtensionsApiTest extends ApiTestCase
     /** Planung in der Mittagspause oder nach Arbeitsschluss: gespeichert, aber mit Warnung. */
     public function testPlanningOutsideWorkingHoursWarnsButIsSaved(): void
     {
-        $job = $this->createJob(['startsAt' => '2026-09-28T12:15:00+02:00', 'endsAt' => '2026-09-28T13:00:00+02:00']);
-        self::assertSame(['arbeitszeit', 'arbeitszeit'], array_column($job['warnings'], 'type'));
-        self::assertStringContainsString('Mittagspause', $job['warnings'][0]['message']);
-        self::assertSame('12:15', $this->reload($job['id'])->getStartsAt()?->format('H:i'), 'nicht automatisch verschoben');
+        // Die Mittagspause bleibt frei: ein Termin darin rutscht mit seiner Laenge dahinter.
+        $lunch = $this->createJob(['startsAt' => '2026-09-28T12:15:00+02:00', 'endsAt' => '2026-09-28T13:00:00+02:00']);
+        self::assertSame([], $lunch['warnings']);
+        self::assertSame('13:00', $this->reload($lunch['id'])->getStartsAt()?->format('H:i'));
+        self::assertSame('13:45', $this->reload($lunch['id'])->getEndsAt()?->format('H:i'));
+
+        // Ueberstunden am Abend sind erlaubt, werden aber gemeldet und nicht verschoben.
+        $evening = $this->createJob(['startsAt' => '2026-09-28T17:30:00+02:00', 'endsAt' => '2026-09-28T18:30:00+02:00']);
+        self::assertSame(['arbeitszeit', 'arbeitszeit'], array_column($evening['warnings'], 'type'));
+        self::assertSame('17:30', $this->reload($evening['id'])->getStartsAt()?->format('H:i'), 'nicht automatisch verschoben');
 
         $friday = $this->createJob(['startsAt' => '2026-10-02T13:00:00+02:00', 'endsAt' => '2026-10-02T15:00:00+02:00']);
         self::assertStringContainsString('Ende außerhalb der Arbeitszeit', $friday['warnings'][0]['message']);

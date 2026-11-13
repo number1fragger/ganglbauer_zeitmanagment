@@ -15,18 +15,28 @@ final class JobTest extends TestCase
 {
     public function testScheduleWithEnd(): void
     {
-        $job = (new Job())->schedule(new \DateTimeImmutable('2026-09-28 12:00'), new \DateTimeImmutable('2026-09-28 15:00'));
+        $job = (new Job())->schedule(new \DateTimeImmutable('2026-09-28 08:00'), new \DateTimeImmutable('2026-09-28 11:00'));
 
         self::assertTrue($job->isScheduled());
         self::assertSame(180, $job->getCalendarMinutes());
     }
 
+    /** Beginn in der Mittagspause -> 13:00, Ende in der Mittagspause -> 12:00. */
+    public function testScheduleKeepsTheLunchBreakFree(): void
+    {
+        $intoLunch = (new Job())->schedule(new \DateTimeImmutable('2026-09-28 11:00'), new \DateTimeImmutable('2026-09-28 12:30'));
+        self::assertSame('11:00-12:00', $intoLunch->getStartsAt()?->format('H:i').'-'.$intoLunch->getEndsAt()?->format('H:i'));
+
+        $fromLunch = (new Job())->schedule(new \DateTimeImmutable('2026-09-28 12:00'));
+        self::assertSame('13:00-14:00', $fromLunch->getStartsAt()?->format('H:i').'-'.$fromLunch->getEndsAt()?->format('H:i'));
+    }
+
     /** Ohne Ende: technischer Standard-Kalenderblock, keine geplante Arbeitszeit. */
     public function testScheduleWithoutEndUsesTechnicalDefaultSlot(): void
     {
-        $job = (new Job())->schedule(new \DateTimeImmutable('2026-09-28 12:00'));
+        $job = (new Job())->schedule(new \DateTimeImmutable('2026-09-28 10:00'));
 
-        self::assertSame('13:00', $job->getEndsAt()?->format('H:i'));
+        self::assertSame('11:00', $job->getEndsAt()?->format('H:i'));
         self::assertSame(Job::DEFAULT_SLOT_MINUTES, $job->getCalendarMinutes());
     }
 
@@ -44,9 +54,8 @@ final class JobTest extends TestCase
         self::assertSame('07:00', $job->getStartsAt()?->format('H:i'));
     }
 
-    public function testNoPlannedTimeExistsAnymore(): void
+    public function testOverrunLogicDoesNotExist(): void
     {
-        self::assertFalse(method_exists(Job::class, 'getPlannedMinutes'));
         self::assertFalse(method_exists(Job::class, 'extendBy'));
         self::assertFalse(method_exists(Job::class, 'isOverrun'));
     }

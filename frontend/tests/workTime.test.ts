@@ -9,6 +9,8 @@ import {
   dayBounds,
   durationMinutes,
   endFor,
+  fitAroundBreaks,
+  skipBreak,
   timeWarnings,
   windowsOn,
   type WorkingHoursConfig,
@@ -90,4 +92,21 @@ test('Kalenderraster und schattierte Zeiten', () => {
     { from: 12, to: 13, label: 'Mittagspause' },
     { from: 14, to: 17, label: 'Feierabend' },
   ])
+})
+
+test('Mittagspause zaehlt nie als Arbeitszeit – wie im Backend', () => {
+  assert.equal(fmt(skipBreak(config, d('2026-09-28 12:30'))), '2026-09-28 13:00')
+  assert.equal(durationMinutes(config, d('2026-09-28 12:30'), d('2026-09-28 15:00')), 120)
+  assert.equal(fmt(endFor(config, d('2026-09-28 12:00'), 120)), '2026-09-28 15:00')
+})
+
+test('Termine werden aus der Mittagspause herausgehalten', () => {
+  const fit = (from: string, to: string) =>
+    fitAroundBreaks(config, d(from), d(to)).map(fmt).join(' – ')
+
+  assert.equal(fit('2026-09-28 11:00', '2026-09-28 12:30'), '2026-09-28 11:00 – 2026-09-28 12:00')
+  assert.equal(fit('2026-09-28 12:00', '2026-09-28 14:00'), '2026-09-28 13:00 – 2026-09-28 14:00')
+  assert.equal(fit('2026-09-28 12:15', '2026-09-28 13:00'), '2026-09-28 13:00 – 2026-09-28 13:45')
+  assert.equal(fit('2026-09-28 16:00', '2026-09-28 18:00'), '2026-09-28 16:00 – 2026-09-28 18:00')
+  assert.equal(fit('2026-10-03 12:00', '2026-10-03 14:00'), '2026-10-03 12:00 – 2026-10-03 14:00')
 })

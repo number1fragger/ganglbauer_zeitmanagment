@@ -1,0 +1,21 @@
+# Vue-App (History-Mode): Unterseiten beim Neuladen auf index.html umleiten
+<IfModule mod_rewrite.c>
+    RewriteEngine On
+    RewriteBase /
+
+    # Echte Dateien und Ordner (assets, favicon) normal ausliefern
+    RewriteCond %{REQUEST_FILENAME} -f [OR]
+    RewriteCond %{REQUEST_FILENAME} -d
+    RewriteRule ^ - [L]
+
+    # /api gehoert dem Backend, nicht dem Vue-Router
+    RewriteCond %{REQUEST_URI} !^/api(/|$)
+    RewriteRule ^ index.html [L]
+</IfModule>
+
+<IfModule mod_headers.c>
+    Header always set X-Content-Type-Options "nosniff"
+    Header always set X-Frame-Options "DENY"
+    Header always set Referrer-Policy "no-referrer"
+    Header always set Strict-Transport-Security "max-age=31536000; includeSubDomains"
+</IfModule>

@@ -2,3 +2,5 @@
 /.env
 # Datenbank-Sicherungen (deploy/backup.sh)
 /backups/
+# macOS-Ordnerinfos
+.DS_Store

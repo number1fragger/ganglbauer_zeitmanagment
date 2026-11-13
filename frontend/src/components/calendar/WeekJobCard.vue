@@ -4,6 +4,7 @@ import { computed } from 'vue'
 import { workTimeWarnings } from '@/composables/useWorkingHours'
 import { isDone, priorityColor } from '@/utils/domain'
 import AppIcon from '../AppIcon.vue'
+import CustomerTag from '../CustomerTag.vue'
 
 const props = defineProps<{ job: Job; color: string; conflict?: string[]; asApprentice?: boolean }>()
 
@@ -29,7 +30,10 @@ defineEmits<{ open: [job: Job] }>()
     @click="$emit('open', job)"
   >
     <span class="week-job__top">
-      <strong>{{ job.title }}</strong>
+      <span class="week-job__name">
+        <strong>{{ job.title }}</strong>
+        <CustomerTag v-if="job.customer" :customer="job.customer" />
+      </span>
       <AppIcon v-if="conflict?.length" class="week-job__warn" name="layers" :size="11" />
       <AppIcon v-else-if="outside.length" class="week-job__outside" name="clock" :size="11" />
       <span v-else class="dot" :style="{ '--dot': priorityColor(job.priority) }" />
@@ -90,7 +94,21 @@ defineEmits<{ open: [job: Job] }>()
   gap: 4px;
 }
 
+.week-job__name {
+  display: flex;
+  flex: 1;
+  align-items: center;
+  gap: 4px;
+  min-width: 0;
+}
+
+.week-job__name :deep(.customer-tag) {
+  padding: 0 4px;
+  font-size: 9px;
+}
+
 .week-job__top strong {
+  min-width: 0;
   overflow: hidden;
   font-size: 11px;
   font-weight: 600;

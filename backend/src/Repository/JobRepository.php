@@ -137,6 +137,24 @@ class JobRepository extends ServiceEntityRepository
     }
 
     /**
+     * Alle eingeplanten Arbeiten (aller Mitarbeiter), die nach $from enden –
+     * fuer das automatische Verschieben (ScheduleShifter).
+     *
+     * @return Job[]
+     */
+    public function findScheduledEndingAfter(\DateTimeImmutable $from): array
+    {
+        return $this->withRelations()
+            ->andWhere('j.startsAt IS NOT NULL')
+            ->andWhere('j.endsAt > :from')
+            ->setParameter('from', $from)
+            ->orderBy('j.startsAt', 'ASC')
+            ->addOrderBy('j.id', 'ASC')
+            ->getQuery()
+            ->getResult();
+    }
+
+    /**
      * Eingeplante Arbeiten eines Arbeiters, die sich mit dem Zeitraum
      * ueberschneiden – fuer die Konflikterkennung.
      *

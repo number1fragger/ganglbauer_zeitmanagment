@@ -5,6 +5,7 @@ import { beginDrag, drag } from '@/composables/useJobDrag'
 import type { MoveEvent } from '@/utils/calendar'
 import { priorityColor, priorityWeight } from '@/utils/domain'
 import AppIcon from '../AppIcon.vue'
+import CustomerTag from '../CustomerTag.vue'
 import StatusChip from '../StatusChip.vue'
 
 /**
@@ -144,10 +145,12 @@ function startDrag(event: PointerEvent, job: Job): void {
         @pointerdown="startDrag($event, job)"
       >
         <button class="todo__open" :aria-label="`${job.title} öffnen`" @click="emit('open', job)">
-          <strong>{{ job.title }}</strong>
+          <span class="todo__title-row">
+            <strong>{{ job.title }}</strong>
+            <CustomerTag v-if="job.customer" :customer="job.customer" />
+          </span>
           <small>
             <span>{{ job.assignee?.fullName ?? 'Nicht zugeteilt' }}</span>
-            <template v-if="job.customer"> · {{ job.customer }}</template>
           </small>
           <StatusChip v-if="job.status !== 'offen'" class="todo__status" :job="job" />
         </button>
@@ -324,8 +327,16 @@ function startDrag(event: PointerEvent, job: Job): void {
   cursor: inherit;
 }
 
-.todo__open strong {
+.todo__title-row {
+  display: flex;
+  align-items: center;
+  gap: 6px;
   max-width: 100%;
+  min-width: 0;
+}
+
+.todo__open strong {
+  min-width: 0;
   overflow: hidden;
   font-size: 13px;
   font-weight: 600;

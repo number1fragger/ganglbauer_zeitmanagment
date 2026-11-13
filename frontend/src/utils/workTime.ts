@@ -88,8 +88,47 @@ export function workingMinutesBetween(config: WorkingHoursConfig, from: Date, to
   return Math.floor(ms / 60_000)
 }
 
+/**
+ * Pause (z. B. Mittagspause), in der der Zeitpunkt liegt – null ausserhalb.
+ * asEnd: Pausenende zaehlt dazu, Pausenbeginn nicht.
+ */
+export function breakAt(config: WorkingHoursConfig, moment: Date, asEnd = false): Window | null {
+  if (!config.days[isoWeekday(moment)]) return null
+  for (const pause of config.breaks) {
+    const from = at(moment, pause.start)
+    const to = at(moment, pause.end)
+    const inside = asEnd ? moment > from && moment <= to : moment >= from && moment < to
+    if (inside) return [from, to]
+  }
+  return null
+}
+
+/** Beginn in einer Pause -> Pausenende, sonst unveraendert. */
+export function skipBreak(config: WorkingHoursConfig, moment: Date): Date {
+  return breakAt(config, moment)?.[1] ?? moment
+}
+
+/**
+ * Termin aus der Pause heraushalten (wie WorkingHours::fitAroundBreaks im
+ * Backend): Beginn in der Pause -> Pausenende, Ende in der Pause ->
+ * Pausenbeginn. Liegt der ganze Termin in der Pause, rutscht er mit seiner
+ * Laenge dahinter.
+ */
+export function fitAroundBreaks(config: WorkingHoursConfig, startsAt: Date, endsAt: Date): Window {
+  const start = skipBreak(config, startsAt)
+  let end = endsAt
+  const pause = breakAt(config, endsAt, true)
+  if (pause && pause[0] > start) end = pause[0]
+  if (end <= start) {
+    const clockMinutes = Math.max(1, Math.floor((endsAt.getTime() - startsAt.getTime()) / 60_000))
+    end = endFor(config, start, clockMinutes)
+  }
+  return [start, end]
+}
+
 /** Dauer eines Termins in Minuten (Arbeitszeit, bzw. Uhrzeit ausserhalb der Arbeitszeit). */
 export function durationMinutes(config: WorkingHoursConfig, startsAt: Date, endsAt: Date): number {
+  startsAt = skipBreak(config, startsAt)
   if (!isWorkingStart(config, startsAt)) {
     return Math.max(0, Math.floor((endsAt.getTime() - startsAt.getTime()) / 60_000))
   }
@@ -99,6 +138,7 @@ export function durationMinutes(config: WorkingHoursConfig, startsAt: Date, ends
 /** Ende aus Beginn und Dauer (Gegenstueck zu durationMinutes). */
 export function endFor(config: WorkingHoursConfig, startsAt: Date, minutes: number): Date {
   if (minutes <= 0) throw new Error('Die Dauer muss positiv sein.')
+  startsAt = skipBreak(config, startsAt)
   if (!isWorkingStart(config, startsAt)) return new Date(startsAt.getTime() + minutes * 60_000)
 
   let left = minutes * 60_000

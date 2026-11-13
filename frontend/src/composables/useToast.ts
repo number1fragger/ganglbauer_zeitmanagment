@@ -41,3 +41,15 @@ export function toastSaved(success: string, warnings: { message: string }[] = []
   }
   toast(`${success} Hinweis: ${warnings.map((w) => w.message).join(' ')}`, 'warning', undefined, 9000)
 }
+
+/** Hinweis, wenn der Server Auftraege wegen deaktivierter Parallelarbeit automatisch verschoben hat. */
+export function toastShifted(shifted: { title: string }[] = []): void {
+  if (!shifted.length) return
+  const count = shifted.length
+  toast(
+    `${count} ${count === 1 ? 'Auftrag wurde' : 'Aufträge wurden'} wegen Überschneidung verschoben: ${shifted.map((j) => j.title).join(', ')}`,
+    'warning',
+    undefined,
+    9000,
+  )
+}

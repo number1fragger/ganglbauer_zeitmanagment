@@ -2,17 +2,25 @@
 import { computed, onBeforeUnmount, onMounted, reactive, ref, watch } from 'vue'
 import { jobsApi } from '@/api'
 import { errorMessage } from '@/api/http'
-import type { Job, JobInput, Priority, ScheduleWarning, UserRef } from '@/api/types'
+import type { Job, JobInput, Priority, ScheduleShift, ScheduleWarning, UserRef } from '@/api/types'
 import { confirmAction } from '@/composables/useConfirm'
 import { useJobActions } from '@/composables/useJobActions'
-import { toast, toastSaved } from '@/composables/useToast'
-import { workDuration, workEnd, workingHours, workTimeWarnings } from '@/composables/useWorkingHours'
+import { toast, toastSaved, toastShifted } from '@/composables/useToast'
+import {
+  fitToWork,
+  workDuration,
+  workEnd,
+  workingHours,
+  workStart,
+  workTimeWarnings,
+} from '@/composables/useWorkingHours'
 import { useAuthStore } from '@/stores/auth'
 import { DEFAULT_SLOT_MINUTES } from '@/utils/calendar'
 import { canStart, canWorkOn, isApprentice, isDone, priorities } from '@/utils/domain'
 import {
   formatDateTimeShort,
   formatDuration,
+  formatRange,
   formatTime,
   sameDay,
   spanDays,
@@ -55,7 +63,9 @@ const started = computed(() => current.value?.started ?? false)
 
 const initialStart = props.job?.startsAt
   ? new Date(props.job.startsAt)
-  : (props.defaults?.startsAt ?? null)
+  : props.defaults?.startsAt
+    ? workStart(props.defaults.startsAt) // Klick in die Mittagspause -> nach der Pause
+    : null
 const initialEnd = props.job?.endsAt
   ? new Date(props.job.endsAt)
   : initialStart
@@ -71,6 +81,8 @@ const form = reactive({
   title: props.job?.title ?? '',
   description: props.job?.description ?? '',
   customer: props.job?.customer ?? '',
+  /** Geplante Stunden (Aufwand), unabhaengig vom Termin */
+  plannedHours: (props.job?.plannedMinutes ? toHours(props.job.plannedMinutes) : '') as number | '',
   priority: (props.job?.priority ?? 'mittel') as Priority,
   assigneeId: props.job?.assignee?.id ?? props.defaults?.assigneeId ?? null,
   apprenticeId: props.job?.apprentice?.id ?? null,
@@ -133,8 +145,10 @@ function toggleSchedule(on: boolean): void {
   if (on && !form.startsAt) {
     const start = props.defaults?.startsAt ?? nextHalfHour()
     form.startsAt = toLocalInput(start)
-    form.durationHours = toHours(DEFAULT_SLOT_MINUTES)
-    form.endsAt = toLocalInput(workEnd(start, DEFAULT_SLOT_MINUTES))
+    // Dauer: die geplanten Stunden, sonst der Standardblock
+    const minutes = plannedMinutes.value ?? DEFAULT_SLOT_MINUTES
+    form.durationHours = toHours(minutes)
+    form.endsAt = toLocalInput(workEnd(start, minutes))
   }
 }
 
@@ -143,6 +157,13 @@ function nextHalfHour(): Date {
   now.setMinutes(now.getMinutes() < 30 ? 30 : 60, 0, 0)
   return now
 }
+
+const plannedMinutes = computed(() => {
+  const hours = Number(form.plannedHours)
+  return form.plannedHours !== '' && Number.isFinite(hours) && hours > 0
+    ? Math.round(hours * 60)
+    : null
+})
 
 const hoursSummary = computed(() => workingHours.value?.summary ?? '')
 
@@ -154,8 +175,10 @@ const durationMinutes = computed(() => {
 /** Beginn geaendert: die Dauer (Arbeitszeit) bleibt, das Ende rueckt nach. */
 function onStartChange(): void {
   if (!form.startsAt) return
+  const start = workStart(new Date(form.startsAt)) // nicht in der Mittagspause beginnen
   const minutes = durationMinutes.value ?? DEFAULT_SLOT_MINUTES
-  form.endsAt = toLocalInput(workEnd(new Date(form.startsAt), minutes))
+  form.startsAt = toLocalInput(start)
+  form.endsAt = toLocalInput(workEnd(start, minutes))
   form.durationHours = toHours(minutes)
 }
 
@@ -163,8 +186,11 @@ function onStartChange(): void {
 function onEndChange(): void {
   if (!form.startsAt || !form.endsAt) return
   const start = new Date(form.startsAt)
-  const end = new Date(form.endsAt)
-  if (end > start) form.durationHours = toHours(workDuration(start, end))
+  const typed = new Date(form.endsAt)
+  if (typed <= start) return
+  const end = fitToWork(start, typed)[1] // nicht in der Mittagspause enden
+  form.endsAt = toLocalInput(end)
+  form.durationHours = toHours(workDuration(start, end))
 }
 
 /** Dauer geaendert: das Ende wird ab dem Beginn neu berechnet. */
@@ -177,6 +203,8 @@ function onDurationChange(): void {
 
 /** Vom Server: Arbeitszeit, Ueberschneidungen, Abwesenheiten (wie beim Speichern). */
 const serverWarnings = ref<ScheduleWarning[] | null>(null)
+/** Vom Server: wohin der Auftrag bei deaktivierter Parallelarbeit kommt und was nach hinten rutscht. */
+const serverShift = ref<ScheduleShift | null>(null)
 let checkTimer = 0
 let checkToken = 0
 
@@ -191,6 +219,7 @@ watch(
   (key) => {
     window.clearTimeout(checkTimer)
     serverWarnings.value = null
+    serverShift.value = null
     if (!key) return
     const token = ++checkToken
     checkTimer = window.setTimeout(async () => {
@@ -205,7 +234,10 @@ watch(
           apprenticeId: form.apprenticeId,
           jobId: current.value?.id,
         })
-        if (token === checkToken) serverWarnings.value = result.warnings
+        if (token === checkToken) {
+          serverWarnings.value = result.warnings
+          serverShift.value = result.shift ?? null
+        }
       } catch {
         /* Hinweise sind nur Unterstuetzung – ohne Server bleiben die lokalen */
       }
@@ -225,6 +257,28 @@ const warnings = computed<ScheduleWarning[]>(() => {
   return workTimeWarnings(start, end).map((message) => ({ type: 'arbeitszeit', message }))
 })
 
+/** Der Auftrag selbst wird verschoben: neuer Termin, sonst nichts. */
+const ownMove = computed(() => {
+  const shift = serverShift.value
+  if (!shift || done.value || !form.scheduled) return null
+  if (new Date(shift.startsAt).getTime() === new Date(form.startsAt).getTime()) return null
+  return formatRange(new Date(shift.startsAt), new Date(shift.endsAt))
+})
+
+/** Andere Auftraege, die danach nach hinten rutschen. */
+const movedJobs = computed(() => {
+  if (!serverShift.value || done.value || !form.scheduled) return []
+  return serverShift.value.moved.map((job) => ({
+    id: job.id,
+    text: `${job.title}${job.customer ? ` (${job.customer})` : ''} → ${formatRange(new Date(job.startsAt), new Date(job.endsAt))}`,
+  }))
+})
+
+/** Warnungen ohne die "verschoben"-Meldung, die die Infobox ohnehin zeigt. */
+const shownWarnings = computed(() =>
+  ownMove.value ? warnings.value.filter((w) => w.type !== 'verschoben') : warnings.value,
+)
+
 function payload(): JobInput {
   const scheduled = form.scheduled && form.startsAt
   return {
@@ -232,6 +286,7 @@ function payload(): JobInput {
     description: form.description || null,
     customer: form.customer || null,
     priority: form.priority,
+    plannedMinutes: plannedMinutes.value,
     assigneeId: form.assigneeId,
     apprenticeId: form.apprenticeId,
     startsAt: scheduled ? new Date(form.startsAt).toISOString() : null,
@@ -256,6 +311,7 @@ async function save(): Promise<void> {
           : 'Auftrag angelegt.',
       job.warnings,
     )
+    toastShifted(job.shifted)
     emit('saved', job)
   } catch (e) {
     error.value = errorMessage(e)
@@ -360,6 +416,18 @@ function entryLabel(startedAt: string, endedAt: string | null): string {
     <form class="job-form" @submit.prevent="save">
       <div class="job-form__main">
         <label class="field">
+          <span class="field__label">Kunde</span>
+          <input
+            v-model="form.customer"
+            class="input"
+            maxlength="150"
+            autofocus
+            :disabled="!canEdit"
+            placeholder="optional"
+          />
+        </label>
+
+        <label class="field">
           <span class="field__label">Titel</span>
           <input
             v-model="form.title"
@@ -368,7 +436,6 @@ function entryLabel(startedAt: string, endedAt: string | null): string {
             required
             :disabled="!canEdit"
             placeholder="z. B. Bremsen hinten tauschen"
-            autofocus
           />
         </label>
 
@@ -521,14 +588,18 @@ function entryLabel(startedAt: string, endedAt: string | null): string {
         </fieldset>
 
         <label class="field">
-          <span class="field__label">Kunde</span>
+          <span class="field__label">Geplante Stunden <small>(optional)</small></span>
           <input
-            v-model="form.customer"
+            v-model="form.plannedHours"
             class="input"
-            maxlength="150"
+            type="number"
+            min="0.25"
+            step="0.25"
+            inputmode="decimal"
             :disabled="!canEdit"
-            placeholder="optional"
+            placeholder="z. B. 2,5"
           />
+          <span class="field__hint">Erwarteter Aufwand – gilt auch ohne Termin.</span>
         </label>
 
         <div class="field schedule">
@@ -585,8 +656,19 @@ function entryLabel(startedAt: string, endedAt: string | null): string {
             <p v-if="hoursSummary" class="field__hint schedule__hours">
               Arbeitszeit: {{ hoursSummary }}
             </p>
-            <ul v-if="warnings.length" class="schedule__warnings" role="status">
-              <li v-for="(w, i) in warnings" :key="i" :class="`schedule__warning--${w.type}`">
+            <div v-if="ownMove || movedJobs.length" class="schedule__shift" role="status">
+              <p v-if="ownMove">
+                Parallele Aufträge sind aus – dieser Auftrag wird auf {{ ownMove }} gelegt.
+              </p>
+              <template v-if="movedJobs.length">
+                <p>Danach rutschen nach hinten:</p>
+                <ul>
+                  <li v-for="job in movedJobs" :key="job.id">{{ job.text }}</li>
+                </ul>
+              </template>
+            </div>
+            <ul v-if="shownWarnings.length" class="schedule__warnings" role="status">
+              <li v-for="(w, i) in shownWarnings" :key="i" :class="`schedule__warning--${w.type}`">
                 <AppIcon :name="w.type === 'arbeitszeit' ? 'clock' : w.type === 'abwesenheit' ? 'calendar-off' : 'layers'" :size="13" />
                 <span>{{ w.message }}</span>
               </li>
@@ -757,6 +839,28 @@ function entryLabel(startedAt: string, endedAt: string | null): string {
 .schedule__warnings .schedule__warning--abwesenheit {
   background: var(--danger-soft);
   color: var(--danger);
+}
+
+.schedule__shift {
+  display: grid;
+  gap: 4px;
+  padding: 7px 9px;
+  border-radius: var(--radius-sm);
+  background: var(--warning-soft);
+  color: var(--warning-ink);
+  font-size: 11px;
+  line-height: 1.4;
+}
+
+.schedule__shift p {
+  margin: 0;
+}
+
+.schedule__shift ul {
+  display: grid;
+  gap: 2px;
+  margin: 0;
+  padding-left: 16px;
 }
 
 .schedule__remove {

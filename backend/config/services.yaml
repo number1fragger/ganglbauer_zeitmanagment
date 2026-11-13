@@ -1,3 +1,7 @@
+parameters:
+    # Standardwert, falls die Variable fehlt (z. B. im Docker-Image): keine fremden Domains
+    env(CORS_ALLOW_ORIGIN): ''
+
 services:
     _defaults:
         autowire: true

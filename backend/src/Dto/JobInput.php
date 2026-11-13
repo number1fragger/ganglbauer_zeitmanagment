@@ -41,6 +41,10 @@ final class JobInput
         #[Assert\Range(min: 1, max: Job::MAX_WORK_MINUTES, notInRangeMessage: 'Die Dauer muss zwischen 1 Minute und {{ max }} Minuten liegen.')]
         public readonly ?int $durationMinutes = null,
 
+        /** Geplante Arbeitszeit in Minuten; Standarddauer, wenn Ende und Dauer fehlen. */
+        #[Assert\Range(min: 1, max: Job::MAX_WORK_MINUTES, notInRangeMessage: 'Die geplante Dauer muss zwischen 1 Minute und {{ max }} Minuten liegen.')]
+        public readonly ?int $plannedMinutes = null,
+
         public readonly ?int $assigneeId = null,
 
         /** Optional: Lehrling als zusaetzliche Unterstuetzung (nur Rolle "Lehrling"). */

@@ -219,16 +219,18 @@ export function layoutByWorker(segments: Segment[], workerOrder: number[]): Plac
  */
 export function endAfterMove(job: Job, startsAt: Date): Date {
   const config = workingHours.value
+  const hasTimes = Boolean(job.startsAt && job.endsAt)
+  const slotMinutes = hasTimes ? DEFAULT_SLOT_MINUTES : (job.plannedMinutes ?? DEFAULT_SLOT_MINUTES)
   const minutes =
     job.startsAt && job.endsAt && config
       ? durationMinutes(config, new Date(job.startsAt), new Date(job.endsAt))
-      : DEFAULT_SLOT_MINUTES
+      : slotMinutes
 
   if (config && minutes > 0) return endFor(config, startsAt, minutes)
   const clockMs =
     job.startsAt && job.endsAt
       ? new Date(job.endsAt).getTime() - new Date(job.startsAt).getTime()
-      : DEFAULT_SLOT_MINUTES * 60_000
+      : slotMinutes * 60_000
   return new Date(startsAt.getTime() + clockMs)
 }
 

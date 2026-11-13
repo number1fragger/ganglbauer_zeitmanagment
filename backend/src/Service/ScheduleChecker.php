@@ -23,6 +23,8 @@ class ScheduleChecker
     public const ARBEITSZEIT = 'arbeitszeit';
     public const UEBERSCHNEIDUNG = 'ueberschneidung';
     public const ABWESENHEIT = 'abwesenheit';
+    /** Hinweis des JobController: der Termin wurde wegen einer Ueberschneidung automatisch verschoben. */
+    public const VERSCHOBEN = 'verschoben';
 
     public function __construct(
         private readonly JobRepository $jobs,

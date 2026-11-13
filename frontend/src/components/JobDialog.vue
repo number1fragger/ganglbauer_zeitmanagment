@@ -5,7 +5,7 @@ import { errorMessage } from '@/api/http'
 import type { Job, JobInput, Priority, ScheduleWarning, UserRef } from '@/api/types'
 import { confirmAction } from '@/composables/useConfirm'
 import { useJobActions } from '@/composables/useJobActions'
-import { toast, toastSaved } from '@/composables/useToast'
+import { toast, toastSaved, toastShifted } from '@/composables/useToast'
 import { workDuration, workEnd, workingHours, workTimeWarnings } from '@/composables/useWorkingHours'
 import { useAuthStore } from '@/stores/auth'
 import { DEFAULT_SLOT_MINUTES } from '@/utils/calendar'
@@ -71,6 +71,8 @@ const form = reactive({
   title: props.job?.title ?? '',
   description: props.job?.description ?? '',
   customer: props.job?.customer ?? '',
+  /** Geplante Stunden (Aufwand), unabhaengig vom Termin */
+  plannedHours: (props.job?.plannedMinutes ? toHours(props.job.plannedMinutes) : '') as number | '',
   priority: (props.job?.priority ?? 'mittel') as Priority,
   assigneeId: props.job?.assignee?.id ?? props.defaults?.assigneeId ?? null,
   apprenticeId: props.job?.apprentice?.id ?? null,
@@ -133,8 +135,10 @@ function toggleSchedule(on: boolean): void {
   if (on && !form.startsAt) {
     const start = props.defaults?.startsAt ?? nextHalfHour()
     form.startsAt = toLocalInput(start)
-    form.durationHours = toHours(DEFAULT_SLOT_MINUTES)
-    form.endsAt = toLocalInput(workEnd(start, DEFAULT_SLOT_MINUTES))
+    // Dauer: die geplanten Stunden, sonst der Standardblock
+    const minutes = plannedMinutes.value ?? DEFAULT_SLOT_MINUTES
+    form.durationHours = toHours(minutes)
+    form.endsAt = toLocalInput(workEnd(start, minutes))
   }
 }
 
@@ -143,6 +147,13 @@ function nextHalfHour(): Date {
   now.setMinutes(now.getMinutes() < 30 ? 30 : 60, 0, 0)
   return now
 }
+
+const plannedMinutes = computed(() => {
+  const hours = Number(form.plannedHours)
+  return form.plannedHours !== '' && Number.isFinite(hours) && hours > 0
+    ? Math.round(hours * 60)
+    : null
+})
 
 const hoursSummary = computed(() => workingHours.value?.summary ?? '')
 
@@ -232,6 +243,7 @@ function payload(): JobInput {
     description: form.description || null,
     customer: form.customer || null,
     priority: form.priority,
+    plannedMinutes: plannedMinutes.value,
     assigneeId: form.assigneeId,
     apprenticeId: form.apprenticeId,
     startsAt: scheduled ? new Date(form.startsAt).toISOString() : null,
@@ -256,6 +268,7 @@ async function save(): Promise<void> {
           : 'Auftrag angelegt.',
       job.warnings,
     )
+    toastShifted(job.shifted)
     emit('saved', job)
   } catch (e) {
     error.value = errorMessage(e)
@@ -360,6 +373,18 @@ function entryLabel(startedAt: string, endedAt: string | null): string {
     <form class="job-form" @submit.prevent="save">
       <div class="job-form__main">
         <label class="field">
+          <span class="field__label">Kunde</span>
+          <input
+            v-model="form.customer"
+            class="input"
+            maxlength="150"
+            autofocus
+            :disabled="!canEdit"
+            placeholder="optional"
+          />
+        </label>
+
+        <label class="field">
           <span class="field__label">Titel</span>
           <input
             v-model="form.title"
@@ -368,7 +393,6 @@ function entryLabel(startedAt: string, endedAt: string | null): string {
             required
             :disabled="!canEdit"
             placeholder="z. B. Bremsen hinten tauschen"
-            autofocus
           />
         </label>
 
@@ -521,14 +545,18 @@ function entryLabel(startedAt: string, endedAt: string | null): string {
         </fieldset>
 
         <label class="field">
-          <span class="field__label">Kunde</span>
+          <span class="field__label">Geplante Stunden <small>(optional)</small></span>
           <input
-            v-model="form.customer"
+            v-model="form.plannedHours"
             class="input"
-            maxlength="150"
+            type="number"
+            min="0.25"
+            step="0.25"
+            inputmode="decimal"
             :disabled="!canEdit"
-            placeholder="optional"
+            placeholder="z. B. 2,5"
           />
+          <span class="field__hint">Erwarteter Aufwand – gilt auch ohne Termin.</span>
         </label>
 
         <div class="field schedule">

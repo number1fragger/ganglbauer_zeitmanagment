@@ -12,6 +12,7 @@ import {
   weekdayName,
 } from '@/utils/time'
 import AppIcon from '../AppIcon.vue'
+import CustomerTag from '../CustomerTag.vue'
 import AbsenceCard from './AbsenceCard.vue'
 import { workingHours } from '@/composables/useWorkingHours'
 import { gridStartHour } from '@/utils/calendar'
@@ -134,12 +135,15 @@ function createAt(day: Date): Date {
           >
             <span class="agenda__time tabular">{{ item.label }}</span>
             <span class="agenda__main">
-              <strong>{{ item.job.title }}</strong>
+              <span class="agenda__title">
+                <strong>{{ item.job.title }}</strong>
+                <CustomerTag v-if="item.job.customer" :customer="item.job.customer" />
+              </span>
               <small>
                 {{ item.job.assignee?.fullName ?? 'Nicht zugeteilt'
                 }}<template v-if="item.job.apprentice">
                   + Lehrling {{ item.job.apprentice.fullName }}</template
-                ><template v-if="item.job.customer"> · {{ item.job.customer }}</template>
+                >
                 <template v-if="item.part"> · {{ item.part }}</template>
               </small>
               <small v-if="conflicts?.has(item.job.id)" class="agenda__conflict">
@@ -245,9 +249,19 @@ function createAt(day: Date): Date {
   min-width: 0;
 }
 
+.agenda__title {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+}
+
 .agenda__main strong {
+  min-width: 0;
+  overflow: hidden;
   font-size: 14px;
   font-weight: 600;
+  text-overflow: ellipsis;
 }
 
 .agenda__main small {

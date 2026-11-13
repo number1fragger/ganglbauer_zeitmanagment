@@ -5,6 +5,7 @@ import { workTimeWarnings } from '@/composables/useWorkingHours'
 import { DONE_COLOR, isDone, isMovable, priorityColor, workState } from '@/utils/domain'
 import { formatDuration } from '@/utils/time'
 import AppIcon from '../AppIcon.vue'
+import CustomerTag from '../CustomerTag.vue'
 
 const props = defineProps<{ job: Job; conflict?: string[]; asApprentice?: boolean }>()
 defineEmits<{ open: [job: Job] }>()
@@ -46,6 +47,7 @@ const effort = computed(() => {
   >
     <span class="day-job__top">
       <strong class="day-job__title">{{ job.title }}</strong>
+      <CustomerTag v-if="job.customer" class="day-job__tag" :customer="job.customer" />
       <span v-if="asApprentice" class="badge day-job__badge" style="--b: var(--worker-3)">Lehrling</span>
       <AppIcon v-if="!isMovable(job) && !done" class="day-job__lock" name="timer" :size="12" />
       <AppIcon
@@ -76,7 +78,6 @@ const effort = computed(() => {
         >pausiert</span
       >
     </span>
-    <span v-if="job.customer" class="day-job__customer">{{ job.customer }}</span>
     <span class="day-job__effort">{{ effort }}</span>
   </button>
 </template>
@@ -138,11 +139,16 @@ const effort = computed(() => {
 
 .day-job__title {
   flex: 1;
+  min-width: 0;
   overflow: hidden;
   font-size: 12px;
   font-weight: 600;
   text-overflow: ellipsis;
   white-space: nowrap;
+}
+
+.day-job__tag {
+  margin-top: 1px;
 }
 
 .day-job--done .day-job__title {
@@ -166,7 +172,6 @@ const effort = computed(() => {
   font-size: 9px;
 }
 
-.day-job__customer,
 .day-job__effort {
   overflow: hidden;
   color: var(--muted);

@@ -44,9 +44,8 @@ final class JobTest extends TestCase
         self::assertSame('07:00', $job->getStartsAt()?->format('H:i'));
     }
 
-    public function testNoPlannedTimeExistsAnymore(): void
+    public function testOverrunLogicDoesNotExist(): void
     {
-        self::assertFalse(method_exists(Job::class, 'getPlannedMinutes'));
         self::assertFalse(method_exists(Job::class, 'extendBy'));
         self::assertFalse(method_exists(Job::class, 'isOverrun'));
     }

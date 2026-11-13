@@ -84,6 +84,11 @@ class Job
     #[Groups(['job:read'])]
     private ?\DateTimeImmutable $endsAt = null;
 
+    /** Geplante Arbeitszeit in Minuten (optional) – Standarddauer beim Einplanen ohne Ende. */
+    #[ORM\Column(nullable: true)]
+    #[Groups(['job:read'])]
+    private ?int $plannedMinutes = null;
+
     #[ORM\ManyToOne]
     #[ORM\JoinColumn(nullable: true, onDelete: 'SET NULL')]
     #[Groups(['job:read'])]
@@ -191,12 +196,13 @@ class Job
 
     /**
      * Termin festlegen (Beginn, optional Ende). Ohne Ende bekommt der
-     * Kalenderblock die Standardlaenge DEFAULT_SLOT_MINUTES (Arbeitszeit).
+     * Kalenderblock die geplante Arbeitszeit (plannedMinutes), sonst die
+     * Standardlaenge DEFAULT_SLOT_MINUTES.
      */
     public function schedule(\DateTimeImmutable $startsAt, ?\DateTimeImmutable $endsAt = null): static
     {
         $startsAt = LocalTime::of($startsAt);
-        $endsAt = LocalTime::of($endsAt ?? self::defaultEndFor($startsAt));
+        $endsAt = LocalTime::of($endsAt ?? self::defaultEndFor($startsAt, $this->plannedMinutes));
 
         if ($endsAt <= $startsAt) {
             throw new InvalidInputException('Das Ende des Termins muss nach dem Beginn liegen.');
@@ -221,10 +227,26 @@ class Job
         return $this->schedule($startsAt, WorkingHours::endFor($startsAt, $workMinutes));
     }
 
-    /** Ende eines Termins ohne Angabe von Ende oder Dauer. */
-    public static function defaultEndFor(\DateTimeImmutable $startsAt): \DateTimeImmutable
+    /** Ende eines Termins ohne Angabe von Ende oder Dauer: geplante Arbeitszeit oder Standardlaenge. */
+    public static function defaultEndFor(\DateTimeImmutable $startsAt, ?int $plannedMinutes = null): \DateTimeImmutable
     {
-        return WorkingHours::endFor($startsAt, self::DEFAULT_SLOT_MINUTES);
+        return WorkingHours::endFor($startsAt, $plannedMinutes ?? self::DEFAULT_SLOT_MINUTES);
+    }
+
+    public function getPlannedMinutes(): ?int
+    {
+        return $this->plannedMinutes;
+    }
+
+    public function setPlannedMinutes(?int $plannedMinutes): static
+    {
+        if (null !== $plannedMinutes && ($plannedMinutes < 1 || $plannedMinutes > self::MAX_WORK_MINUTES)) {
+            throw new InvalidInputException('Die geplante Dauer ist ungültig.');
+        }
+
+        $this->plannedMinutes = $plannedMinutes;
+
+        return $this;
     }
 
     /** Termin entfernen – die Arbeit bleibt als Aufgabe erhalten. */

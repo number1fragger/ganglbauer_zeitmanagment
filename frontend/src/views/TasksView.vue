@@ -171,6 +171,7 @@ async function quickAdd(): Promise<void> {
       title,
       description: null,
       customer: null,
+      plannedMinutes: null,
       priority: 'mittel',
       startsAt: null,
       endsAt: null,

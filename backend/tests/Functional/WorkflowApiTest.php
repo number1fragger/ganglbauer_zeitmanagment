@@ -19,7 +19,7 @@ final class WorkflowApiTest extends ApiTestCase
         self::assertFalse($job['scheduled']);
         self::assertNull($job['startsAt']);
         self::assertNull($job['endsAt']);
-        self::assertArrayNotHasKey('plannedMinutes', $job, 'Es gibt keine geplante Zeit mehr');
+        self::assertNull($job['plannedMinutes']);
         self::assertSame('offen', $job['status']);
         self::assertSame(0, $job['actualSeconds']);
         self::assertSame('Alle Fächer neu', $job['description']);

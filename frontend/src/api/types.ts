@@ -50,6 +50,8 @@ export interface Job {
   endsAt: string | null
   calendarMinutes: number | null
   workMinutes: number | null
+  /** Geplanter Zeitaufwand in Minuten (auch ohne Termin) */
+  plannedMinutes: number | null
   assignee: UserRef | null
   /** Optional: Lehrling als zusaetzliche Unterstuetzung */
   apprentice: UserRef | null
@@ -68,6 +70,8 @@ export interface Job {
   timeEntries?: TimeEntry[]
   /** Nach dem Speichern bzw. in der Detailansicht */
   warnings?: ScheduleWarning[]
+  /** Nach dem Speichern: andere Jobs, die der Server wegen deaktivierter Parallelarbeit verschoben hat */
+  shifted?: Job[]
 }
 
 /** Eingeplante Arbeit – startsAt/endsAt sind gesetzt. */
@@ -90,6 +94,7 @@ export interface JobInput {
   description: string | null
   customer: string | null
   priority: Priority
+  plannedMinutes?: number | null
   startsAt: string | null
   endsAt: string | null
   assigneeId: number | null
@@ -293,4 +298,10 @@ export interface WorkRequestReport {
     withdrawn: number
     share: number
   }[]
+}
+
+/** Betriebsweite Einstellungen. */
+export interface Settings {
+  /** false: ein Mitarbeiter arbeitet immer nur an einem Auftrag, spaetere werden verschoben */
+  parallelScheduling: boolean
 }

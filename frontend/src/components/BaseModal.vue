@@ -4,7 +4,8 @@ import AppIcon from './AppIcon.vue'
 
 defineProps<{ title: string; subtitle?: string; width?: number; compact?: boolean }>()
 const emit = defineEmits<{ close: [] }>()
-defineSlots<{ default(): unknown; header?(): unknown }>()
+/** eyebrow: ueber dem Titel (z. B. Kunde), header: unter dem Titel (z. B. Status). */
+defineSlots<{ default(): unknown; eyebrow?(): unknown; header?(): unknown }>()
 
 const dialog = ref<HTMLDialogElement>()
 
@@ -33,6 +34,7 @@ const onUp = (event: MouseEvent) => {
     <div class="modal__body">
       <header class="modal__head">
         <div class="modal__titles">
+          <slot name="eyebrow" />
           <h2 class="modal__title">{{ title }}</h2>
           <p v-if="subtitle" class="page-sub">{{ subtitle }}</p>
           <slot name="header" />

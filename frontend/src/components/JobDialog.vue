@@ -28,6 +28,7 @@ import {
 } from '@/utils/time'
 import AppIcon from './AppIcon.vue'
 import BaseModal from './BaseModal.vue'
+import CustomerTag from './CustomerTag.vue'
 import FollowUpDialog from './FollowUpDialog.vue'
 import LiveDuration from './LiveDuration.vue'
 import StatusChip from './StatusChip.vue'
@@ -401,6 +402,11 @@ function entryLabel(startedAt: string, endedAt: string | null): string {
     :width="860"
     @close="emit('close')"
   >
+    <!-- Kunde ganz oben links, waehrend der Eingabe live -->
+    <template v-if="form.customer.trim()" #eyebrow>
+      <CustomerTag class="job-customer" :customer="form.customer.trim()" />
+    </template>
+
     <template v-if="current" #header>
       <div class="job-head">
         <StatusChip :job="current" />
@@ -731,6 +737,11 @@ function entryLabel(startedAt: string, endedAt: string | null): string {
 </template>
 
 <style scoped>
+.job-customer {
+  margin-bottom: 6px;
+  font-size: 12px;
+}
+
 .job-head {
   display: flex;
   flex-wrap: wrap;

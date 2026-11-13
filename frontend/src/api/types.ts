@@ -25,7 +25,7 @@ export type ThemePreference = 'light' | 'dark' | 'system'
 
 /** Hinweis zu einem Termin – gespeichert wird trotzdem. */
 export interface ScheduleWarning {
-  type: 'arbeitszeit' | 'ueberschneidung' | 'abwesenheit'
+  type: 'arbeitszeit' | 'ueberschneidung' | 'abwesenheit' | 'verschoben'
   message: string
   jobId?: number
   absenceId?: number
@@ -261,6 +261,14 @@ export interface ScheduleCheck {
   endsAt: string
   workMinutes: number
   warnings: ScheduleWarning[]
+  /** Nur bei deaktivierter Parallelarbeit: wohin der Auftrag kommt und was nach hinten rutscht */
+  shift: ScheduleShift | null
+}
+
+export interface ScheduleShift {
+  startsAt: string
+  endsAt: string
+  moved: { id: number; title: string; customer: string | null; startsAt: string; endsAt: string }[]
 }
 
 export interface DeletionImpact {
@@ -304,4 +312,14 @@ export interface WorkRequestReport {
 export interface Settings {
   /** false: ein Mitarbeiter arbeitet immer nur an einem Auftrag, spaetere werden verschoben */
   parallelScheduling: boolean
+}
+
+export interface SettingsInput extends Settings {
+  /** true: nur berechnen, was sich verschieben wuerde, nichts speichern */
+  dryRun?: boolean
+}
+
+export interface SettingsResult extends Settings {
+  /** Beim Ausschalten: die verschobenen (bzw. bei dryRun: die zu verschiebenden) Auftraege */
+  shifted: Job[]
 }

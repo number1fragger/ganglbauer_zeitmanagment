@@ -152,6 +152,32 @@ nennt, wer wann für welche Aufträge gleichzeitig eingeplant ist. Das gilt auch
 Abwesenheiten. Das Backend liefert dieselben Hinweise bei jedem Speichern (`warnings`), in der
 Vorschau `GET /api/jobs/check` und im Dashboard (`/api/overview`: `conflicts`, `absenceConflicts`).
 
+### Parallele Aufträge
+
+Die Einstellung **Parallele Aufträge** (`GET/PUT /api/settings`, ändern dürfen Sekretärin und Chef)
+legt fest, ob sich Aufträge einer Person überschneiden dürfen.
+
+- **Erlaubt (Standard):** Überschneidungen werden gespeichert und nur als Hinweis gemeldet (siehe oben).
+- **Nicht erlaubt:** Ein Mitarbeiter kann immer nur eine Aufgabe gleichzeitig bearbeiten. Das gilt für
+  den Zuständigen und den Lehrling – beide sind mit jedem Auftrag, an dem sie beteiligt sind, belegt.
+  Überschneidet ein neuer oder verschobener Auftrag einen anderen, rutscht der spätere nach hinten.
+  Jeder Auftrag behält dabei seine Arbeitszeit; Mittagspause (12–13 Uhr), Feierabend, Freitag ab
+  14 Uhr und das Wochenende werden übersprungen, lange Aufträge laufen am nächsten Arbeitstag weiter.
+  Wandert ein Auftrag mit Lehrling, werden auch die folgenden Aufträge des Lehrlings geprüft (Kaskade).
+  Verschobene Aufträge weichen außerdem Abwesenheiten (Urlaub, Arzttermin, …) aller Beteiligten aus;
+  nur wegen einer Abwesenheit wird aber nie verschoben – sie bleibt ein Hinweis.
+- **Nie verschoben werden** Aufträge, an denen schon gearbeitet wird oder die erledigt sind, sowie
+  offene Aufträge, die vor dem bearbeiteten Termin beginnen. Überschneidet der bearbeitete Auftrag
+  einen solchen, weicht er selbst dahinter aus („verschoben“-Hinweis in `warnings`). Bereits bestehende
+  Überschneidungen, die mit der Änderung nichts zu tun haben, bleiben beim Bearbeiten unangetastet.
+- **Vorschau:** `GET /api/jobs/check` liefert `shift` (wohin der Auftrag landet und welche anderen
+  Aufträge mit neuer Zeit verschoben würden), solange parallel nicht erlaubt ist, sonst `null`.
+  Beim Speichern stehen die verschobenen Aufträge in `shifted`.
+- **Ausschalten sortiert neu:** Beim Wechsel auf „nicht erlaubt“ löst das Backend alle bestehenden
+  Überschneidungen offener Aufträge ab jetzt auf und liefert die verschobenen Aufträge in `shifted`.
+  Mit `"dryRun": true` im `PUT /api/settings` wird nichts gespeichert, `shifted` zeigt nur, was
+  verschoben würde. Findet sich kein freier Termin, antwortet das Backend mit 422.
+
 ### Lehrling am Auftrag
 
 Im Auftrag gibt es neben „Zuständig“ das Feld **Lehrling** (optional). Die Auswahl enthält nur
@@ -302,6 +328,7 @@ JWT-Schlüssel selbst unter `backend/var/jwt-test/`.
 | GET/DELETE  | `/api/users/{id}/deletion-impact`, `/api/users/{id}` | Chef | Auswirkung prüfen / endgültig löschen |
 | GET         | `/api/working-hours`                      | alle            | Arbeitszeiten und Pausen (einzige Quelle) |
 | GET         | `/api/jobs/check?startsAt=&endsAt=\|durationMinutes=&assigneeId=&apprenticeId=&jobId=` | Sekretärin+ | Vorschau: Ende/Dauer und Hinweise |
+| GET/PUT     | `/api/settings`                           | alle / Sekretärin+ | Parallele Aufträge ein/aus (`dryRun` für Vorschau) |
 | GET         | `/api/absences?from=&to=`, `/api/absences/types` | alle¹ | Abwesenheiten im Kalender, Arten       |
 | POST/PUT/DELETE | `/api/absences`, `/api/absences/{id}`  | Sekretärin+     | Urlaub/persönliche Termine verwalten   |
 | GET         | `/api/reports/arbeitsanfragen?from=&to=`  | Sekretärin+     | Statistik der Arbeitsanfragen          |

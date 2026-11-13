@@ -2,7 +2,7 @@
 import { computed, onBeforeUnmount, onMounted, reactive, ref, watch } from 'vue'
 import { jobsApi } from '@/api'
 import { errorMessage } from '@/api/http'
-import type { Job, JobInput, Priority, ScheduleWarning, UserRef } from '@/api/types'
+import type { Job, JobInput, Priority, ScheduleShift, ScheduleWarning, UserRef } from '@/api/types'
 import { confirmAction } from '@/composables/useConfirm'
 import { useJobActions } from '@/composables/useJobActions'
 import { toast, toastSaved, toastShifted } from '@/composables/useToast'
@@ -13,6 +13,7 @@ import { canStart, canWorkOn, isApprentice, isDone, priorities } from '@/utils/d
 import {
   formatDateTimeShort,
   formatDuration,
+  formatRange,
   formatTime,
   sameDay,
   spanDays,
@@ -188,6 +189,8 @@ function onDurationChange(): void {
 
 /** Vom Server: Arbeitszeit, Ueberschneidungen, Abwesenheiten (wie beim Speichern). */
 const serverWarnings = ref<ScheduleWarning[] | null>(null)
+/** Vom Server: wohin der Auftrag bei deaktivierter Parallelarbeit kommt und was nach hinten rutscht. */
+const serverShift = ref<ScheduleShift | null>(null)
 let checkTimer = 0
 let checkToken = 0
 
@@ -202,6 +205,7 @@ watch(
   (key) => {
     window.clearTimeout(checkTimer)
     serverWarnings.value = null
+    serverShift.value = null
     if (!key) return
     const token = ++checkToken
     checkTimer = window.setTimeout(async () => {
@@ -216,7 +220,10 @@ watch(
           apprenticeId: form.apprenticeId,
           jobId: current.value?.id,
         })
-        if (token === checkToken) serverWarnings.value = result.warnings
+        if (token === checkToken) {
+          serverWarnings.value = result.warnings
+          serverShift.value = result.shift ?? null
+        }
       } catch {
         /* Hinweise sind nur Unterstuetzung – ohne Server bleiben die lokalen */
       }
@@ -235,6 +242,28 @@ const warnings = computed<ScheduleWarning[]>(() => {
   if (!(end > start)) return []
   return workTimeWarnings(start, end).map((message) => ({ type: 'arbeitszeit', message }))
 })
+
+/** Der Auftrag selbst wird verschoben: neuer Termin, sonst nichts. */
+const ownMove = computed(() => {
+  const shift = serverShift.value
+  if (!shift || done.value || !form.scheduled) return null
+  if (new Date(shift.startsAt).getTime() === new Date(form.startsAt).getTime()) return null
+  return formatRange(new Date(shift.startsAt), new Date(shift.endsAt))
+})
+
+/** Andere Auftraege, die danach nach hinten rutschen. */
+const movedJobs = computed(() => {
+  if (!serverShift.value || done.value || !form.scheduled) return []
+  return serverShift.value.moved.map((job) => ({
+    id: job.id,
+    text: `${job.title}${job.customer ? ` (${job.customer})` : ''} → ${formatRange(new Date(job.startsAt), new Date(job.endsAt))}`,
+  }))
+})
+
+/** Warnungen ohne die "verschoben"-Meldung, die die Infobox ohnehin zeigt. */
+const shownWarnings = computed(() =>
+  ownMove.value ? warnings.value.filter((w) => w.type !== 'verschoben') : warnings.value,
+)
 
 function payload(): JobInput {
   const scheduled = form.scheduled && form.startsAt
@@ -613,8 +642,19 @@ function entryLabel(startedAt: string, endedAt: string | null): string {
             <p v-if="hoursSummary" class="field__hint schedule__hours">
               Arbeitszeit: {{ hoursSummary }}
             </p>
-            <ul v-if="warnings.length" class="schedule__warnings" role="status">
-              <li v-for="(w, i) in warnings" :key="i" :class="`schedule__warning--${w.type}`">
+            <div v-if="ownMove || movedJobs.length" class="schedule__shift" role="status">
+              <p v-if="ownMove">
+                Parallele Aufträge sind aus – dieser Auftrag wird auf {{ ownMove }} gelegt.
+              </p>
+              <template v-if="movedJobs.length">
+                <p>Danach rutschen nach hinten:</p>
+                <ul>
+                  <li v-for="job in movedJobs" :key="job.id">{{ job.text }}</li>
+                </ul>
+              </template>
+            </div>
+            <ul v-if="shownWarnings.length" class="schedule__warnings" role="status">
+              <li v-for="(w, i) in shownWarnings" :key="i" :class="`schedule__warning--${w.type}`">
                 <AppIcon :name="w.type === 'arbeitszeit' ? 'clock' : w.type === 'abwesenheit' ? 'calendar-off' : 'layers'" :size="13" />
                 <span>{{ w.message }}</span>
               </li>
@@ -785,6 +825,28 @@ function entryLabel(startedAt: string, endedAt: string | null): string {
 .schedule__warnings .schedule__warning--abwesenheit {
   background: var(--danger-soft);
   color: var(--danger);
+}
+
+.schedule__shift {
+  display: grid;
+  gap: 4px;
+  padding: 7px 9px;
+  border-radius: var(--radius-sm);
+  background: var(--warning-soft);
+  color: var(--warning-ink);
+  font-size: 11px;
+  line-height: 1.4;
+}
+
+.schedule__shift p {
+  margin: 0;
+}
+
+.schedule__shift ul {
+  display: grid;
+  gap: 2px;
+  margin: 0;
+  padding-left: 16px;
 }
 
 .schedule__remove {

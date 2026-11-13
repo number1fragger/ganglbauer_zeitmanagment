@@ -47,7 +47,7 @@ final class SchedulingTest extends ApiTestCase
     public function testOnlySecretaryAndChefMayChangeSettings(): void
     {
         $this->api('PUT', '/api/settings', $this->worker, ['parallelScheduling' => false], 403);
-        self::assertSame(['parallelScheduling' => false], $this->api('PUT', '/api/settings', $this->chef, ['parallelScheduling' => false]));
+        self::assertSame(['parallelScheduling' => false, 'shifted' => []], $this->api('PUT', '/api/settings', $this->chef, ['parallelScheduling' => false]));
         self::assertSame(['parallelScheduling' => false], $this->api('GET', '/api/settings', $this->worker));
         $this->api('PUT', '/api/settings', $this->chef, [], 422);
     }
@@ -189,5 +189,169 @@ final class SchedulingTest extends ApiTestCase
         // b beginnt 07:30 und endet 08:30; a (offen, spaeter) rutscht auf 08:30-09:30.
         self::assertSame([$a['id']], array_column($moved['shifted'], 'id'));
         self::assertSame('Mon 08:30-Mon 09:30', $this->times($a['id']));
+    }
+
+    public function testDisablingResortsExistingOverlapsAndReturnsShifted(): void
+    {
+        $a = $this->createJob(['startsAt' => '2026-09-28T09:00:00+02:00', 'minutes' => 120]);
+        $b = $this->createJob(['startsAt' => '2026-09-28T10:00:00+02:00', 'minutes' => 60]);
+        $c = $this->createJob(['startsAt' => '2026-09-28T10:30:00+02:00', 'minutes' => 60]);
+        $other = $this->createJob(['startsAt' => '2026-09-28T09:30:00+02:00', 'minutes' => 60, 'assigneeId' => $this->otherWorker->getId()]);
+
+        $result = $this->api('PUT', '/api/settings', $this->chef, ['parallelScheduling' => false]);
+
+        self::assertFalse($result['parallelScheduling']);
+        self::assertSame([$b['id'], $c['id']], array_column($result['shifted'], 'id'));
+        self::assertSame('2026-09-28T11:00:00+02:00', $result['shifted'][0]['startsAt']);
+        self::assertSame('Mon 09:00-Mon 11:00', $this->times($a['id']));
+        self::assertSame('Mon 11:00-Mon 12:00', $this->times($b['id']));
+        self::assertSame('Mon 13:00-Mon 14:00', $this->times($c['id']));
+        self::assertSame('Mon 09:30-Mon 10:30', $this->times($other['id']));
+
+        // Erneutes Ausschalten und Einschalten sortiert nichts mehr.
+        self::assertSame([], $this->api('PUT', '/api/settings', $this->chef, ['parallelScheduling' => false])['shifted']);
+        self::assertSame([], $this->api('PUT', '/api/settings', $this->chef, ['parallelScheduling' => true])['shifted']);
+    }
+
+    public function testResortLeavesPastAndStartedJobsAlone(): void
+    {
+        $this->at('2026-09-28 10:00');
+        $past = $this->createJob(['startsAt' => '2026-09-28T09:00:00+02:00', 'minutes' => 120]);
+        $running = $this->createJob(['startsAt' => '2026-09-28T10:30:00+02:00', 'minutes' => 60]);
+        $this->api('POST', "/api/jobs/{$running['id']}/start", $this->worker, null, 200);
+        $later = $this->createJob(['startsAt' => '2026-09-28T11:00:00+02:00', 'minutes' => 60]);
+
+        $result = $this->api('PUT', '/api/settings', $this->chef, ['parallelScheduling' => false]);
+
+        // Vergangenes (beginnt vor jetzt) und Laufendes bleiben; nur die spaetere Arbeit weicht der laufenden aus.
+        self::assertSame([$later['id']], array_column($result['shifted'], 'id'));
+        self::assertSame('Mon 09:00-Mon 11:00', $this->times($past['id']));
+        self::assertSame('Mon 10:30-Mon 11:30', $this->times($running['id']));
+        self::assertSame('Mon 11:30-Mon 13:30', $this->times($later['id']));
+    }
+
+    public function testDryRunChangesNothing(): void
+    {
+        $this->createJob(['startsAt' => '2026-09-28T09:00:00+02:00', 'minutes' => 120]);
+        $b = $this->createJob(['startsAt' => '2026-09-28T10:00:00+02:00', 'minutes' => 60]);
+
+        $result = $this->api('PUT', '/api/settings', $this->chef, ['parallelScheduling' => false, 'dryRun' => true]);
+
+        self::assertTrue($result['parallelScheduling'], 'gespeicherter Wert bleibt');
+        self::assertSame([$b['id']], array_column($result['shifted'], 'id'));
+        self::assertSame('2026-09-28T11:00:00+02:00', $result['shifted'][0]['startsAt']);
+        self::assertSame('2026-09-28T12:00:00+02:00', $result['shifted'][0]['endsAt']);
+        self::assertSame('Mon 10:00-Mon 11:00', $this->times($b['id']));
+        self::assertTrue($this->api('GET', '/api/settings', $this->worker)['parallelScheduling']);
+
+        // Auch beim Einschalten nichts zu verschieben.
+        self::assertSame([], $this->api('PUT', '/api/settings', $this->chef, ['parallelScheduling' => true, 'dryRun' => true])['shifted']);
+    }
+
+    public function testWorkerMayNotUseSettingsDryRun(): void
+    {
+        $this->api('PUT', '/api/settings', $this->worker, ['parallelScheduling' => false, 'dryRun' => true], 403);
+    }
+
+    public function testCheckPreviewShowsShiftWhenParallelIsDisabled(): void
+    {
+        $this->parallel(false);
+        $later = $this->createJob(['startsAt' => '2026-09-28T10:00:00+02:00', 'minutes' => 60, 'customer' => 'Huber']);
+        $query = http_build_query([
+            'startsAt' => '2026-09-28T09:00:00+02:00',
+            'endsAt' => '2026-09-28T11:00:00+02:00',
+            'assigneeId' => $this->worker->getId(),
+        ]);
+
+        $check = $this->api('GET', '/api/jobs/check?'.$query, $this->chef);
+
+        self::assertSame('2026-09-28T09:00:00+02:00', $check['shift']['startsAt']);
+        self::assertSame('2026-09-28T11:00:00+02:00', $check['shift']['endsAt']);
+        self::assertSame([[
+            'id' => $later['id'],
+            'title' => 'Bremsen hinten',
+            'customer' => 'Huber',
+            'startsAt' => '2026-09-28T11:00:00+02:00',
+            'endsAt' => '2026-09-28T12:00:00+02:00',
+        ]], $check['shift']['moved']);
+        self::assertSame([], $check['warnings'], 'Ueberschneidungen werden aufgeloest, nicht gewarnt');
+        self::assertSame('Mon 10:00-Mon 11:00', $this->times($later['id']), 'Vorschau speichert nichts');
+    }
+
+    public function testCheckPreviewReportsMovedJobItself(): void
+    {
+        $this->parallel(false);
+        $this->createJob(['startsAt' => '2026-09-28T08:00:00+02:00', 'minutes' => 120]);
+        $query = http_build_query([
+            'startsAt' => '2026-09-28T09:00:00+02:00',
+            'endsAt' => '2026-09-28T10:00:00+02:00',
+            'assigneeId' => $this->worker->getId(),
+        ]);
+
+        $check = $this->api('GET', '/api/jobs/check?'.$query, $this->chef);
+
+        self::assertSame('2026-09-28T10:00:00+02:00', $check['shift']['startsAt']);
+        self::assertSame('2026-09-28T11:00:00+02:00', $check['shift']['endsAt']);
+        self::assertSame([], $check['shift']['moved']);
+        self::assertSame('verschoben', $check['warnings'][0]['type']);
+        self::assertSame('Wird wegen Überschneidung verschoben auf Mo 28.09. 10:00–11:00.', $check['warnings'][0]['message']);
+    }
+
+    public function testCheckShiftIsNullWhenParallelIsAllowed(): void
+    {
+        $this->createJob(['startsAt' => '2026-09-28T09:00:00+02:00', 'minutes' => 120]);
+        $query = http_build_query([
+            'startsAt' => '2026-09-28T10:00:00+02:00',
+            'endsAt' => '2026-09-28T11:00:00+02:00',
+            'assigneeId' => $this->worker->getId(),
+        ]);
+
+        $check = $this->api('GET', '/api/jobs/check?'.$query, $this->chef);
+
+        self::assertNull($check['shift']);
+        self::assertSame('ueberschneidung', $check['warnings'][0]['type']);
+    }
+
+    public function testApprenticeCannotWorkOnTwoJobsAtOnce(): void
+    {
+        $this->parallel(false);
+        $apprentice = $this->user('l.lehr', 'Lena', 'Lehr', \App\Enum\UserRole::Apprentice);
+        $this->em->flush();
+
+        $own = $this->createJob([
+            'startsAt' => '2026-09-28T09:00:00+02:00', 'minutes' => 60,
+            'assigneeId' => $this->otherWorker->getId(), 'apprenticeId' => $apprentice->getId(),
+        ]);
+        $team = $this->createJob([
+            'startsAt' => '2026-09-28T08:00:00+02:00', 'minutes' => 120,
+            'apprenticeId' => $apprentice->getId(),
+        ]);
+
+        self::assertSame([$own['id']], array_column($team['shifted'], 'id'));
+        self::assertSame('Mon 10:00-Mon 11:00', $this->times($own['id']));
+    }
+
+    public function testJobsWithOnlyAnApprenticeAreShiftedToo(): void
+    {
+        $this->parallel(false);
+        $apprentice = $this->user('l.lehr', 'Lena', 'Lehr', \App\Enum\UserRole::Apprentice);
+        $this->em->flush();
+
+        $first = $this->api('POST', '/api/jobs', $this->chef, [
+            'title' => 'Lager', 'apprenticeId' => $apprentice->getId(),
+            'startsAt' => '2026-09-28T09:00:00+02:00', 'endsAt' => '2026-09-28T10:00:00+02:00',
+        ], 201);
+        $preview = $this->api('GET', '/api/jobs/check?'.http_build_query([
+            'startsAt' => '2026-09-28T09:30:00+02:00', 'endsAt' => '2026-09-28T10:30:00+02:00',
+            'apprenticeId' => $apprentice->getId(),
+        ]), $this->chef);
+        $second = $this->api('POST', '/api/jobs', $this->chef, [
+            'title' => 'Putzen', 'apprenticeId' => $apprentice->getId(),
+            'startsAt' => '2026-09-28T09:30:00+02:00', 'endsAt' => '2026-09-28T10:30:00+02:00',
+        ], 201);
+
+        self::assertNotNull($preview['shift']);
+        self::assertSame('Mon 09:00-Mon 10:00', $this->times($first['id']));
+        self::assertSame('Mon 10:00-Mon 11:00', $this->times($second['id']));
     }
 }

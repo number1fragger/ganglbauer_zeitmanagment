@@ -12,6 +12,7 @@ use App\Exception\WorkflowException;
 use App\Repository\JobRepository;
 use App\Repository\UserRepository;
 use App\Security\JobVoter;
+use App\Service\PlannedMove;
 use App\Service\ScheduleChecker;
 use App\Service\ScheduleShifter;
 use App\Service\SchedulingSettings;
@@ -141,11 +142,40 @@ final class JobController extends AbstractApiController
             : null;
         $jobId = '' !== $request->query->getString('jobId') ? $request->query->getInt('jobId') : null;
 
+        $assignee = $person('assigneeId');
+        $apprentice = $person('apprenticeId');
+
+        // Bei ausgeschaltetem parallelem Einplanen wird verschoben statt gewarnt.
+        $plan = (null !== $assignee || null !== $apprentice) && !$this->settings->allowsParallel()
+            ? $this->shifter->planFor($startsAt, $endsAt, $assignee, $apprentice, null !== $jobId ? $this->jobs->find($jobId) : null)
+            : null;
+        $finalStart = $plan?->startsAt ?? $startsAt;
+        $finalEnd = $plan?->endsAt ?? $endsAt;
+
+        $warnings = $this->checker->check($finalStart, $finalEnd, $assignee, $apprentice, $jobId);
+        if (null !== $plan) {
+            $warnings = array_values(array_filter($warnings, static fn (array $w): bool => ScheduleChecker::UEBERSCHNEIDUNG !== $w['type']));
+            if ($plan->selfMoved) {
+                array_unshift($warnings, ['type' => ScheduleChecker::VERSCHOBEN, 'message' => 'Wird wegen Überschneidung verschoben auf '.$this->describeSlot($finalStart, $finalEnd).'.']);
+            }
+        }
+
         return $this->json([
             'startsAt' => $startsAt->format(\DATE_ATOM),
             'endsAt' => $endsAt->format(\DATE_ATOM),
             'workMinutes' => WorkingHours::durationMinutes($startsAt, $endsAt),
-            'warnings' => $this->checker->check($startsAt, $endsAt, $person('assigneeId'), $person('apprenticeId'), $jobId),
+            'warnings' => $warnings,
+            'shift' => null === $plan ? null : [
+                'startsAt' => $finalStart->format(\DATE_ATOM),
+                'endsAt' => $finalEnd->format(\DATE_ATOM),
+                'moved' => array_map(static fn (PlannedMove $move): array => [
+                    'id' => (int) $move->job->getId(),
+                    'title' => $move->job->getTitle(),
+                    'customer' => $move->job->getCustomer(),
+                    'startsAt' => $move->startsAt->format(\DATE_ATOM),
+                    'endsAt' => $move->endsAt->format(\DATE_ATOM),
+                ], $plan->moved),
+            ],
         ]);
     }
 
@@ -315,7 +345,7 @@ final class JobController extends AbstractApiController
      */
     private function shiftOverlaps(Job $job): ShiftResult
     {
-        if ($this->settings->allowsParallel() || !$job->isScheduled() || $job->isDone() || null === $job->getAssignee()) {
+        if ($this->settings->allowsParallel() || !$job->isScheduled() || $job->isDone() || [] === $job->getPeople()) {
             return new ShiftResult();
         }
 
@@ -340,7 +370,10 @@ final class JobController extends AbstractApiController
         \assert(\is_array($data));
         $data['warnings'] = $this->checker->forJob($job);
         if ($shift?->selfMoved) {
-            array_unshift($data['warnings'], ['type' => ScheduleChecker::VERSCHOBEN, 'message' => $this->shiftMessage($job)]);
+            $start = $job->getStartsAt();
+            $end = $job->getEndsAt();
+            \assert(null !== $start && null !== $end);
+            array_unshift($data['warnings'], ['type' => ScheduleChecker::VERSCHOBEN, 'message' => 'Wegen Überschneidung verschoben auf '.$this->describeSlot($start, $end).'.']);
         }
         $data['shifted'] = array_map(
             fn (Job $moved): mixed => $this->normalizer->normalize($moved, 'json', ['groups' => $groups]),
@@ -350,17 +383,14 @@ final class JobController extends AbstractApiController
         return $this->json($data, $status);
     }
 
-    private function shiftMessage(Job $job): string
+    /** "Mo 28.09. 10:00–11:00" bzw. "Fr 02.10. 13:30–Mo 05.10. 08:00" bei mehrtaegigen Terminen. */
+    private function describeSlot(\DateTimeImmutable $start, \DateTimeImmutable $end): string
     {
         $days = [1 => 'Mo', 'Di', 'Mi', 'Do', 'Fr', 'Sa', 'So'];
-        $start = $job->getStartsAt();
-        $end = $job->getEndsAt();
-        \assert(null !== $start && null !== $end);
-
         $label = static fn (\DateTimeImmutable $d): string => $days[(int) $d->format('N')].' '.$d->format('d.m. H:i');
         $until = $start->format('Y-m-d') === $end->format('Y-m-d') ? $end->format('H:i') : $label($end);
 
-        return sprintf('Wegen Überschneidung verschoben auf %s–%s.', $label($start), $until);
+        return $label($start).'–'.$until;
     }
 
     /**

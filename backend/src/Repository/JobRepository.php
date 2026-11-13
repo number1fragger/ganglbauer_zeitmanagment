@@ -137,25 +137,21 @@ class JobRepository extends ServiceEntityRepository
     }
 
     /**
-     * Alle eingeplanten Arbeiten des Arbeiters, die nach $from enden – fuer
-     * das automatische Verschieben (ScheduleShifter). Ohne $except.
+     * Alle eingeplanten Arbeiten (aller Mitarbeiter), die nach $from enden –
+     * fuer das automatische Verschieben (ScheduleShifter).
      *
      * @return Job[]
      */
-    public function findScheduledFor(User $assignee, \DateTimeImmutable $from, ?Job $except = null): array
+    public function findScheduledEndingAfter(\DateTimeImmutable $from): array
     {
-        $jobs = $this->createQueryBuilder('j')
-            ->andWhere('j.assignee = :assignee')
+        return $this->withRelations()
             ->andWhere('j.startsAt IS NOT NULL')
             ->andWhere('j.endsAt > :from')
-            ->setParameter('assignee', $assignee)
             ->setParameter('from', $from)
             ->orderBy('j.startsAt', 'ASC')
             ->addOrderBy('j.id', 'ASC')
             ->getQuery()
             ->getResult();
-
-        return array_values(array_filter($jobs, static fn (Job $j): bool => $j !== $except));
     }
 
     /**

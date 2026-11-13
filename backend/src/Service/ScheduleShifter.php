@@ -2,109 +2,153 @@
 
 namespace App\Service;
 
+use App\Entity\Absence;
 use App\Entity\Job;
+use App\Entity\User;
 use App\Enum\JobStatus;
+use App\Repository\AbsenceRepository;
 use App\Repository\JobRepository;
-use App\Util\WorkingHours;
+use App\Util\AbsenceSlot;
+use App\Util\Booking;
+use App\Util\ScheduleSolver;
 
 /**
- * Verschiebt Termine eines Mitarbeiters automatisch, damit sie sich nicht
- * ueberschneiden (nur wenn paralleles Einplanen ausgeschaltet ist). Der
- * Lehrling spielt dabei keine Rolle.
+ * Verschiebt Termine automatisch, damit sich keine Person (Arbeiter oder
+ * Lehrling) mit zwei Arbeiten ueberschneidet – nur wenn paralleles
+ * Einplanen ausgeschaltet ist. Die Regeln stehen im ScheduleSolver; diese
+ * Klasse laedt Buchungen und Abwesenheiten und wendet den Plan an.
  *
  * Feste Arbeiten bewegen sich nie: alles, woran schon gearbeitet wird oder
- * was erledigt ist, sowie offene Arbeiten, die vor der bearbeiteten beginnen.
- * Ueberschneidet die bearbeitete Arbeit eine feste, rutscht sie dahinter.
- * Danach werden die folgenden offenen Arbeiten der Reihe nach nach hinten
- * geschoben (Kaskade). Jede Arbeit behaelt ihre Arbeitszeit.
- * Geaendert wird nur im Speicher – der Aufrufer flusht.
+ * was erledigt ist, sowie offene Arbeiten, die vor dem Ankerzeitpunkt (Beginn
+ * der bearbeiteten Arbeit bzw. jetzt) beginnen.
+ *
+ * Die plan*-Methoden aendern nichts (Vorschau, Trockenlauf); resolve() und
+ * ShiftPlan::applyMoved() aendern nur im Speicher – der Aufrufer flusht.
  */
 class ScheduleShifter
 {
-    /** Schutz vor Endlosschleifen. */
-    private const MAX_ITERATIONS = 500;
+    /** Abwesenheiten werden so weit vorausgeladen. */
+    private const ABSENCE_HORIZON = '+2 years';
 
-    public function __construct(private readonly JobRepository $jobs)
-    {
+    private readonly ScheduleSolver $solver;
+
+    public function __construct(
+        private readonly JobRepository $jobs,
+        private readonly AbsenceRepository $absences,
+    ) {
+        $this->solver = new ScheduleSolver();
     }
 
+    /** Loest die Ueberschneidungen einer gerade bearbeiteten Arbeit auf (aendert im Speicher). */
     public function resolve(Job $job): ShiftResult
     {
-        $assignee = $job->getAssignee();
         $start = $job->getStartsAt();
         $end = $job->getEndsAt();
-        if (null === $assignee || null === $start || null === $end) {
+        if (null === $start || null === $end || [] === $job->getPeople()) {
             return new ShiftResult();
         }
 
-        $fixed = [];
-        $following = [];
-        foreach ($this->jobs->findScheduledFor($assignee, $start, $job) as $other) {
-            if (JobStatus::Open !== $other->getStatus() || $other->getStartsAt() < $start) {
-                $fixed[] = $other;
-            } else {
-                $following[] = $other;
-            }
+        $plan = $this->planFor($start, $end, $job->getAssignee(), $job->getApprentice(), $job);
+        if ($plan->selfMoved) {
+            \assert(null !== $plan->startsAt && null !== $plan->endsAt);
+            $job->schedule($plan->startsAt, $plan->endsAt);
         }
+        $plan->applyMoved();
 
-        $iterations = 0;
-
-        // 1. Die bearbeitete Arbeit weicht festen Arbeiten aus.
-        $selfMoved = false;
-        $minutes = max(1, WorkingHours::durationMinutes($start, $end));
-        while ($iterations++ < self::MAX_ITERATIONS && null !== ($blocker = $this->overlapping($fixed, $start, $end))) {
-            $start = WorkingHours::nextWorkingMoment($blocker->getEndsAt());
-            $end = WorkingHours::endFor($start, $minutes);
-            $selfMoved = true;
-        }
-        if ($selfMoved) {
-            $job->schedule($start, $end);
-        }
-
-        // 2. Folgende offene Arbeiten rutschen nach hinten.
-        $moved = [];
-        $busyUntil = $end;
-        foreach ($following as $other) {
-            $otherStart = $other->getStartsAt();
-            $otherEnd = $other->getEndsAt();
-            \assert(null !== $otherStart && null !== $otherEnd);
-
-            $newStart = $otherStart;
-            $newEnd = $otherEnd;
-            $otherMinutes = max(1, WorkingHours::durationMinutes($otherStart, $otherEnd));
-
-            while ($iterations++ < self::MAX_ITERATIONS) {
-                if ($newStart < $busyUntil) {
-                    $newStart = WorkingHours::nextWorkingMoment($busyUntil);
-                } elseif (null !== ($blocker = $this->overlapping($fixed, $newStart, $newEnd))) {
-                    $newStart = WorkingHours::nextWorkingMoment($blocker->getEndsAt());
-                } else {
-                    break;
-                }
-                $newEnd = WorkingHours::endFor($newStart, $otherMinutes);
-            }
-
-            if ($newStart != $otherStart) {
-                $other->schedule($newStart, $newEnd);
-                $moved[] = $other;
-            }
-            $busyUntil = max($busyUntil, $newEnd);
-        }
-
-        return new ShiftResult($moved, $selfMoved);
+        return new ShiftResult(array_map(static fn (PlannedMove $m): Job => $m->job, $plan->moved), $plan->selfMoved);
     }
 
     /**
-     * @param list<Job> $fixed
+     * Plan fuer eine Arbeit mit dem angegebenen Termin (auch fuer noch nicht
+     * gespeicherte, z. B. die Vorschau). $job ist die bestehende Arbeit, falls
+     * es sie schon gibt – sie zaehlt dann nicht als fremde Buchung.
      */
-    private function overlapping(array $fixed, \DateTimeImmutable $start, \DateTimeImmutable $end): ?Job
+    public function planFor(\DateTimeImmutable $start, \DateTimeImmutable $end, ?User $assignee, ?User $apprentice, ?Job $job = null): ShiftPlan
     {
-        foreach ($fixed as $other) {
-            if ($other->getStartsAt() < $end && $other->getEndsAt() > $start) {
-                return $other;
-            }
+        $persons = $this->personIds([$assignee, $apprentice]);
+        if ([] === $persons) {
+            return new ShiftPlan(startsAt: $start, endsAt: $end);
         }
 
-        return null;
+        $editedKey = (int) $job?->getId();
+        $bookings = [new Booking($editedKey, $start, $end, $persons)];
+        $byKey = [];
+        foreach ($this->jobs->findScheduledEndingAfter($start) as $other) {
+            if ($other === $job || (null !== $job && null !== $job->getId() && $other->getId() === $job->getId())) {
+                continue;
+            }
+            $bookings[] = $this->booking($other, $start);
+            $byKey[(int) $other->getId()] = $other;
+        }
+
+        $plan = $this->solver->solve($bookings, $this->absenceSlots($start), $editedKey);
+
+        $moved = [];
+        foreach ($plan->moves as $key => $booking) {
+            if ($key !== $editedKey) {
+                $moved[] = new PlannedMove($byKey[$key], $booking->start, $booking->end);
+            }
+        }
+        $self = $plan->moves[$editedKey] ?? null;
+
+        return new ShiftPlan($moved, $plan->editedMoved, $self?->start ?? $start, $self?->end ?? $end);
+    }
+
+    /**
+     * Plan fuers Neusortieren: alle offenen Arbeiten ab $now, die sich
+     * ueberschneiden, rutschen nach hinten.
+     */
+    public function planResort(\DateTimeImmutable $now): ShiftPlan
+    {
+        $bookings = [];
+        $byKey = [];
+        foreach ($this->jobs->findScheduledEndingAfter($now) as $job) {
+            if ([] === $job->getPeople()) {
+                continue;
+            }
+            $bookings[] = $this->booking($job, $now);
+            $byKey[(int) $job->getId()] = $job;
+        }
+
+        $plan = $this->solver->solve($bookings, $this->absenceSlots($now));
+
+        $moved = [];
+        foreach ($plan->moves as $key => $booking) {
+            $moved[] = new PlannedMove($byKey[$key], $booking->start, $booking->end);
+        }
+
+        return new ShiftPlan($moved);
+    }
+
+    private function booking(Job $job, \DateTimeImmutable $anchor): Booking
+    {
+        $start = $job->getStartsAt();
+        $end = $job->getEndsAt();
+        \assert(null !== $start && null !== $end);
+
+        $fixed = JobStatus::Open !== $job->getStatus() || $start < $anchor;
+
+        return new Booking((int) $job->getId(), $start, $end, $this->personIds($job->getPeople()), $fixed);
+    }
+
+    /**
+     * @return list<AbsenceSlot>
+     */
+    private function absenceSlots(\DateTimeImmutable $from): array
+    {
+        return array_map(
+            static fn (Absence $absence): AbsenceSlot => new AbsenceSlot((int) $absence->getUser()->getId(), $absence->getStartsAt(), $absence->getEndsAt()),
+            $this->absences->findInRange($from, $from->modify(self::ABSENCE_HORIZON)),
+        );
+    }
+
+    /**
+     * @param array<User|null> $users
+     *
+     * @return list<int>
+     */
+    private function personIds(array $users): array
+    {
+        return array_values(array_map(static fn (User $u): int => (int) $u->getId(), array_filter($users)));
     }
 }

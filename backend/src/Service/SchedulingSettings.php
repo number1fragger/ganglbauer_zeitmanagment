@@ -27,7 +27,8 @@ class SchedulingSettings
         return null === $setting || false !== $setting->getValue();
     }
 
-    public function setAllowsParallel(bool $allowed): void
+    /** Speichert die Einstellung; mit $flush = false flusht der Aufrufer (z. B. zusammen mit verschobenen Arbeiten). */
+    public function setAllowsParallel(bool $allowed, bool $flush = true): void
     {
         $setting = $this->settings->find(self::PARALLEL);
         if (null === $setting) {
@@ -36,6 +37,8 @@ class SchedulingSettings
             $setting->setValue($allowed);
         }
 
-        $this->em->flush();
+        if ($flush) {
+            $this->em->flush();
+        }
     }
 }

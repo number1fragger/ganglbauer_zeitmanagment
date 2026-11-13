@@ -18,6 +18,7 @@ import WeekCalendar from '@/components/calendar/WeekCalendar.vue'
 import WeekSidebar from '@/components/calendar/WeekSidebar.vue'
 import JobDialog from '@/components/JobDialog.vue'
 import { useBreakpoint } from '@/composables/useBreakpoint'
+import { confirmAction } from '@/composables/useConfirm'
 import { drag } from '@/composables/useJobDrag'
 import { toast, toastSaved, toastShifted } from '@/composables/useToast'
 import { endAfterMove, type MoveEvent, type ResizeEvent } from '@/utils/calendar'
@@ -27,6 +28,7 @@ import {
   formatLongDate,
   formatHours,
   formatMonth,
+  formatRange,
   formatTime,
   fromDateKey,
   isoWeek,
@@ -168,6 +170,73 @@ const conflictList = computed(() =>
 const formatDayTime = (date: Date) =>
   `${date.toLocaleDateString('de-AT', { weekday: 'short', day: '2-digit', month: '2-digit' })} ${formatTime(date)}`
 
+// ---- Parallele Auftraege ------------------------------------------------------
+
+/** null = noch nicht geladen. */
+const parallel = ref<boolean | null>(null)
+const parallelBusy = ref(false)
+
+async function loadSettings(): Promise<void> {
+  if (!auth.isPlanner) return
+  try {
+    parallel.value = (await settingsApi.get()).parallelScheduling
+  } catch {
+    /* Schalter bleibt ausgeblendet */
+  }
+}
+
+/** Zeile fuer die Rueckfrage: "Titel · Kunde · Zustaendiger → Di 17.11., 07:30 – 09:00" */
+function shiftLine(job: Job): string {
+  const parts = [job.title, job.customer, job.assignee?.fullName].filter(Boolean)
+  const range = job.startsAt && job.endsAt ? formatRange(new Date(job.startsAt), new Date(job.endsAt)) : ''
+  return range ? `${parts.join(' · ')} → ${range}` : parts.join(' · ')
+}
+
+async function setParallel(value: boolean): Promise<void> {
+  const previous = parallel.value
+  parallel.value = value
+  parallelBusy.value = true
+  try {
+    if (!value && previous) {
+      // Ausschalten: erst nachsehen, was sich verschieben wuerde, und nachfragen
+      const preview = await settingsApi.update({ parallelScheduling: false, dryRun: true })
+      if (preview.shifted.length) {
+        const lines = preview.shifted.slice(0, 10).map(shiftLine)
+        const rest = preview.shifted.length - lines.length
+        if (rest > 0) lines.push(`… und ${rest} weitere`)
+        const ok = await confirmAction({
+          title: 'Parallele Aufträge ausschalten?',
+          message:
+            'Bestehende Überschneidungen werden aufgelöst: Spätere Aufträge rutschen auf die nächste freie Zeit. Arbeitszeiten, Mittagspause und Abwesenheiten werden beachtet, bereits begonnene Aufträge bleiben.',
+          confirmLabel: 'Ausschalten und verschieben',
+          details: lines,
+        })
+        if (!ok) {
+          parallel.value = previous
+          return
+        }
+      }
+    }
+    const result = await settingsApi.update({ parallelScheduling: value })
+    parallel.value = result.parallelScheduling
+    toast(
+      parallel.value
+        ? 'Parallele Aufträge sind erlaubt.'
+        : 'Parallele Aufträge sind ausgeschaltet – spätere Aufträge werden automatisch verschoben.',
+      'success',
+    )
+    if (result.shifted?.length) {
+      toastShifted(result.shifted)
+      await load()
+    }
+  } catch (e) {
+    parallel.value = previous
+    toast(errorMessage(e), 'error')
+  } finally {
+    parallelBusy.value = false
+  }
+}
+
 let loadToken = 0
 /** Laedt Kalender, To-do-Liste und Uebersicht – nach jeder Aenderung aufgerufen. */
 async function load(): Promise<void> {
@@ -215,41 +284,6 @@ async function load(): Promise<void> {
 }
 
 watch(range, load, { immediate: true })
-
-// ---- Parallele Auftraege ------------------------------------------------------
-
-/** null = noch nicht geladen. */
-const parallel = ref<boolean | null>(null)
-const parallelBusy = ref(false)
-
-async function loadSettings(): Promise<void> {
-  if (!auth.isPlanner) return
-  try {
-    parallel.value = (await settingsApi.get()).parallelScheduling
-  } catch {
-    /* Schalter bleibt ausgeblendet */
-  }
-}
-
-async function setParallel(value: boolean): Promise<void> {
-  const previous = parallel.value
-  parallel.value = value
-  parallelBusy.value = true
-  try {
-    parallel.value = (await settingsApi.update({ parallelScheduling: value })).parallelScheduling
-    toast(
-      parallel.value
-        ? 'Parallele Aufträge sind erlaubt.'
-        : 'Parallele Aufträge sind ausgeschaltet – spätere Aufträge werden automatisch verschoben.',
-      'success',
-    )
-  } catch (e) {
-    parallel.value = previous
-    toast(errorMessage(e), 'error')
-  } finally {
-    parallelBusy.value = false
-  }
-}
 
 // ---- To-do-Seitenleiste ---------------------------------------------------
 

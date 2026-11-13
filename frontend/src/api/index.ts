@@ -17,6 +17,8 @@ import type {
   WorkRequest,
   WorkRequestReport,
   ScheduleCheck,
+  SettingsInput,
+  SettingsResult,
   Settings,
 } from './types'
 import type { WorkingHoursConfig } from '@/utils/workTime'
@@ -128,5 +130,5 @@ export const usersApi = {
 
 export const settingsApi = {
   get: () => http.get<Settings>('/api/settings'),
-  update: (input: Settings) => http.put<Settings>('/api/settings', input),
+  update: (input: SettingsInput) => http.put<SettingsResult>('/api/settings', input),
 }

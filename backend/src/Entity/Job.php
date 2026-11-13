@@ -197,7 +197,8 @@ class Job
     /**
      * Termin festlegen (Beginn, optional Ende). Ohne Ende bekommt der
      * Kalenderblock die geplante Arbeitszeit (plannedMinutes), sonst die
-     * Standardlaenge DEFAULT_SLOT_MINUTES.
+     * Standardlaenge DEFAULT_SLOT_MINUTES. Beginn bzw. Ende in einer Pause
+     * werden an deren Rand gelegt (WorkingHours::fitAroundBreaks).
      */
     public function schedule(\DateTimeImmutable $startsAt, ?\DateTimeImmutable $endsAt = null): static
     {
@@ -207,6 +208,8 @@ class Job
         if ($endsAt <= $startsAt) {
             throw new InvalidInputException('Das Ende des Termins muss nach dem Beginn liegen.');
         }
+        // Kein Termin beginnt oder endet in der Mittagspause.
+        [$startsAt, $endsAt] = WorkingHours::fitAroundBreaks($startsAt, $endsAt);
 
         $this->startsAt = $startsAt;
         $this->endsAt = $endsAt;

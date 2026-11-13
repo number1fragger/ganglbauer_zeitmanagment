@@ -1,6 +1,7 @@
 import { reactive } from 'vue'
 import type { Job } from '@/api/types'
 import { endAfterMove, gridEndHour, gridStartHour, HOUR_PX, type MoveEvent } from '@/utils/calendar'
+import { workStart } from '@/composables/useWorkingHours'
 import { fromDateKey, startOfDay } from '@/utils/time'
 
 const SNAP = 15
@@ -101,8 +102,10 @@ function updateTarget(event: PointerEvent): void {
   const rawMinutes = ((event.clientY - drag.grabY - rect.top - PAD) / HOUR_PX) * 60
   const maxMinutes = (gridEndHour() - gridStartHour()) * 60 - SNAP
   const minutes = Math.min(Math.max(Math.round(rawMinutes / SNAP) * SNAP, 0), maxMinutes)
-  const startsAt = startOfDay(day)
-  startsAt.setHours(gridStartHour(), minutes)
+  const dropped = startOfDay(day)
+  dropped.setHours(gridStartHour(), minutes)
+  // In die Mittagspause gezogen: der Termin beginnt nach der Pause.
+  const startsAt = workStart(dropped)
   const owner = column.dataset.dropAssignee
   const keep = owner === 'keep' || drag.keepAssignee
 

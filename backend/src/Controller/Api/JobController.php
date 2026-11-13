@@ -136,6 +136,8 @@ final class JobController extends AbstractApiController
         if ($endsAt <= $startsAt) {
             throw new InvalidInputException('Das Ende des Termins muss nach dem Beginn liegen.');
         }
+        // Wie beim Speichern (Job::schedule): nicht in der Mittagspause beginnen oder enden.
+        [$startsAt, $endsAt] = WorkingHours::fitAroundBreaks($startsAt, $endsAt);
 
         $person = fn (string $key): ?User => '' !== $request->query->getString($key)
             ? ($this->users->find($request->query->getInt($key)) ?? throw new BadRequestHttpException('Diese Person gibt es nicht.'))

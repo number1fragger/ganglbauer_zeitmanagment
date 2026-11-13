@@ -7,6 +7,7 @@ import { beginResize, resize } from '@/composables/useJobResize'
 import { workDuration } from '@/composables/useWorkingHours'
 import {
   blockedOn,
+  breaksOn,
   gridEndHour,
   gridStartHour,
   HOUR_PX,
@@ -90,6 +91,23 @@ function style(item: Placed) {
   }
 }
 
+/**
+ * Pausen innerhalb eines Termins (z. B. Auftrag 11–14 Uhr): die Mittagspause
+ * wird im Block sichtbar ausgespart – dort wird nicht gearbeitet.
+ */
+function breaksIn(item: Placed): { key: number; top: number; height: number; label: string }[] {
+  if (item.segment.kind !== 'job') return []
+  const { from, to } = liveRange(item)
+  return breaksOn(props.day)
+    .filter((pause) => pause.from > from && pause.to < to)
+    .map((pause) => ({
+      key: pause.from,
+      top: (pause.from - from) * HOUR_PX - 3,
+      height: (pause.to - pause.from) * HOUR_PX,
+      label: pause.label,
+    }))
+}
+
 const resizeLabel = computed(() => {
   if (!resize.active || !resize.startsAt || !resize.endsAt) return ''
   const minutes = workDuration(resize.startsAt, resize.endsAt)
@@ -153,6 +171,14 @@ function onBackgroundClick(event: MouseEvent): void {
       @pointerdown="startDrag($event, item)"
     >
       <slot :placed="item" />
+      <span
+        v-for="pause in breaksIn(item)"
+        :key="pause.key"
+        class="column__item-break"
+        :style="{ top: `${pause.top}px`, height: `${pause.height}px` }"
+        aria-hidden="true"
+        ><span>{{ pause.label }}</span></span
+      >
       <template v-if="movable(item.segment)">
         <span
           v-if="item.segment.startsHere"
@@ -259,6 +285,28 @@ function onBackgroundClick(event: MouseEvent): void {
   transition: none;
   box-shadow: 0 0 0 2px var(--primary);
   border-radius: var(--radius);
+}
+
+/* Mittagspause innerhalb eines Termins: ausgespart, Termin laeuft danach weiter */
+.column__item-break {
+  position: absolute;
+  z-index: 1;
+  left: 0;
+  right: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background:
+    repeating-linear-gradient(-45deg, var(--blocked) 0 6px, transparent 6px 12px),
+    color-mix(in srgb, var(--bg) 82%, transparent);
+  border-block: 1px dashed var(--border-strong);
+  pointer-events: none;
+}
+
+.column__item-break span {
+  color: var(--faint);
+  font-size: 9px;
+  font-weight: 600;
 }
 
 /* Ziehgriffe am oberen und unteren Rand */

@@ -81,6 +81,35 @@ final class WorkingHoursTest extends TestCase
         self::assertCount(2, $this->warnings('2026-09-28 06:00', '2026-09-28 18:00'));
     }
 
+    /** In der Mittagspause wird nicht gearbeitet – sie zaehlt nie zur Dauer. */
+    public function testLunchBreakIsNeverWorkingTime(): void
+    {
+        $at = static fn (string $time): \DateTimeImmutable => new \DateTimeImmutable('2026-09-28 '.$time); // Montag
+
+        self::assertSame('13:00', WorkingHours::skipBreak($at('12:30'))->format('H:i'));
+        self::assertSame('11:59', WorkingHours::skipBreak($at('11:59'))->format('H:i'));
+        self::assertSame(120, WorkingHours::durationMinutes($at('12:30'), $at('15:00')));
+        self::assertSame('15:00', WorkingHours::endFor($at('12:00'), 120)->format('H:i'));
+        self::assertSame('14:00', WorkingHours::endFor($at('11:00'), 120)->format('H:i'));
+    }
+
+    public function testFitAroundBreaks(): void
+    {
+        $fit = static function (string $from, string $to): string {
+            [$start, $end] = WorkingHours::fitAroundBreaks(new \DateTimeImmutable($from), new \DateTimeImmutable($to));
+
+            return $start->format('D H:i').'-'.$end->format('D H:i');
+        };
+
+        self::assertSame('Mon 11:00-Mon 12:00', $fit('2026-09-28 11:00', '2026-09-28 12:30'), 'Ende in der Pause');
+        self::assertSame('Mon 11:00-Mon 12:00', $fit('2026-09-28 11:00', '2026-09-28 13:00'), 'Ende genau am Pausenende');
+        self::assertSame('Mon 13:00-Mon 14:00', $fit('2026-09-28 12:00', '2026-09-28 14:00'), 'Beginn in der Pause');
+        self::assertSame('Mon 13:00-Mon 13:45', $fit('2026-09-28 12:15', '2026-09-28 13:00'), 'ganz in der Pause');
+        self::assertSame('Mon 11:00-Mon 14:00', $fit('2026-09-28 11:00', '2026-09-28 14:00'), 'ueber Mittag bleibt');
+        self::assertSame('Mon 16:00-Mon 18:00', $fit('2026-09-28 16:00', '2026-09-28 18:00'), 'Ueberstunden bleiben');
+        self::assertSame('Sat 12:00-Sat 14:00', $fit('2026-10-03 12:00', '2026-10-03 14:00'), 'arbeitsfreier Tag bleibt');
+    }
+
     public function testConfigurationForTheFrontend(): void
     {
         $config = WorkingHours::toArray();

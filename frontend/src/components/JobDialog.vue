@@ -6,7 +6,14 @@ import type { Job, JobInput, Priority, ScheduleShift, ScheduleWarning, UserRef }
 import { confirmAction } from '@/composables/useConfirm'
 import { useJobActions } from '@/composables/useJobActions'
 import { toast, toastSaved, toastShifted } from '@/composables/useToast'
-import { workDuration, workEnd, workingHours, workTimeWarnings } from '@/composables/useWorkingHours'
+import {
+  fitToWork,
+  workDuration,
+  workEnd,
+  workingHours,
+  workStart,
+  workTimeWarnings,
+} from '@/composables/useWorkingHours'
 import { useAuthStore } from '@/stores/auth'
 import { DEFAULT_SLOT_MINUTES } from '@/utils/calendar'
 import { canStart, canWorkOn, isApprentice, isDone, priorities } from '@/utils/domain'
@@ -56,7 +63,9 @@ const started = computed(() => current.value?.started ?? false)
 
 const initialStart = props.job?.startsAt
   ? new Date(props.job.startsAt)
-  : (props.defaults?.startsAt ?? null)
+  : props.defaults?.startsAt
+    ? workStart(props.defaults.startsAt) // Klick in die Mittagspause -> nach der Pause
+    : null
 const initialEnd = props.job?.endsAt
   ? new Date(props.job.endsAt)
   : initialStart
@@ -166,8 +175,10 @@ const durationMinutes = computed(() => {
 /** Beginn geaendert: die Dauer (Arbeitszeit) bleibt, das Ende rueckt nach. */
 function onStartChange(): void {
   if (!form.startsAt) return
+  const start = workStart(new Date(form.startsAt)) // nicht in der Mittagspause beginnen
   const minutes = durationMinutes.value ?? DEFAULT_SLOT_MINUTES
-  form.endsAt = toLocalInput(workEnd(new Date(form.startsAt), minutes))
+  form.startsAt = toLocalInput(start)
+  form.endsAt = toLocalInput(workEnd(start, minutes))
   form.durationHours = toHours(minutes)
 }
 
@@ -175,8 +186,11 @@ function onStartChange(): void {
 function onEndChange(): void {
   if (!form.startsAt || !form.endsAt) return
   const start = new Date(form.startsAt)
-  const end = new Date(form.endsAt)
-  if (end > start) form.durationHours = toHours(workDuration(start, end))
+  const typed = new Date(form.endsAt)
+  if (typed <= start) return
+  const end = fitToWork(start, typed)[1] // nicht in der Mittagspause enden
+  form.endsAt = toLocalInput(end)
+  form.durationHours = toHours(workDuration(start, end))
 }
 
 /** Dauer geaendert: das Ende wird ab dem Beginn neu berechnet. */

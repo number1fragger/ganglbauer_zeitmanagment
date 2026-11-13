@@ -1,6 +1,7 @@
 import { reactive } from 'vue'
 import type { Job } from '@/api/types'
 import { gridEndHour, gridStartHour, HOUR_PX, type ResizeEvent } from '@/utils/calendar'
+import { fitToWork } from '@/composables/useWorkingHours'
 import { fromDateKey, startOfDay } from '@/utils/time'
 
 const SNAP = 15
@@ -70,13 +71,13 @@ function onMove(event: PointerEvent): void {
   const start = new Date(job.startsAt)
   const end = new Date(job.endsAt)
   const min = MIN_MINUTES * 60_000
-  if (resize.edge === 'end') {
-    resize.startsAt = start
-    resize.endsAt = new Date(Math.max(moment.getTime(), start.getTime() + min))
-  } else {
-    resize.startsAt = new Date(Math.min(moment.getTime(), end.getTime() - min))
-    resize.endsAt = end
-  }
+  const [startsAt, endsAt] =
+    resize.edge === 'end'
+      ? fitToWork(start, new Date(Math.max(moment.getTime(), start.getTime() + min)))
+      : fitToWork(new Date(Math.min(moment.getTime(), end.getTime() - min)), end)
+  // Rand in der Mittagspause: an den Pausenrand legen (wie das Backend).
+  resize.startsAt = startsAt
+  resize.endsAt = endsAt
 }
 
 function onUp(): void {

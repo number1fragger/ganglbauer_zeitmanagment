@@ -1,7 +1,7 @@
 import type { Absence, Job } from '@/api/types'
 import { workingHours } from '@/composables/useWorkingHours'
 import { addDays, hourOfDay, startOfDay } from './time'
-import { blockedRanges, dayBounds, durationMinutes, endFor } from './workTime'
+import { blockedRanges, dayBounds, durationMinutes, endFor, hourOf, windowsOn } from './workTime'
 
 /** 58 px pro Stunde wie im Entwurf. */
 export const HOUR_PX = 58
@@ -32,6 +32,13 @@ export function blockedOn(day: Date): { from: number; to: number; label: string 
   return workingHours.value
     ? blockedRanges(workingHours.value, day, gridStartHour(), gridEndHour())
     : []
+}
+
+/** Pausen (z. B. Mittagspause) eines Arbeitstags in Stunden – fuer die Anzeige in Terminen. */
+export function breaksOn(day: Date): { from: number; to: number; label: string }[] {
+  const config = workingHours.value
+  if (!config || !windowsOn(config, day).length) return []
+  return config.breaks.map((pause) => ({ from: hourOf(pause.start), to: hourOf(pause.end), label: pause.label }))
 }
 
 interface BaseSegment {

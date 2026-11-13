@@ -18,6 +18,13 @@ interface ErrorBody {
   errors?: { field: string; message: string }[]
 }
 
+/**
+ * Adresse des Backends. Leer = gleiche Domain wie die App (Standard, nginx
+ * bzw. der Webserver reicht /api weiter). Liegt das Backend woanders, beim
+ * Build setzen, z. B. VITE_API_URL=https://api.example.at npm run build
+ */
+const API_BASE = (import.meta.env.VITE_API_URL ?? '').trim().replace(/\/+$/, '')
+
 let tokenProvider: () => string | null = () => null
 let onUnauthorized: () => void = () => {}
 
@@ -35,7 +42,7 @@ async function request<T>(method: string, path: string, body?: unknown): Promise
 
   let response: Response
   try {
-    response = await fetch(path, {
+    response = await fetch(API_BASE + path, {
       method,
       headers,
       body: body === undefined ? undefined : JSON.stringify(body),

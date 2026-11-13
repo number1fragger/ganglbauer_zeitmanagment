@@ -1,10 +1,11 @@
 <script setup lang="ts">
 import { computed, ref, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
-import { jobsApi, planningApi, requestsApi } from '@/api'
+import { absencesApi, jobsApi, planningApi, requestsApi } from '@/api'
 import { errorMessage } from '@/api/http'
-import type { Job, Overview, OverviewWorker } from '@/api/types'
+import type { Absence, Job, Overview, OverviewWorker } from '@/api/types'
 import { useAuthStore } from '@/stores/auth'
+import AbsenceDialog from '@/components/AbsenceDialog.vue'
 import AppIcon from '@/components/AppIcon.vue'
 import AgendaList from '@/components/calendar/AgendaList.vue'
 import DayCalendar from '@/components/calendar/DayCalendar.vue'
@@ -18,12 +19,13 @@ import WeekSidebar from '@/components/calendar/WeekSidebar.vue'
 import JobDialog from '@/components/JobDialog.vue'
 import { useBreakpoint } from '@/composables/useBreakpoint'
 import { drag } from '@/composables/useJobDrag'
-import { toast } from '@/composables/useToast'
-import { jobDurationMs, type MoveEvent } from '@/utils/calendar'
-import { findConflicts, isMovable } from '@/utils/domain'
+import { toast, toastSaved } from '@/composables/useToast'
+import { endAfterMove, type MoveEvent, type ResizeEvent } from '@/utils/calendar'
+import { findConflicts, isMovable, listConflicts } from '@/utils/domain'
 import {
   addDays,
   formatLongDate,
+  formatHours,
   formatMonth,
   formatTime,
   fromDateKey,
@@ -94,10 +96,10 @@ const title = computed(() => {
 
 // ---- Daten ---------------------------------------------------------------
 
-// ---- Daten ---------------------------------------------------------------
-
 const overview = ref<Overview | null>(null)
 const jobs = ref<Job[]>([])
+/** Urlaub und persoenliche Termine im Zeitraum (Mitarbeiter: nur die eigenen). */
+const absences = ref<Absence[]>([])
 /** To-do: offene Auftraege ohne Termin (Status und Einplanung sind getrennt). */
 const todos = ref<Job[]>([])
 const error = ref('')
@@ -106,26 +108,21 @@ const visibleWorkers = ref<number[]>([])
 
 const workers = computed(() => overview.value?.workers ?? [])
 const workerRefs = computed(() => workers.value.map((w) => w.user))
-const conflicts = computed(() => findConflicts(jobs.value))
+const conflicts = computed(() => findConflicts(jobs.value, absences.value))
 
-const conflictPairs = computed(() => {
-  const seen = new Set<string>()
-  const result: { a: Job; b: Job }[] = []
-  for (const a of jobs.value) {
-    for (const title of conflicts.value.get(a.id) ?? []) {
-      const b = jobs.value.find(
-        (j) => j.title === title && j.assignee?.id === a.assignee?.id && j.id !== a.id,
-      )
-      if (!b) continue
-      const key = [a.id, b.id].sort().join('-')
-      if (!seen.has(key)) {
-        seen.add(key)
-        result.push({ a, b })
-      }
-    }
-  }
-  return result
-})
+/** Hinweisleiste: wer ist gleichzeitig doppelt eingeplant oder abwesend? */
+const conflictList = computed(() =>
+  listConflicts(jobs.value, absences.value).map((c) => ({
+    job: c.kind === 'overlap' ? c.b : c.job,
+    text:
+      c.kind === 'overlap'
+        ? `${c.person.fullName} ist ${formatDayTime(c.from)} gleichzeitig für „${c.a.title}“ und „${c.b.title}“ eingeplant`
+        : `${c.person.fullName} ist abwesend (${c.absence.label}), aber für „${c.job.title}“ eingeplant`,
+  })),
+)
+
+const formatDayTime = (date: Date) =>
+  `${date.toLocaleDateString('de-AT', { weekday: 'short', day: '2-digit', month: '2-digit' })} ${formatTime(date)}`
 
 let loadToken = 0
 /** Laedt Kalender, To-do-Liste und Uebersicht – nach jeder Aenderung aufgerufen. */
@@ -134,15 +131,17 @@ async function load(): Promise<void> {
   error.value = ''
   loading.value = true
   try {
-    const [nextJobs, nextOverview, board] = await Promise.all([
+    const [nextJobs, nextOverview, board, nextAbsences] = await Promise.all([
       jobsApi.inRange(range.value.from, range.value.to),
       auth.isPlanner ? planningApi.overview() : Promise.resolve(workerOverview()),
       jobsApi.board({ doneDays: 0 }),
+      absencesApi.inRange(range.value.from, range.value.to),
     ])
     if (token !== loadToken) return // schon wieder weitergeblaettert
     if (!overview.value) visibleWorkers.value = nextOverview.workers.map((w) => w.user.id)
     overview.value = nextOverview
     jobs.value = nextJobs
+    absences.value = nextAbsences
     todos.value = board.filter((job) => !job.scheduled && job.status !== 'erledigt')
   } catch (e) {
     error.value = errorMessage(e)
@@ -164,6 +163,7 @@ async function load(): Promise<void> {
       workers: [worker],
       requests: [],
       conflicts: [],
+      absenceConflicts: [],
       followUps: [],
     }
   }
@@ -226,6 +226,17 @@ interface DialogState {
 
 const dialog = ref<DialogState | null>(null)
 const planning = ref<Job | null>(null)
+/** undefined = zu, null = neue Abwesenheit */
+const absenceDialog = ref<Absence | null | undefined>(undefined)
+
+function openAbsence(absence: Absence): void {
+  if (auth.canManageAbsences) absenceDialog.value = absence
+}
+
+async function onAbsenceChanged(): Promise<void> {
+  absenceDialog.value = undefined
+  await load()
+}
 
 function openJob(job: Job): void {
   dialog.value = { job }
@@ -297,7 +308,8 @@ async function moveJob(event: MoveEvent): Promise<void> {
 
   const { startsAt, assigneeId } = event
   const wasScheduled = job.scheduled
-  const endsAt = new Date(startsAt.getTime() + jobDurationMs(job))
+  // Die Dauer (Arbeitszeit) bleibt erhalten – Pausen und Feierabend werden uebersprungen.
+  const endsAt = endAfterMove(job, startsAt)
   const changeAssignee = assigneeId !== (job.assignee?.id ?? null)
   const moved: Job = {
     ...job,
@@ -314,23 +326,49 @@ async function moveJob(event: MoveEvent): Promise<void> {
   todos.value = todos.value.filter((item) => item.id !== job.id)
 
   try {
-    await jobsApi.schedule(job.id, {
+    const saved = await jobsApi.schedule(job.id, {
       startsAt: moved.startsAt!,
-      // Beim ersten Einplanen technischer Standardblock, beim Verschieben bleibt die Laenge.
-      endsAt: wasScheduled ? moved.endsAt : null,
+      endsAt: moved.endsAt,
       assigneeId,
       changeAssignee,
     })
-    const clash = findConflicts(jobs.value).get(job.id)
-    if (clash?.length)
-      toast(`Gespeichert – aber Überschneidung mit „${clash.join('“, „')}“.`, 'warning')
-    else
-      toast(
-        `„${job.title}“ ${wasScheduled ? 'verschoben' : 'eingeplant'}: ${startsAt.toLocaleDateString('de-AT', { weekday: 'short', day: '2-digit', month: '2-digit' })}, ${formatTime(startsAt)} Uhr.`,
-        'success',
-      )
+    toastSaved(
+      `„${job.title}“ ${wasScheduled ? 'verschoben' : 'eingeplant'}: ${formatDayTime(startsAt)} Uhr.`,
+      saved.warnings,
+    )
   } catch (e) {
-    toast(errorMessage(e), 'error')
+    // Fehlgeschlagen: Anzeige wird unten mit dem Stand des Servers ueberschrieben.
+    toast(`Nicht gespeichert: ${errorMessage(e)}`, 'error')
+  }
+  await load()
+}
+
+/**
+ * Termin am oberen/unteren Rand verlaengert oder verkuerzt: sofort anzeigen,
+ * speichern und mit dem Server abgleichen (bei Fehler zurueck zum alten Stand).
+ */
+async function resizeJob(event: ResizeEvent): Promise<void> {
+  const { job, startsAt, endsAt } = event
+  if (!auth.isPlanner || !isMovable(job)) return
+
+  jobs.value = jobs.value.map((item) =>
+    item.id === job.id
+      ? { ...item, startsAt: startsAt.toISOString(), endsAt: endsAt.toISOString() }
+      : item,
+  )
+
+  try {
+    const saved = await jobsApi.schedule(job.id, {
+      startsAt: startsAt.toISOString(),
+      endsAt: endsAt.toISOString(),
+    })
+    const duration = saved.workMinutes ? ` (${formatHours(saved.workMinutes)} Arbeitszeit)` : ''
+    toastSaved(
+      `„${job.title}“: ${formatTime(startsAt)} – ${formatTime(endsAt)} Uhr${duration}.`,
+      saved.warnings,
+    )
+  } catch (e) {
+    toast(`Nicht gespeichert: ${errorMessage(e)}`, 'error')
   }
   await load()
 }
@@ -385,6 +423,15 @@ const showRightPanel = computed(() => isDesktop.value && mode.value !== 'monat' 
             {{ m.label }}
           </button>
         </div>
+        <button
+          v-if="auth.canManageAbsences"
+          class="btn btn--outline"
+          data-tip="Urlaub oder persönlichen Termin eintragen"
+          @click="absenceDialog = null"
+        >
+          <AppIcon name="calendar-off" :size="16" />
+          <span class="toolbar__new-label">Abwesenheit</span>
+        </button>
         <button v-if="auth.isPlanner" class="btn btn--primary" @click="createJob()">
           <AppIcon name="plus" :size="16" /> <span class="toolbar__new-label">Neuer Auftrag</span>
         </button>
@@ -395,20 +442,18 @@ const showRightPanel = computed(() => isDesktop.value && mode.value !== 'monat' 
       {{ error }} <button class="link" @click="load">Erneut laden</button>
     </p>
 
-    <div v-if="conflictPairs.length" class="conflicts" role="status">
+    <div v-if="conflictList.length" class="conflicts" role="status">
       <AppIcon name="layers" :size="16" />
       <span>
         <strong
-          >{{ conflictPairs.length }} Terminkonflikt{{
-            conflictPairs.length > 1 ? 'e' : ''
-          }}:</strong
+          >{{ conflictList.length }} Konflikt{{ conflictList.length > 1 ? 'e' : '' }} – bitte
+          prüfen:</strong
         >&nbsp;
-        <template v-for="(pair, i) in conflictPairs.slice(0, 3)" :key="i">
-          <button class="link" @click="openJob(pair.b)">
-            {{ pair.a.title }} ↔ {{ pair.b.title }}</button
-          ><template v-if="i < Math.min(conflictPairs.length, 3) - 1">, </template>
+        <template v-for="(item, i) in conflictList.slice(0, 3)" :key="i">
+          <button class="link" @click="openJob(item.job)">{{ item.text }}</button
+          ><template v-if="i < Math.min(conflictList.length, 3) - 1">; </template>
         </template>
-        <template v-if="conflictPairs.length > 3"> …</template>
+        <template v-if="conflictList.length > 3"> …</template>
       </span>
     </div>
 
@@ -475,7 +520,10 @@ const showRightPanel = computed(() => isDesktop.value && mode.value !== 'monat' 
           :from="range.from"
           :to="range.to"
           :jobs="jobs"
+          :absences="absences"
           :conflicts="conflicts"
+          :can-open-absence="auth.canManageAbsences"
+          @open-absence="openAbsence"
           @open="openJob"
           @create="createJob({ startsAt: $event, assigneeId: null })"
         />
@@ -484,12 +532,16 @@ const showRightPanel = computed(() => isDesktop.value && mode.value !== 'monat' 
           :day="anchor"
           :workers="workers"
           :jobs="jobs"
+          :absences="absences"
           :draggable="auth.isPlanner"
           :can-drag="isMovable"
           :conflicts="conflicts"
+          :can-open-absence="auth.canManageAbsences"
           @open="openJob"
+          @open-absence="openAbsence"
           @create="createJob"
           @move="moveJob"
+          @resize="resizeJob"
         />
         <WeekCalendar
           v-else-if="mode === 'woche'"
@@ -497,20 +549,27 @@ const showRightPanel = computed(() => isDesktop.value && mode.value !== 'monat' 
           :workers="workers"
           :visible="visibleWorkers"
           :jobs="jobs"
+          :absences="absences"
           :draggable="auth.isPlanner"
           :can-drag="isMovable"
           :conflicts="conflicts"
+          :can-open-absence="auth.canManageAbsences"
           @open="openJob"
+          @open-absence="openAbsence"
           @create="createJob"
           @move="moveJob"
+          @resize="resizeJob"
         />
         <MonthCalendar
           v-else
           :month="anchor"
           :workers="workers"
           :jobs="jobs"
+          :absences="absences"
           :conflicts="conflicts"
+          :can-open-absence="auth.canManageAbsences"
           @open="openJob"
+          @open-absence="openAbsence"
           @show-day="show('tag', $event)"
         />
       </section>
@@ -525,6 +584,15 @@ const showRightPanel = computed(() => isDesktop.value && mode.value !== 'monat' 
       @saved="onSaved"
       @deleted="closeAndReload"
       @changed="load"
+    />
+    <AbsenceDialog
+      v-if="absenceDialog !== undefined"
+      :absence="absenceDialog"
+      :workers="workerRefs"
+      :defaults="{ day: mode === 'tag' ? anchor : undefined }"
+      @close="absenceDialog = undefined"
+      @saved="onAbsenceChanged"
+      @deleted="onAbsenceChanged"
     />
     <ScheduleDialog
       v-if="planning"

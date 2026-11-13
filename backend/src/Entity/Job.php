@@ -8,6 +8,7 @@ use App\Exception\InvalidInputException;
 use App\Exception\WorkflowException;
 use App\Repository\JobRepository;
 use App\Util\LocalTime;
+use App\Util\WorkingHours;
 use Doctrine\Common\Collections\ArrayCollection;
 use Doctrine\Common\Collections\Collection;
 use Doctrine\ORM\Mapping as ORM;
@@ -21,21 +22,31 @@ use Symfony\Component\Serializer\Attribute\Groups;
  *    darf mehrere Tage umfassen
  *  - Ist-Zeit (Summe der TimeEntry-Abschnitte) – wie lange tatsaechlich gearbeitet wurde
  *
- * Eine geplante Arbeitsdauer gibt es bewusst nicht. Ohne Termin ist die
- * Arbeit eine reine Aufgabe (To-do) in der Seitenleiste neben dem Kalender.
+ * Die Dauer eines Termins wird nicht gespeichert, sondern aus Beginn und Ende
+ * nach den regulaeren Arbeitszeiten berechnet (getWorkMinutes, siehe
+ * WorkingHours) – so koennen Dauer und Termin nie auseinanderlaufen.
+ * Ohne Termin ist die Arbeit eine reine Aufgabe (To-do) in der Seitenleiste
+ * neben dem Kalender.
+ *
+ * Neben dem zustaendigen Mitarbeiter (assignee) kann ein Lehrling als
+ * Unterstuetzung eingetragen sein (apprentice) – er ueberschreibt die
+ * Zustaendigkeit nicht.
  * Das Einplanen startet keine Zeiterfassung, das Ausplanen loescht keine.
  */
 #[ORM\Entity(repositoryClass: JobRepository::class)]
 #[ORM\Index(name: 'idx_job_schedule', columns: ['starts_at', 'ends_at'])]
 #[ORM\Index(name: 'idx_job_assignee_status', columns: ['assignee_id', 'status'])]
+#[ORM\Index(name: 'idx_job_apprentice', columns: ['apprentice_id'])]
 class Job
 {
     /**
-     * Rein technische Standardlaenge eines Kalenderblocks, wenn beim
-     * Einplanen kein Ende angegeben wird (z. B. per Drag & Drop). Das ist
-     * keine geplante Arbeitszeit und wird auch nicht als solche angezeigt.
+     * Standardlaenge eines Kalenderblocks (Arbeitsminuten), wenn beim
+     * Einplanen weder Ende noch Dauer angegeben wird (z. B. per Drag & Drop).
      */
     public const DEFAULT_SLOT_MINUTES = 60;
+
+    /** Obergrenze fuer eine angegebene Dauer (rund drei Monate Arbeitszeit). */
+    public const MAX_WORK_MINUTES = 60 * 8 * 60;
 
     #[ORM\Id]
     #[ORM\GeneratedValue]
@@ -77,6 +88,12 @@ class Job
     #[ORM\JoinColumn(nullable: true, onDelete: 'SET NULL')]
     #[Groups(['job:read'])]
     private ?User $assignee = null;
+
+    /** Optional: Lehrling als zusaetzliche Unterstuetzung (nur Rolle "Lehrling"). */
+    #[ORM\ManyToOne]
+    #[ORM\JoinColumn(nullable: true, onDelete: 'SET NULL')]
+    #[Groups(['job:read'])]
+    private ?User $apprentice = null;
 
     #[ORM\Column(nullable: true)]
     #[Groups(['job:read'])]
@@ -174,12 +191,12 @@ class Job
 
     /**
      * Termin festlegen (Beginn, optional Ende). Ohne Ende bekommt der
-     * Kalenderblock die technische Standardlaenge DEFAULT_SLOT_MINUTES.
+     * Kalenderblock die Standardlaenge DEFAULT_SLOT_MINUTES (Arbeitszeit).
      */
     public function schedule(\DateTimeImmutable $startsAt, ?\DateTimeImmutable $endsAt = null): static
     {
         $startsAt = LocalTime::of($startsAt);
-        $endsAt = LocalTime::of($endsAt ?? $startsAt->modify(sprintf('+%d minutes', self::DEFAULT_SLOT_MINUTES)));
+        $endsAt = LocalTime::of($endsAt ?? self::defaultEndFor($startsAt));
 
         if ($endsAt <= $startsAt) {
             throw new InvalidInputException('Das Ende des Termins muss nach dem Beginn liegen.');
@@ -189,6 +206,25 @@ class Job
         $this->endsAt = $endsAt;
 
         return $this;
+    }
+
+    /**
+     * Termin aus Beginn und Dauer (Arbeitszeit in Minuten): Mittagspause,
+     * Feierabend und Wochenenden werden uebersprungen (siehe WorkingHours).
+     */
+    public function scheduleFor(\DateTimeImmutable $startsAt, int $workMinutes): static
+    {
+        if ($workMinutes <= 0) {
+            throw new InvalidInputException('Die Dauer muss größer als 0 sein.');
+        }
+
+        return $this->schedule($startsAt, WorkingHours::endFor($startsAt, $workMinutes));
+    }
+
+    /** Ende eines Termins ohne Angabe von Ende oder Dauer. */
+    public static function defaultEndFor(\DateTimeImmutable $startsAt): \DateTimeImmutable
+    {
+        return WorkingHours::endFor($startsAt, self::DEFAULT_SLOT_MINUTES);
     }
 
     /** Termin entfernen – die Arbeit bleibt als Aufgabe erhalten. */
@@ -248,6 +284,21 @@ class Job
         return intdiv($this->endsAt->getTimestamp() - $this->startsAt->getTimestamp(), 60);
     }
 
+    /**
+     * Geplante Dauer = Arbeitszeit innerhalb des Termins (ohne Mittagspause,
+     * Abende und Wochenenden); beginnt der Termin ausserhalb der Arbeitszeit,
+     * die Uhrzeit. null ohne Termin.
+     */
+    #[Groups(['job:read'])]
+    public function getWorkMinutes(): ?int
+    {
+        if (!$this->isScheduled()) {
+            return null;
+        }
+
+        return WorkingHours::durationMinutes($this->startsAt, $this->endsAt);
+    }
+
     public function getAssignee(): ?User
     {
         return $this->assignee;
@@ -263,6 +314,47 @@ class Job
     public function isAssignedTo(User $user): bool
     {
         return null !== $this->assignee && $this->assignee->getId() === $user->getId();
+    }
+
+    public function getApprentice(): ?User
+    {
+        return $this->apprentice;
+    }
+
+    /**
+     * Lehrling zuordnen bzw. entfernen (null). Nur Benutzer mit der Rolle
+     * "Lehrling" – geprueft hier, damit es keinen Weg daran vorbei gibt.
+     */
+    public function setApprentice(?User $apprentice): static
+    {
+        if (null !== $apprentice && !$apprentice->getRole()->canAssistOnJobs()) {
+            throw new InvalidInputException(sprintf('%s hat nicht die Rolle „Lehrling“ und kann nicht als Lehrling eingetragen werden.', $apprentice->getFullName()));
+        }
+
+        $this->apprentice = $apprentice;
+
+        return $this;
+    }
+
+    public function hasApprentice(User $user): bool
+    {
+        return null !== $this->apprentice && $this->apprentice->getId() === $user->getId();
+    }
+
+    /** Zustaendig oder als Lehrling dabei. */
+    public function involves(User $user): bool
+    {
+        return $this->isAssignedTo($user) || $this->hasApprentice($user);
+    }
+
+    /**
+     * Alle eingeteilten Personen (zustaendig + Lehrling).
+     *
+     * @return list<User>
+     */
+    public function getPeople(): array
+    {
+        return array_values(array_filter([$this->assignee, $this->apprentice]));
     }
 
     public function getCompletedAt(): ?\DateTimeImmutable

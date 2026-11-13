@@ -8,6 +8,7 @@
     "build": "vue-tsc --build && vite build",
     "preview": "vite preview",
     "type-check": "vue-tsc --build",
+    "test:unit": "TZ=Europe/Vienna node --experimental-strip-types --no-warnings --test tests/*.test.ts",
     "lint": "oxlint . --fix && eslint . --fix --cache",
     "format": "prettier --write --experimental-cli src/"
   },

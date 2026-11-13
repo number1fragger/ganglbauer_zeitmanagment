@@ -41,20 +41,25 @@ class UserRepository extends ServiceEntityRepository implements PasswordUpgrader
     }
 
     /**
-     * Aktive Vorarbeiter und Arbeiter – also alle, die selbst Arbeiten
-     * zugeteilt bekommen. Die Reihenfolge bestimmt die Spalten im Kalender.
+     * Aktive Sekretaerinnen, Arbeiter und Lehrlinge – also alle, die selbst
+     * Arbeiten zugeteilt bekommen. Die Reihenfolge bestimmt die Spalten im
+     * Kalender; Lehrlinge stehen hinten.
      *
      * @return User[]
      */
     public function findWorkers(): array
     {
-        return $this->createQueryBuilder('u')
+        $workers = $this->createQueryBuilder('u')
             ->andWhere('u.active = true')
             ->andWhere('u.role IN (:roles)')
-            ->setParameter('roles', [UserRole::Foreman, UserRole::Worker])
+            ->setParameter('roles', array_filter(UserRole::cases(), static fn (UserRole $role): bool => $role->worksInWorkshop()))
             ->orderBy('u.firstName', 'ASC')
             ->addOrderBy('u.lastName', 'ASC')
             ->getQuery()
             ->getResult();
+
+        usort($workers, static fn (User $a, User $b): int => (int) $a->getRole()->canAssistOnJobs() <=> (int) $b->getRole()->canAssistOnJobs());
+
+        return $workers;
     }
 }

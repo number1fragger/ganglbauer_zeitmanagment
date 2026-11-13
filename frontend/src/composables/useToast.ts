@@ -28,3 +28,16 @@ export function dismiss(id: number): void {
   const index = toasts.findIndex((t) => t.id === id)
   if (index >= 0) toasts.splice(index, 1)
 }
+
+/**
+ * Rueckmeldung nach dem Speichern eines Termins: Erfolg – oder, wenn der
+ * Server Hinweise liefert (Arbeitszeit, Ueberschneidung, Abwesenheit),
+ * eine laenger sichtbare Warnung. Gespeichert wurde in beiden Faellen.
+ */
+export function toastSaved(success: string, warnings: { message: string }[] = []): void {
+  if (!warnings.length) {
+    toast(success, 'success')
+    return
+  }
+  toast(`${success} Hinweis: ${warnings.map((w) => w.message).join(' ')}`, 'warning', undefined, 9000)
+}

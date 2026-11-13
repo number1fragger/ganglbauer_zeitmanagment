@@ -1,0 +1,14 @@
+# HTTPS vor der Werkstatt-App. DOMAIN kommt aus der .env.
+# Mit einer echten Domain holt Caddy das Zertifikat automatisch bei Let's Encrypt
+# (Port 80 und 443 muessen dafuer aus dem Internet erreichbar sein).
+{$DOMAIN} {
+	encode zstd gzip
+
+	header {
+		Strict-Transport-Security "max-age=31536000"
+		-Server
+	}
+
+	# nginx im Frontend-Container liefert die App aus und reicht /api an PHP weiter.
+	reverse_proxy frontend:80
+}

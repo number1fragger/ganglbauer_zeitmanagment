@@ -36,16 +36,18 @@ final class CreateUserCommand extends Command
             ->addArgument('username', InputArgument::REQUIRED, 'Benutzername, z. B. p.hofer')
             ->addArgument('firstName', InputArgument::REQUIRED, 'Vorname')
             ->addArgument('lastName', InputArgument::REQUIRED, 'Nachname')
-            ->addOption('role', null, InputOption::VALUE_REQUIRED, 'chef, vorarbeiter oder arbeiter', UserRole::Worker->value);
+            ->addOption('role', null, InputOption::VALUE_REQUIRED, 'chef, sekretaerin, arbeiter oder lehrling', UserRole::Worker->value);
     }
 
     protected function execute(InputInterface $input, OutputInterface $output): int
     {
         $io = new SymfonyStyle($input, $output);
 
-        $role = UserRole::tryFrom((string) $input->getOption('role'));
+        $value = (string) $input->getOption('role');
+        // Frueherer Name der Sekretaerin, damit alte Anleitungen weiter funktionieren.
+        $role = UserRole::tryFrom('vorarbeiter' === $value ? UserRole::Secretary->value : $value);
         if (null === $role) {
-            $io->error('Unbekannte Rolle. Erlaubt: chef, vorarbeiter, arbeiter.');
+            $io->error('Unbekannte Rolle. Erlaubt: '.implode(', ', array_map(static fn (UserRole $r): string => $r->value, UserRole::cases())).'.');
 
             return Command::INVALID;
         }

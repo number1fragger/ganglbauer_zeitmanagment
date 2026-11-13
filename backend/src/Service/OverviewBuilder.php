@@ -4,14 +4,15 @@ namespace App\Service;
 
 use App\Entity\Job;
 use App\Entity\User;
+use App\Repository\AbsenceRepository;
 use App\Repository\JobRepository;
 use App\Repository\UserRepository;
 use App\Repository\WorkRequestRepository;
 
 /**
  * Daten fuer Dashboard und Seitenleiste der Planung (F9): wann ist welcher
- * Arbeiter frei, offene "Brauche Arbeit"-Anfragen, Terminkonflikte und
- * Umplanungsvorschlaege.
+ * Arbeiter frei, offene "Brauche Arbeit"-Anfragen, Terminkonflikte (auch
+ * mit Lehrlingen und Abwesenheiten) und Umplanungsvorschlaege.
  */
 class OverviewBuilder
 {
@@ -24,6 +25,7 @@ class OverviewBuilder
         private readonly WorkRequestRepository $requests,
         private readonly WorkerStatus $status,
         private readonly FollowUpPlanner $followUps,
+        private readonly AbsenceRepository $absences,
     ) {
     }
 
@@ -44,9 +46,13 @@ class OverviewBuilder
 
         $requests = [];
         foreach ($this->requests->findOpen() as $request) {
+            $user = $request->getUser();
+            if (null === $user) {
+                continue;
+            }
             $requests[] = [
                 'id' => $request->getId(),
-                'user' => $this->describe($request->getUser()),
+                'user' => $this->describe($user),
                 'neededAt' => $request->getNeededAt()->format(\DATE_ATOM),
             ];
         }
@@ -56,31 +62,33 @@ class OverviewBuilder
             'workers' => $workers,
             'requests' => $requests,
             'conflicts' => $this->conflicts($now),
+            'absenceConflicts' => $this->absenceConflicts($now),
             'followUps' => $this->followUps($now),
         ];
     }
 
     /**
-     * Ueberschneidende Termine desselben Arbeiters in den naechsten Tagen.
+     * Ueberschneidende Termine derselben Person (zustaendig oder als Lehrling)
+     * in den naechsten Tagen.
      *
      * @return list<array<string, mixed>>
      */
     private function conflicts(\DateTimeImmutable $now): array
     {
-        $from = $now->setTime(0, 0);
-        $jobs = array_filter(
-            $this->jobs->findInRange($from, $from->modify(sprintf('+%d days', self::CONFLICT_DAYS))),
-            static fn (Job $job): bool => null !== $job->getAssignee() && !$job->isDone(),
-        );
-
         $conflicts = [];
-        $jobs = array_values($jobs);
+        $jobs = $this->upcomingJobs($now);
         foreach ($jobs as $i => $a) {
             foreach (\array_slice($jobs, $i + 1) as $b) {
-                if ($a->getAssignee()?->getId() === $b->getAssignee()?->getId()
-                    && $a->getStartsAt() < $b->getEndsAt() && $b->getStartsAt() < $a->getEndsAt()) {
+                if (!($a->getStartsAt() < $b->getEndsAt() && $b->getStartsAt() < $a->getEndsAt())) {
+                    continue;
+                }
+                foreach ($a->getPeople() as $person) {
+                    if (!$b->involves($person)) {
+                        continue;
+                    }
                     $conflicts[] = [
-                        'worker' => $a->getAssignee()?->getShortName(),
+                        'worker' => $person->getShortName(),
+                        'workerId' => $person->getId(),
                         'jobs' => [
                             ['id' => $a->getId(), 'title' => $a->getTitle(), 'startsAt' => $a->getStartsAt()?->format(\DATE_ATOM)],
                             ['id' => $b->getId(), 'title' => $b->getTitle(), 'startsAt' => $b->getStartsAt()?->format(\DATE_ATOM)],
@@ -92,6 +100,55 @@ class OverviewBuilder
         }
 
         return $conflicts;
+    }
+
+    /**
+     * Auftraege, die in eine Abwesenheit der zustaendigen Person oder des
+     * Lehrlings fallen – sie wurden nicht verschoben und muessen geklaert werden.
+     *
+     * @return list<array<string, mixed>>
+     */
+    private function absenceConflicts(\DateTimeImmutable $now): array
+    {
+        $from = $now->setTime(0, 0);
+        $absences = $this->absences->findInRange($from, $from->modify(sprintf('+%d days', self::CONFLICT_DAYS)));
+        if ([] === $absences) {
+            return [];
+        }
+
+        $result = [];
+        foreach ($this->upcomingJobs($now) as $job) {
+            \assert(null !== $job->getStartsAt() && null !== $job->getEndsAt());
+            foreach ($absences as $absence) {
+                if ($job->involves($absence->getUser()) && $absence->overlaps($job->getStartsAt(), $job->getEndsAt())) {
+                    $result[] = [
+                        'worker' => $absence->getUser()->getShortName(),
+                        'workerId' => $absence->getUser()->getId(),
+                        'job' => ['id' => $job->getId(), 'title' => $job->getTitle(), 'startsAt' => $job->getStartsAt()->format(\DATE_ATOM)],
+                        'absence' => [
+                            'id' => $absence->getId(),
+                            'label' => $absence->getLabel(),
+                            'period' => $absence->describePeriod(),
+                        ],
+                    ];
+                }
+            }
+        }
+
+        return $result;
+    }
+
+    /**
+     * @return list<Job>
+     */
+    private function upcomingJobs(\DateTimeImmutable $now): array
+    {
+        $from = $now->setTime(0, 0);
+
+        return array_values(array_filter(
+            $this->jobs->findInRange($from, $from->modify(sprintf('+%d days', self::CONFLICT_DAYS))),
+            static fn (Job $job): bool => [] !== $job->getPeople() && !$job->isDone(),
+        ));
     }
 
     /**
@@ -122,7 +179,7 @@ class OverviewBuilder
     {
         foreach ($openJobs as $job) {
             $entry = $job->getRunningEntry();
-            if (null !== $entry && $entry->getUser()->getId() === $user->getId()) {
+            if (null !== $entry && $entry->getUser()?->getId() === $user->getId()) {
                 return [
                     'jobId' => $job->getId(),
                     'title' => $job->getTitle(),

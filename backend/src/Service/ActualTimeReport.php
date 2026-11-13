@@ -52,11 +52,13 @@ class ActualTimeReport
             $user = $entry->getUser();
             $job = $entry->getJob();
             $day = $entry->getStartedAt()->format('Y-m-d');
+            // Geloeschte Benutzer: Abschnitte bleiben unter dem gespeicherten Namen erhalten.
+            $key = null !== $user ? 'u'.$user->getId() : 'n'.$entry->getUserName();
 
-            $workers[$user->getId()] ??= ['workerId' => $user->getId(), 'worker' => $user->getFullName(), 'seconds' => 0, 'jobs' => [], 'days' => []];
-            $workers[$user->getId()]['seconds'] += $seconds;
-            $workers[$user->getId()]['jobs'][$job->getId()] = true;
-            $workers[$user->getId()]['days'][$day] = true;
+            $workers[$key] ??= ['workerId' => $user?->getId(), 'worker' => $entry->getUserName(), 'seconds' => 0, 'jobs' => [], 'days' => []];
+            $workers[$key]['seconds'] += $seconds;
+            $workers[$key]['jobs'][$job->getId()] = true;
+            $workers[$key]['days'][$day] = true;
 
             $jobs[$job->getId()] ??= [
                 'jobId' => $job->getId(),

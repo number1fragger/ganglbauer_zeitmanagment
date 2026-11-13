@@ -2,12 +2,14 @@
 
 namespace App\Dto;
 
+use App\Entity\Job;
 use Symfony\Component\Validator\Constraints as Assert;
+use Symfony\Component\Validator\Context\ExecutionContextInterface;
 
 /**
- * Einplanen einer Arbeit in den Kalender, z. B. per Drag & Drop aus der
- * To-do-Liste. Ohne Ende bekommt der Kalenderblock die technische
- * Standardlaenge; eine geplante Arbeitsdauer entsteht dadurch nicht.
+ * Einplanen bzw. Verschieben/Verlaengern einer Arbeit im Kalender, z. B. per
+ * Drag & Drop aus der To-do-Liste oder durch Ziehen am Rand eines Termins.
+ * Ende oder Dauer (Arbeitsminuten) – ohne beides gilt die Standardlaenge.
  */
 final class ScheduleInput
 {
@@ -18,6 +20,9 @@ final class ScheduleInput
         #[Assert\GreaterThan(propertyPath: 'startsAt', message: 'Das Ende des Termins muss nach dem Beginn liegen.')]
         public readonly ?\DateTimeImmutable $endsAt = null,
 
+        #[Assert\Range(min: 1, max: Job::MAX_WORK_MINUTES, notInRangeMessage: 'Die Dauer muss zwischen 1 Minute und {{ max }} Minuten liegen.')]
+        public readonly ?int $durationMinutes = null,
+
         /** Zuständiger Arbeiter (z. B. Spalte in der Tagesansicht). Fehlt das Feld, bleibt die Zuteilung. */
         public readonly ?int $assigneeId = null,
 
@@ -27,5 +32,13 @@ final class ScheduleInput
         /** Termin einer bereits begonnenen Arbeit bewusst aendern. */
         public readonly bool $confirmStartedChange = false,
     ) {
+    }
+
+    #[Assert\Callback]
+    public function validateEnd(ExecutionContextInterface $context): void
+    {
+        if (null !== $this->endsAt && null !== $this->durationMinutes) {
+            $context->buildViolation('Bitte entweder das Ende oder die Dauer angeben, nicht beides.')->atPath('durationMinutes')->addViolation();
+        }
     }
 }

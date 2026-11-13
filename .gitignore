@@ -1,0 +1,4 @@
+# Passwoerter und Secrets des Servers
+/.env
+# Datenbank-Sicherungen (deploy/backup.sh)
+/backups/

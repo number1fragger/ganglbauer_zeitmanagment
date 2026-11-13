@@ -2,17 +2,28 @@
 # Bereitet den Backend-Container vor und startet dann PHP-FPM.
 set -e
 
-# JWT-Schluessel einmalig erzeugen; sie liegen im Volume "jwt-keys".
-php bin/console lexik:jwt:generate-keypair --skip-if-exists
-chown www-data:www-data config/jwt/*.pem
+case "$APP_SECRET$JWT_PASSPHRASE" in
+  *nicht-fuer-produktion*)
+    echo "WARNUNG: APP_SECRET/JWT_PASSPHRASE sind noch die Entwicklungswerte." >&2
+    echo "         Am Server zuerst ./deploy/init-env.sh <domain> ausfuehren." >&2
+    ;;
+esac
 
-php bin/console cache:clear
-chown -R www-data:www-data var
+# PHP-FPM laeuft als www-data. Die Konsolenbefehle laufen deshalb auch so –
+# sonst legen sie Cache-Dateien als root an, in die PHP-FPM nicht schreiben
+# kann (z. B. die Fehlversuche der Login-Sperre).
+chown -R www-data:www-data var config/jwt
+console() { su-exec www-data php bin/console "$@"; }
+
+# JWT-Schluessel einmalig erzeugen; sie liegen im Volume "jwt-keys".
+console lexik:jwt:generate-keypair --skip-if-exists
+
+console cache:clear
 
 # Datenbank-Schema aktualisieren. Die DB ist laut Healthcheck schon da,
 # die Schleife faengt nur kurze Verzoegerungen beim ersten Start ab.
 attempt=0
-until php bin/console doctrine:migrations:migrate --no-interaction --allow-no-migration; do
+until console doctrine:migrations:migrate --no-interaction --allow-no-migration; do
   attempt=$((attempt + 1))
   if [ "$attempt" -ge 10 ]; then
     echo "Datenbank nicht erreichbar – Abbruch." >&2

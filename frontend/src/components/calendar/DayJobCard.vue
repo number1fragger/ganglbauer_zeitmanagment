@@ -1,35 +1,60 @@
 <script setup lang="ts">
 import { computed } from 'vue'
 import type { Job } from '@/api/types'
+import { workTimeWarnings } from '@/composables/useWorkingHours'
 import { DONE_COLOR, isDone, isMovable, priorityColor, workState } from '@/utils/domain'
 import { formatDuration } from '@/utils/time'
 import AppIcon from '../AppIcon.vue'
 
-const props = defineProps<{ job: Job; conflict?: string[] }>()
+const props = defineProps<{ job: Job; conflict?: string[]; asApprentice?: boolean }>()
 defineEmits<{ open: [job: Job] }>()
 
 const done = computed(() => isDone(props.job))
+
+/** Beginn/Ende ausserhalb der Arbeitszeit oder in der Pause – nicht verhindert, aber markiert. */
+const outside = computed(() =>
+  !done.value && props.job.startsAt && props.job.endsAt
+    ? workTimeWarnings(new Date(props.job.startsAt), new Date(props.job.endsAt))
+    : [],
+)
 const state = computed(() => (done.value ? 'done' : workState(props.job)))
 
-/** Nur die tatsaechlich erfasste Zeit – eine geplante Dauer gibt es nicht. */
-const effort = computed(() =>
-  props.job.actualSeconds > 0
-    ? `Ist ${formatDuration(props.job.actualSeconds)}`
-    : (props.job.assignee?.shortName ?? 'Nicht zugeteilt'),
-)
+/** Ist-Zeit, sobald gearbeitet wurde – sonst geplante Dauer (Arbeitszeit) und Team. */
+const effort = computed(() => {
+  if (props.job.actualSeconds > 0) return `Ist ${formatDuration(props.job.actualSeconds)}`
+  const duration = props.job.workMinutes ? `${formatDuration(props.job.workMinutes * 60)} · ` : ''
+  if (props.asApprentice) return `${duration}mit ${props.job.assignee?.shortName ?? 'niemandem'}`
+  const team = props.job.assignee?.shortName ?? 'Nicht zugeteilt'
+  return `${duration}${team}${props.job.apprentice ? ` + ${props.job.apprentice.initials}` : ''}`
+})
 </script>
 
 <template>
   <button
     class="day-job accent"
-    :class="[`day-job--${state}`, { 'day-job--conflict': conflict?.length }]"
+    :class="[
+      `day-job--${state}`,
+      { 'day-job--conflict': conflict?.length, 'day-job--apprentice': asApprentice },
+    ]"
     :style="{ '--accent': done ? DONE_COLOR : priorityColor(job.priority) }"
-    :title="conflict?.length ? `Überschneidung mit ${conflict.join(', ')}` : job.title"
+    :title="
+      (asApprentice ? `Als Lehrling eingeteilt – ${job.title}` : job.title) +
+      (conflict?.length ? `\n${conflict.join('\n')}` : '') +
+      (outside.length ? `\n${outside.join('\n')}` : '')
+    "
     @click="$emit('open', job)"
   >
     <span class="day-job__top">
       <strong class="day-job__title">{{ job.title }}</strong>
+      <span v-if="asApprentice" class="badge day-job__badge" style="--b: var(--worker-3)">Lehrling</span>
       <AppIcon v-if="!isMovable(job) && !done" class="day-job__lock" name="timer" :size="12" />
+      <AppIcon
+        v-if="outside.length"
+        class="day-job__outside"
+        name="clock"
+        :size="12"
+        :aria-label="outside.join(' ')"
+      />
       <span
         v-if="done"
         class="badge day-job__badge"
@@ -92,6 +117,17 @@ const effort = computed(() =>
 
 .day-job--conflict {
   box-shadow: inset 0 0 0 1.5px var(--danger);
+  background-image: repeating-linear-gradient(
+    -45deg,
+    transparent 0 6px,
+    color-mix(in srgb, var(--danger) 8%, transparent) 6px 8px
+  );
+}
+
+/* Kopie beim Lehrling: derselbe Auftrag, gestrichelt umrandet */
+.day-job--apprentice {
+  outline: 1.5px dashed color-mix(in srgb, var(--worker-3) 70%, transparent);
+  outline-offset: -1.5px;
 }
 
 .day-job__top {
@@ -111,6 +147,11 @@ const effort = computed(() =>
 
 .day-job--done .day-job__title {
   color: var(--muted);
+}
+
+.day-job__outside {
+  margin-top: 1px;
+  color: var(--warning);
 }
 
 .day-job__lock {

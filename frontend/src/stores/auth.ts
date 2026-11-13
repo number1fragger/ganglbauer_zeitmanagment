@@ -2,6 +2,7 @@ import { computed, ref } from 'vue'
 import { defineStore } from 'pinia'
 import { authApi } from '@/api'
 import { configureHttp } from '@/api/http'
+import { loadWorkingHours } from '@/composables/useWorkingHours'
 import type { User } from '@/api/types'
 import { canPlan } from '@/utils/domain'
 import { useThemeStore } from './theme'
@@ -24,6 +25,8 @@ export const useAuthStore = defineStore('auth', () => {
   const role = computed(() => user.value?.role)
   const isPlanner = computed(() => canPlan(role.value))
   const isChef = computed(() => role.value === 'chef')
+  /** Urlaub und persoenliche Termine verwalten: Chef und Sekretaerin. */
+  const canManageAbsences = computed(() => canPlan(role.value))
 
   function storeToken(value: string | null, remember = false): void {
     localStorage.removeItem(TOKEN_KEY)
@@ -39,7 +42,8 @@ export const useAuthStore = defineStore('auth', () => {
   }
 
   async function loadUser(): Promise<void> {
-    user.value = await authApi.me()
+    const [me] = await Promise.all([authApi.me(), loadWorkingHours()])
+    user.value = me
     // Die im Konto gespeicherte Farbwahl gilt auf allen Geraeten. Steht dort
     // noch der Standard ("system"), wird eine lokale Wahl ins Konto uebernommen.
     if (user.value.theme && user.value.theme !== 'system') theme.set(user.value.theme, false)
@@ -53,5 +57,15 @@ export const useAuthStore = defineStore('auth', () => {
 
   configureHttp({ token: () => token.value, unauthorized: logout })
 
-  return { user, isAuthenticated, role, isPlanner, isChef, login, loadUser, logout }
+  return {
+    user,
+    isAuthenticated,
+    role,
+    isPlanner,
+    isChef,
+    canManageAbsences,
+    login,
+    loadUser,
+    logout,
+  }
 })

@@ -10,7 +10,7 @@ RUN composer dump-autoload --no-dev --classmap-authoritative
 # --- Laufzeit: PHP-FPM ---------------------------------------------------------
 FROM php:8.4-fpm-alpine
 
-RUN apk add --no-cache icu-libs \
+RUN apk add --no-cache icu-libs su-exec \
  && apk add --no-cache --virtual .build-deps $PHPIZE_DEPS icu-dev \
  && docker-php-ext-install -j"$(nproc)" intl opcache pdo_mysql \
  && apk del .build-deps

@@ -175,6 +175,7 @@ async function quickAdd(): Promise<void> {
       startsAt: null,
       endsAt: null,
       assigneeId: assignee.value,
+      apprenticeId: null,
     })
     quickTitle.value = ''
     toast('Aufgabe angelegt.', 'success')

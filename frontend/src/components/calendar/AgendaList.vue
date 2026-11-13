@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { computed } from 'vue'
-import type { Job } from '@/api/types'
+import type { Absence, Job } from '@/api/types'
 import { isDone, priorityColor } from '@/utils/domain'
 import {
   addDays,
@@ -12,6 +12,10 @@ import {
   weekdayName,
 } from '@/utils/time'
 import AppIcon from '../AppIcon.vue'
+import AbsenceCard from './AbsenceCard.vue'
+import { workingHours } from '@/composables/useWorkingHours'
+import { gridStartHour } from '@/utils/calendar'
+import { windowsOn } from '@/utils/workTime'
 import StatusChip from '../StatusChip.vue'
 
 /**
@@ -23,12 +27,18 @@ const props = defineProps<{
   from: Date
   to: Date
   jobs: Job[]
+  absences?: Absence[]
   conflicts?: Map<number, string[]>
+  canOpenAbsence?: boolean
 }>()
-defineEmits<{ open: [job: Job]; create: [startsAt: Date] }>()
+defineEmits<{ open: [job: Job]; openAbsence: [absence: Absence]; create: [startsAt: Date] }>()
 
 const days = computed(() => {
-  const result: { day: Date; items: { job: Job; label: string; part: string | null }[] }[] = []
+  const result: {
+    day: Date
+    absences: Absence[]
+    items: { job: Job; label: string; part: string | null }[]
+  }[] = []
   for (let day = startOfDay(props.from); day < props.to; day = addDays(day, 1)) {
     const next = addDays(day, 1)
     const items = props.jobs
@@ -56,7 +66,10 @@ const days = computed(() => {
           part: total > 1 ? `Tag ${index} von ${total}` : null,
         }
       })
-    if (items.length || !isWeekend(day)) result.push({ day, items })
+    const absences = (props.absences ?? []).filter(
+      (a) => new Date(a.startsAt) < next && new Date(a.endsAt) > day,
+    )
+    if (items.length || absences.length || !isWeekend(day)) result.push({ day, absences, items })
   }
   return result
 })
@@ -69,9 +82,12 @@ const heading = (day: Date) => {
     : `${weekdayName(day)}, ${date}`
 }
 
+/** Neuer Auftrag beginnt zu Arbeitsbeginn des Tages. */
 function createAt(day: Date): Date {
+  const first = workingHours.value ? windowsOn(workingHours.value, day)[0] : undefined
+  if (first) return first[0]
   const start = new Date(day)
-  start.setHours(7, 0, 0, 0)
+  start.setHours(gridStartHour(), 0, 0, 0)
   return start
 }
 </script>
@@ -79,7 +95,7 @@ function createAt(day: Date): Date {
 <template>
   <div class="agenda">
     <section
-      v-for="{ day, items } in days"
+      v-for="{ day, items, absences } in days"
       :key="day.toISOString()"
       class="agenda__day"
       :class="{ 'agenda__day--today': sameDay(day, new Date()) }"
@@ -94,6 +110,15 @@ function createAt(day: Date): Date {
           <AppIcon name="plus" :size="16" />
         </button>
       </header>
+      <ul v-if="absences.length" class="agenda__list agenda__absences">
+        <li v-for="absence in absences" :key="`a${absence.id}`">
+          <AbsenceCard
+            :absence="absence"
+            :clickable="canOpenAbsence"
+            @open="$emit('openAbsence', $event)"
+          />
+        </li>
+      </ul>
       <ul v-if="items.length" class="agenda__list">
         <li v-for="item in items" :key="item.job.id">
           <button
@@ -112,19 +137,21 @@ function createAt(day: Date): Date {
               <strong>{{ item.job.title }}</strong>
               <small>
                 {{ item.job.assignee?.fullName ?? 'Nicht zugeteilt'
-                }}<template v-if="item.job.customer"> · {{ item.job.customer }}</template>
+                }}<template v-if="item.job.apprentice">
+                  + Lehrling {{ item.job.apprentice.fullName }}</template
+                ><template v-if="item.job.customer"> · {{ item.job.customer }}</template>
                 <template v-if="item.part"> · {{ item.part }}</template>
               </small>
               <small v-if="conflicts?.has(item.job.id)" class="agenda__conflict">
-                <AppIcon name="layers" :size="11" /> Überschneidung mit
-                {{ conflicts.get(item.job.id)!.join(', ') }}
+                <AppIcon name="layers" :size="11" />
+                {{ conflicts.get(item.job.id)!.join(' · ') }}
               </small>
             </span>
             <StatusChip :job="item.job" />
           </button>
         </li>
       </ul>
-      <p v-else class="agenda__free">Nichts eingeplant</p>
+      <p v-else-if="!absences.length" class="agenda__free">Nichts eingeplant</p>
     </section>
   </div>
 </template>
@@ -166,6 +193,10 @@ function createAt(day: Date): Date {
 
 .agenda__add:hover {
   background: var(--surface-muted);
+}
+
+.agenda__absences {
+  margin-bottom: 8px !important;
 }
 
 .agenda__list {

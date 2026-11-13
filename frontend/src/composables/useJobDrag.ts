@@ -1,12 +1,6 @@
 import { reactive } from 'vue'
 import type { Job } from '@/api/types'
-import {
-  DAY_END_HOUR,
-  DAY_START_HOUR,
-  HOUR_PX,
-  jobDurationMs,
-  type MoveEvent,
-} from '@/utils/calendar'
+import { endAfterMove, gridEndHour, gridStartHour, HOUR_PX, type MoveEvent } from '@/utils/calendar'
 import { fromDateKey, startOfDay } from '@/utils/time'
 
 const SNAP = 15
@@ -36,6 +30,8 @@ export const drag = reactive({
   width: 0,
   height: 0,
   target: null as DropTarget | null,
+  /** Lehrlings-Kopie eines Auftrags: nur die Zeit aendern, nie die Zustaendigkeit. */
+  keepAssignee: false,
 })
 
 let origin = { x: 0, y: 0 }
@@ -45,6 +41,7 @@ export function beginDrag(
   event: PointerEvent,
   job: Job,
   callback: (event: MoveEvent) => void,
+  options: { keepAssignee?: boolean } = {},
 ): void {
   if (event.button !== 0 || drag.job) return
   const rect = (event.currentTarget as HTMLElement).getBoundingClientRect()
@@ -61,6 +58,7 @@ export function beginDrag(
     y: rect.top,
     width: rect.width,
     height: rect.height,
+    keepAssignee: options.keepAssignee ?? false,
   })
   onDrop = callback
   window.addEventListener('pointermove', onMove)
@@ -101,19 +99,20 @@ function updateTarget(event: PointerEvent): void {
 
   const rect = column.getBoundingClientRect()
   const rawMinutes = ((event.clientY - drag.grabY - rect.top - PAD) / HOUR_PX) * 60
-  const maxMinutes = (DAY_END_HOUR - DAY_START_HOUR) * 60 - SNAP
+  const maxMinutes = (gridEndHour() - gridStartHour()) * 60 - SNAP
   const minutes = Math.min(Math.max(Math.round(rawMinutes / SNAP) * SNAP, 0), maxMinutes)
   const startsAt = startOfDay(day)
-  startsAt.setHours(DAY_START_HOUR, minutes)
-  const duration = jobDurationMs(job)
+  startsAt.setHours(gridStartHour(), minutes)
   const owner = column.dataset.dropAssignee
+  const keep = owner === 'keep' || drag.keepAssignee
 
   drag.target = {
     kind: 'slot',
     key: column.dataset.dropKey ?? '',
-    assigneeId: owner === 'keep' ? (job.assignee?.id ?? null) : owner ? Number(owner) : null,
+    assigneeId: keep ? (job.assignee?.id ?? null) : owner ? Number(owner) : null,
     startsAt,
-    endsAt: new Date(startsAt.getTime() + duration),
+    // Die Dauer (Arbeitszeit) bleibt beim Verschieben gleich.
+    endsAt: endAfterMove(job, startsAt),
     left: rect.left + 4,
     width: rect.width - 8,
     top: rect.top + (minutes / 60) * HOUR_PX + PAD,
@@ -167,6 +166,6 @@ function removeListeners(): void {
 }
 
 function reset(): void {
-  Object.assign(drag, { job: null, active: false, dropping: false, target: null })
+  Object.assign(drag, { job: null, active: false, dropping: false, target: null, keepAssignee: false })
   onDrop = null
 }

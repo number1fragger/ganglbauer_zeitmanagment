@@ -1,16 +1,16 @@
 <script setup lang="ts">
-import { computed, onMounted, reactive, ref } from 'vue'
+import { computed, onBeforeUnmount, onMounted, reactive, ref, watch } from 'vue'
 import { jobsApi } from '@/api'
 import { errorMessage } from '@/api/http'
-import type { Job, JobInput, Priority, UserRef } from '@/api/types'
+import type { Job, JobInput, Priority, ScheduleWarning, UserRef } from '@/api/types'
 import { confirmAction } from '@/composables/useConfirm'
 import { useJobActions } from '@/composables/useJobActions'
-import { toast } from '@/composables/useToast'
+import { toast, toastSaved } from '@/composables/useToast'
+import { workDuration, workEnd, workingHours, workTimeWarnings } from '@/composables/useWorkingHours'
 import { useAuthStore } from '@/stores/auth'
 import { DEFAULT_SLOT_MINUTES } from '@/utils/calendar'
-import { canStart, canWorkOn, isDone, priorities } from '@/utils/domain'
+import { canStart, canWorkOn, isApprentice, isDone, priorities } from '@/utils/domain'
 import {
-  addMinutes,
   formatDateTimeShort,
   formatDuration,
   formatTime,
@@ -26,9 +26,16 @@ import StatusChip from './StatusChip.vue'
 
 /**
  * Detail-, Anlege- und Bearbeitungsdialog einer Arbeit (wie eine
- * Trello-Karte). Nur der Titel ist Pflicht – ein Termin ist optional, eine
- * geplante Arbeitsdauer gibt es nicht. Arbeiter sehen die Karte, koennen aber nur arbeiten
- * (starten, pausieren, abschliessen), nicht planen.
+ * Trello-Karte). Nur der Titel ist Pflicht – ein Termin ist optional.
+ * Arbeiter sehen die Karte, koennen aber nur arbeiten (starten, pausieren,
+ * abschliessen), nicht planen.
+ *
+ * Termin: Beginn, Ende und Dauer (Arbeitszeit) haengen zusammen –
+ *  - Beginn geaendert: die Dauer bleibt, das Ende rueckt nach,
+ *  - Ende geaendert: die Dauer wird neu berechnet,
+ *  - Dauer geaendert: das Ende wird ab dem Beginn neu berechnet.
+ * Mittagspause, Feierabend und Wochenenden zaehlen dabei nicht (Regeln und
+ * Zeiten wie im Backend, siehe utils/workTime.ts).
  */
 const props = defineProps<{
   job?: Job | null
@@ -52,8 +59,13 @@ const initialStart = props.job?.startsAt
 const initialEnd = props.job?.endsAt
   ? new Date(props.job.endsAt)
   : initialStart
-    ? addMinutes(initialStart, DEFAULT_SLOT_MINUTES)
+    ? workEnd(initialStart, DEFAULT_SLOT_MINUTES)
     : null
+const initialMinutes =
+  initialStart && initialEnd ? workDuration(initialStart, initialEnd) : DEFAULT_SLOT_MINUTES
+
+/** Minuten -> Stunden als Kommazahl fuer das Eingabefeld (3,25 h). */
+const toHours = (minutes: number) => Math.round((minutes / 60) * 100) / 100
 
 const form = reactive({
   title: props.job?.title ?? '',
@@ -61,9 +73,12 @@ const form = reactive({
   customer: props.job?.customer ?? '',
   priority: (props.job?.priority ?? 'mittel') as Priority,
   assigneeId: props.job?.assignee?.id ?? props.defaults?.assigneeId ?? null,
+  apprenticeId: props.job?.apprentice?.id ?? null,
   scheduled: initialStart !== null,
   startsAt: initialStart ? toLocalInput(initialStart) : '',
   endsAt: initialEnd ? toLocalInput(initialEnd) : '',
+  /** Dauer in Stunden (Arbeitszeit) */
+  durationHours: toHours(initialMinutes) as number | '',
   unlockSchedule: false,
 })
 
@@ -75,19 +90,42 @@ const workerOptions = computed(() => {
     : props.workers
 })
 
+/** Lehrlings-Auswahl: ausschliesslich Benutzer mit der Rolle "Lehrling" (prueft auch das Backend). */
+const apprenticeOptions = computed(() => {
+  const assigned = currentApprentice()
+  const options = props.workers.filter((w) => isApprentice(w) && w.id !== form.assigneeId)
+  return assigned && !options.some((w) => w.id === assigned.id) ? [...options, assigned] : options
+})
+
+function currentApprentice(): UserRef | null {
+  return current.value?.apprentice ?? null
+}
+
+// Wird der Lehrling zum Zustaendigen, ist er nicht mehr zusaetzlich Lehrling.
+watch(
+  () => form.assigneeId,
+  (id) => {
+    if (id !== null && id === form.apprenticeId) form.apprenticeId = null
+  },
+)
+
 const scheduleLocked = computed(() => done.value || (started.value && !form.unlockSchedule))
 const error = ref('')
 const busy = ref(false)
 
-/** Laenge des Kalendereintrags – keine Arbeitszeit, kann mehrere Tage umfassen. */
+/** Erklaerung zum Termin: Dauer als Arbeitszeit, ggf. mehrtaegig bzw. mit Mittagspause. */
 const calendarInfo = computed(() => {
   if (!form.scheduled || !form.startsAt || !form.endsAt) return null
   const start = new Date(form.startsAt)
   const end = new Date(form.endsAt)
   if (!(end > start)) return 'Das Ende muss nach dem Beginn liegen.'
   const days = spanDays(start, end)
-  const length = formatDuration((end.getTime() - start.getTime()) / 1000)
-  return days > 1 ? `Mehrtägiger Termin über ${days} Tage` : `Termin im Kalender: ${length}`
+  const work = workDuration(start, end)
+  const clock = Math.round((end.getTime() - start.getTime()) / 60_000)
+  const parts = [`${formatDuration(work * 60)} Arbeitszeit`]
+  if (days > 1) parts.push(`über ${days} Kalendertage`)
+  else if (clock > work) parts.push(`Mittagspause bzw. arbeitsfreie Zeit nicht mitgerechnet`)
+  return parts.join(' · ')
 })
 
 function toggleSchedule(on: boolean): void {
@@ -95,7 +133,8 @@ function toggleSchedule(on: boolean): void {
   if (on && !form.startsAt) {
     const start = props.defaults?.startsAt ?? nextHalfHour()
     form.startsAt = toLocalInput(start)
-    form.endsAt = toLocalInput(addMinutes(start, DEFAULT_SLOT_MINUTES))
+    form.durationHours = toHours(DEFAULT_SLOT_MINUTES)
+    form.endsAt = toLocalInput(workEnd(start, DEFAULT_SLOT_MINUTES))
   }
 }
 
@@ -105,19 +144,86 @@ function nextHalfHour(): Date {
   return now
 }
 
-/** Beginn verschoben: das Ende rueckt mit, die Kalenderdauer bleibt. */
-let lastStart = form.startsAt
+const hoursSummary = computed(() => workingHours.value?.summary ?? '')
+
+const durationMinutes = computed(() => {
+  const hours = Number(form.durationHours)
+  return Number.isFinite(hours) && hours > 0 ? Math.round(hours * 60) : null
+})
+
+/** Beginn geaendert: die Dauer (Arbeitszeit) bleibt, das Ende rueckt nach. */
 function onStartChange(): void {
   if (!form.startsAt) return
-  const previous = lastStart ? new Date(lastStart) : null
-  const end = form.endsAt ? new Date(form.endsAt) : null
-  const duration =
-    previous && end && end > previous
-      ? end.getTime() - previous.getTime()
-      : DEFAULT_SLOT_MINUTES * 60_000
-  form.endsAt = toLocalInput(new Date(new Date(form.startsAt).getTime() + duration))
-  lastStart = form.startsAt
+  const minutes = durationMinutes.value ?? DEFAULT_SLOT_MINUTES
+  form.endsAt = toLocalInput(workEnd(new Date(form.startsAt), minutes))
+  form.durationHours = toHours(minutes)
 }
+
+/** Ende geaendert: die Dauer wird neu berechnet. */
+function onEndChange(): void {
+  if (!form.startsAt || !form.endsAt) return
+  const start = new Date(form.startsAt)
+  const end = new Date(form.endsAt)
+  if (end > start) form.durationHours = toHours(workDuration(start, end))
+}
+
+/** Dauer geaendert: das Ende wird ab dem Beginn neu berechnet. */
+function onDurationChange(): void {
+  if (!form.startsAt || durationMinutes.value === null) return
+  form.endsAt = toLocalInput(workEnd(new Date(form.startsAt), durationMinutes.value))
+}
+
+// ---- Hinweise vor dem Speichern ----------------------------------------------
+
+/** Vom Server: Arbeitszeit, Ueberschneidungen, Abwesenheiten (wie beim Speichern). */
+const serverWarnings = ref<ScheduleWarning[] | null>(null)
+let checkTimer = 0
+let checkToken = 0
+
+const scheduleKey = computed(() =>
+  canEdit.value && form.scheduled && form.startsAt && form.endsAt
+    ? [form.startsAt, form.endsAt, form.assigneeId, form.apprenticeId].join('|')
+    : '',
+)
+
+watch(
+  scheduleKey,
+  (key) => {
+    window.clearTimeout(checkTimer)
+    serverWarnings.value = null
+    if (!key) return
+    const token = ++checkToken
+    checkTimer = window.setTimeout(async () => {
+      const start = new Date(form.startsAt)
+      const end = new Date(form.endsAt)
+      if (!(end > start)) return
+      try {
+        const result = await jobsApi.check({
+          startsAt: start.toISOString(),
+          endsAt: end.toISOString(),
+          assigneeId: form.assigneeId,
+          apprenticeId: form.apprenticeId,
+          jobId: current.value?.id,
+        })
+        if (token === checkToken) serverWarnings.value = result.warnings
+      } catch {
+        /* Hinweise sind nur Unterstuetzung – ohne Server bleiben die lokalen */
+      }
+    }, 350)
+  },
+  { immediate: true },
+)
+onBeforeUnmount(() => window.clearTimeout(checkTimer))
+
+/** Angezeigte Hinweise: vom Server, solange die Antwort fehlt die lokale Arbeitszeitpruefung. */
+const warnings = computed<ScheduleWarning[]>(() => {
+  if (!form.scheduled || !form.startsAt || !form.endsAt || done.value) return []
+  if (serverWarnings.value) return serverWarnings.value
+  const start = new Date(form.startsAt)
+  const end = new Date(form.endsAt)
+  if (!(end > start)) return []
+  return workTimeWarnings(start, end).map((message) => ({ type: 'arbeitszeit', message }))
+})
 
 function payload(): JobInput {
   const scheduled = form.scheduled && form.startsAt
@@ -127,6 +233,7 @@ function payload(): JobInput {
     customer: form.customer || null,
     priority: form.priority,
     assigneeId: form.assigneeId,
+    apprenticeId: form.apprenticeId,
     startsAt: scheduled ? new Date(form.startsAt).toISOString() : null,
     endsAt: scheduled && form.endsAt ? new Date(form.endsAt).toISOString() : null,
     confirmStartedChange: form.unlockSchedule,
@@ -141,13 +248,13 @@ async function save(): Promise<void> {
     const job = current.value
       ? await jobsApi.update(current.value.id, payload())
       : await jobsApi.create(payload())
-    toast(
+    toastSaved(
       current.value
         ? 'Änderungen gespeichert.'
         : job.scheduled
           ? 'Auftrag eingeplant.'
           : 'Auftrag angelegt.',
-      'success',
+      job.warnings,
     )
     emit('saved', job)
   } catch (e) {
@@ -313,7 +420,7 @@ function entryLabel(startedAt: string, endedAt: string | null): string {
               :class="{ 'entries--running': entry.running }"
             >
               <span class="tabular">{{ entryLabel(entry.startedAt, entry.endedAt) }}</span>
-              <span class="entries__who">{{ entry.user.shortName }}</span>
+              <span class="entries__who">{{ entry.user?.shortName ?? entry.userName }}</span>
               <span class="tabular entries__dur">{{
                 entry.running ? 'läuft' : formatDuration(entry.durationSeconds)
               }}</span>
@@ -379,9 +486,22 @@ function entryLabel(startedAt: string, endedAt: string | null): string {
           <select v-model="form.assigneeId" class="input" :disabled="!canEdit || current?.running">
             <option :value="null">Noch niemand</option>
             <option v-for="worker in workerOptions" :key="worker.id" :value="worker.id">
-              {{ worker.fullName }}
+              {{ worker.fullName }}{{ worker.role === 'lehrling' ? ' (Lehrling)' : '' }}
             </option>
           </select>
+        </label>
+
+        <label class="field">
+          <span class="field__label">Lehrling <small>(optional, zusätzlich)</small></span>
+          <select v-model="form.apprenticeId" class="input" :disabled="!canEdit">
+            <option :value="null">Kein Lehrling</option>
+            <option v-for="person in apprenticeOptions" :key="person.id" :value="person.id">
+              {{ person.fullName }}
+            </option>
+          </select>
+          <span v-if="canEdit && !apprenticeOptions.length" class="field__hint"
+            >Es gibt noch keine Benutzer mit der Rolle „Lehrling“.</span
+          >
         </label>
 
         <fieldset class="field job-form__plain">
@@ -445,9 +565,32 @@ function entryLabel(startedAt: string, endedAt: string | null): string {
                 :min="form.startsAt"
                 required
                 :disabled="!canEdit || scheduleLocked"
+                @change="onEndChange"
+              />
+            </label>
+            <label class="field">
+              <span class="field__label">Dauer <small>(Stunden Arbeitszeit)</small></span>
+              <input
+                v-model="form.durationHours"
+                class="input"
+                type="number"
+                min="0.25"
+                step="0.25"
+                inputmode="decimal"
+                :disabled="!canEdit || scheduleLocked"
+                @change="onDurationChange"
               />
             </label>
             <p v-if="calendarInfo" class="field__hint">{{ calendarInfo }}</p>
+            <p v-if="hoursSummary" class="field__hint schedule__hours">
+              Arbeitszeit: {{ hoursSummary }}
+            </p>
+            <ul v-if="warnings.length" class="schedule__warnings" role="status">
+              <li v-for="(w, i) in warnings" :key="i" :class="`schedule__warning--${w.type}`">
+                <AppIcon :name="w.type === 'arbeitszeit' ? 'clock' : w.type === 'abwesenheit' ? 'calendar-off' : 'layers'" :size="13" />
+                <span>{{ w.message }}</span>
+              </li>
+            </ul>
           </template>
           <p v-else class="field__hint">
             Ohne Termin steht der Auftrag in der To-do-Liste und kann in den Kalender gezogen
@@ -579,6 +722,41 @@ function entryLabel(startedAt: string, endedAt: string | null): string {
 
 .schedule .input[type='datetime-local'] {
   font-size: 12px;
+}
+
+.schedule__hours {
+  color: var(--faint);
+}
+
+.schedule__warnings {
+  display: grid;
+  gap: 6px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.schedule__warnings li {
+  display: flex;
+  align-items: flex-start;
+  gap: 6px;
+  padding: 7px 9px;
+  border-radius: var(--radius-sm);
+  background: var(--warning-soft);
+  color: var(--warning-ink);
+  font-size: 11px;
+  line-height: 1.4;
+}
+
+.schedule__warnings li :deep(svg) {
+  flex: none;
+  margin-top: 1px;
+}
+
+.schedule__warnings .schedule__warning--ueberschneidung,
+.schedule__warnings .schedule__warning--abwesenheit {
+  background: var(--danger-soft);
+  color: var(--danger);
 }
 
 .schedule__remove {

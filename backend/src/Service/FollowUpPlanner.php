@@ -6,6 +6,7 @@ use App\Entity\Job;
 use App\Enum\JobStatus;
 use App\Exception\WorkflowException;
 use App\Repository\JobRepository;
+use App\Util\WorkingHours;
 use Doctrine\DBAL\LockMode;
 use Doctrine\ORM\EntityManagerInterface;
 
@@ -32,7 +33,6 @@ class FollowUpPlanner
 {
     public const ROUND_MINUTES = 15;
     public const CHAIN_GAP_MINUTES = 15;
-    public const LUNCH_BREAK_MINUTES = 30;
 
     public function __construct(
         private readonly JobRepository $jobs,
@@ -149,7 +149,7 @@ class FollowUpPlanner
 
         $moves = [];
         $warnings = [];
-        $dayEnd = $this->dayEnd($scheduledEnd, $assignee->getDailyMinutes());
+        $dayEnd = WorkingHours::dayEnd($scheduledEnd);
         // Frueher fertig: die Kette ab dem geplanten Ende. Spaeter fertig: alles, was jetzt kollidiert.
         $previousEnd = $shift < 0 ? $scheduledEnd : $anchor;
 
@@ -199,7 +199,10 @@ class FollowUpPlanner
             }
 
             // Nur warnen, wenn der Termin dadurch spaeter nach Arbeitsschluss endet als bisher.
-            $warning = $newEnd > $dayEnd && $newEnd > $nextEnd ? sprintf('Endet nach Arbeitsschluss (%s Uhr).', $dayEnd->format('H:i')) : null;
+            $warning = null;
+            if ($newEnd > $nextEnd && (null === $dayEnd || $newEnd > $dayEnd)) {
+                $warning = null !== $dayEnd ? sprintf('Endet nach Arbeitsschluss (%s Uhr).', $dayEnd->format('H:i')) : 'Liegt an einem arbeitsfreien Tag.';
+            }
             $moves[] = ['job' => $next, 'startsAt' => $newStart, 'endsAt' => $newEnd, 'recommended' => null === $warning, 'warning' => $warning];
             $previousEnd = $shift < 0 ? $nextEnd : $newEnd;
         }
@@ -213,11 +216,5 @@ class FollowUpPlanner
         $timestamp = (int) ceil($moment->getTimestamp() / $step) * $step;
 
         return $moment->setTimestamp($timestamp);
-    }
-
-    private function dayEnd(\DateTimeImmutable $day, int $dailyMinutes): \DateTimeImmutable
-    {
-        // Taegliche Arbeitszeit plus halbe Stunde Mittagspause ab Arbeitsbeginn.
-        return $day->setTime(WorkloadCalculator::DAY_START_HOUR, 0)->modify(sprintf('+%d minutes', max(60, $dailyMinutes) + self::LUNCH_BREAK_MINUTES));
     }
 }

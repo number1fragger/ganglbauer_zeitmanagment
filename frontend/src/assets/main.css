@@ -17,6 +17,13 @@
   --border: #e3e6ea;
   --border-strong: #d3d8de;
   --grid: #eef0f3;
+  /* Nicht verfuegbare Zeit im Kalender (Pause, ausserhalb der Arbeitszeit) */
+  --blocked: rgb(15 23 42 / 0.045);
+
+  /* Abwesenheit (Urlaub, Arzttermin, ...) – klar anders als ein Auftrag */
+  --absence: #8b5cf6;
+  --absence-soft: #f3effe;
+  --absence-ink: #6d28d9;
 
   /* Text */
   --text: #1b2130;
@@ -85,6 +92,11 @@ html[data-theme='dark'] {
   --border: #2a303b;
   --border-strong: #39414e;
   --grid: #20262f;
+  --blocked: rgb(255 255 255 / 0.035);
+
+  --absence: #a98bf5;
+  --absence-soft: #241d38;
+  --absence-ink: #c4b0fa;
 
   --text: #e6e9ee;
   --muted: #a0a8b6;

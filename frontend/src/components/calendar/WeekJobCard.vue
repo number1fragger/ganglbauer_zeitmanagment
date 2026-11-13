@@ -1,9 +1,17 @@
 <script setup lang="ts">
 import type { Job } from '@/api/types'
+import { computed } from 'vue'
+import { workTimeWarnings } from '@/composables/useWorkingHours'
 import { isDone, priorityColor } from '@/utils/domain'
 import AppIcon from '../AppIcon.vue'
 
-defineProps<{ job: Job; color: string; conflict?: string[] }>()
+const props = defineProps<{ job: Job; color: string; conflict?: string[]; asApprentice?: boolean }>()
+
+const outside = computed(() =>
+  !isDone(props.job) && props.job.startsAt && props.job.endsAt
+    ? workTimeWarnings(new Date(props.job.startsAt), new Date(props.job.endsAt))
+    : [],
+)
 defineEmits<{ open: [job: Job] }>()
 </script>
 
@@ -14,18 +22,23 @@ defineEmits<{ open: [job: Job] }>()
       'week-job--done': isDone(job),
       'week-job--conflict': conflict?.length,
       'week-job--running': job.running,
+      'week-job--apprentice': asApprentice,
     }"
     :style="{ '--accent': color }"
-    :title="`${job.title}${job.customer ? ' – ' + job.customer : ''}${job.assignee ? ' · ' + job.assignee.fullName : ''}${conflict?.length ? '\nÜberschneidung mit ' + conflict.join(', ') : ''}`"
+    :title="`${job.title}${job.customer ? ' – ' + job.customer : ''}${job.assignee ? ' · ' + job.assignee.fullName : ''}${job.apprentice ? ' + Lehrling ' + job.apprentice.fullName : ''}${conflict?.length ? '\n' + conflict.join('\n') : ''}${outside.length ? '\n' + outside.join('\n') : ''}`"
     @click="$emit('open', job)"
   >
     <span class="week-job__top">
       <strong>{{ job.title }}</strong>
       <AppIcon v-if="conflict?.length" class="week-job__warn" name="layers" :size="11" />
+      <AppIcon v-else-if="outside.length" class="week-job__outside" name="clock" :size="11" />
       <span v-else class="dot" :style="{ '--dot': priorityColor(job.priority) }" />
     </span>
-    <span v-if="job.assignee" class="week-job__who">
-      {{ job.assignee.initials }}
+    <span v-if="asApprentice && job.apprentice" class="week-job__who" title="Als Lehrling eingeteilt">
+      {{ job.apprentice.initials }} · Lehrling
+    </span>
+    <span v-else-if="job.assignee" class="week-job__who">
+      {{ job.assignee.initials }}<template v-if="job.apprentice"> + {{ job.apprentice.initials }}</template>
     </span>
   </button>
 </template>
@@ -65,6 +78,11 @@ defineEmits<{ open: [job: Job] }>()
   );
 }
 
+.week-job--apprentice {
+  outline: 1.5px dashed color-mix(in srgb, var(--accent) 70%, transparent);
+  outline-offset: -1.5px;
+}
+
 .week-job__top {
   display: flex;
   align-items: flex-start;
@@ -85,6 +103,11 @@ defineEmits<{ open: [job: Job] }>()
   width: 6px;
   height: 6px;
   margin-top: 3px;
+}
+
+.week-job__outside {
+  flex: none;
+  color: var(--warning);
 }
 
 .week-job__warn {

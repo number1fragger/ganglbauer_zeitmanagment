@@ -3,6 +3,7 @@ import { computed, ref, watch } from 'vue'
 import { planningApi } from '@/api'
 import { errorMessage } from '@/api/http'
 import type { ActualTimeReport, Overview } from '@/api/types'
+import WorkRequestStats from '@/components/WorkRequestStats.vue'
 import {
   addDays,
   describeShort,
@@ -127,10 +128,12 @@ const utilisation = computed(() => {
     <header class="report__header">
       <div>
         <h1 class="page-title">Auswertung</h1>
-        <p class="page-sub">Tatsächlich geleistete Arbeitszeit (Ist-Zeit) aus der Zeiterfassung</p>
+        <p class="page-sub">
+          Ist-Zeit aus der Zeiterfassung und Statistik der Arbeitsanfragen
+        </p>
       </div>
       <label class="report__period">
-        <span>Zeitraum:</span>
+        <span>Ist-Zeit:</span>
         <select v-model="selected" aria-label="Zeitraum">
           <option v-for="week in weeks" :key="week.key" :value="week.key">{{ week.label }}</option>
         </select>
@@ -154,7 +157,11 @@ const utilisation = computed(() => {
           <p class="section-sub">Summe aller Arbeitsabschnitte im Zeitraum</p>
 
           <div v-if="report.perWorker.length" class="bars">
-            <div v-for="row in report.perWorker" :key="row.workerId" class="bars__worker">
+            <div
+              v-for="row in report.perWorker"
+              :key="row.workerId ?? row.worker"
+              class="bars__worker"
+            >
               <strong>{{ row.worker }}</strong>
               <div class="bars__line">
                 <span
@@ -208,6 +215,8 @@ const utilisation = computed(() => {
           </div>
         </div>
       </section>
+
+      <WorkRequestStats />
 
       <section v-if="utilisation.length" class="card panel">
         <h2 class="section-title">Wann wird wieder Arbeit gebraucht?</h2>

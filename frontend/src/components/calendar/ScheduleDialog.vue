@@ -3,24 +3,32 @@ import { computed, reactive, ref } from 'vue'
 import { jobsApi } from '@/api'
 import { errorMessage } from '@/api/http'
 import type { Job, UserRef } from '@/api/types'
-import { toast } from '@/composables/useToast'
+import { toastSaved } from '@/composables/useToast'
+import { workEnd, workingHours } from '@/composables/useWorkingHours'
 import { DEFAULT_SLOT_MINUTES } from '@/utils/calendar'
-import { addMinutes, nextWorkday, toDateKey } from '@/utils/time'
+import { nextWorkday, toDateKey } from '@/utils/time'
+import { windowsOn } from '@/utils/workTime'
 import BaseModal from '../BaseModal.vue'
 
 /**
  * "Einplanen" ohne Drag & Drop (Touch, Tastatur): Tag, Uhrzeit und optional
- * Ende waehlen. Ohne Ende bekommt der Termin den technischen Standardblock.
+ * Ende waehlen. Ohne Ende bekommt der Termin die Standardlaenge (eine Stunde
+ * Arbeitszeit, die Mittagspause zaehlt nicht).
  */
 const props = defineProps<{ job: Job; workers: UserRef[]; date?: Date }>()
 const emit = defineEmits<{ close: []; scheduled: [job: Job] }>()
 
 const today = new Date()
 const initialDay = props.date ?? (today.getHours() >= 15 ? nextWorkday(today) : today)
+/** Vorschlag: Arbeitsbeginn des gewaehlten Tages */
+const firstWindow = workingHours.value ? windowsOn(workingHours.value, initialDay)[0] : undefined
+const dayStart = firstWindow
+  ? firstWindow[0].toLocaleTimeString('de-AT', { hour: '2-digit', minute: '2-digit', hourCycle: 'h23' })
+  : ''
 
 const form = reactive({
   day: toDateKey(initialDay),
-  start: '07:00',
+  start: dayStart,
   end: '',
   assigneeId: props.job.assignee?.id ?? null,
 })
@@ -49,7 +57,7 @@ async function save(): Promise<void> {
       assigneeId: form.assigneeId,
       changeAssignee: true,
     })
-    toast(`„${job.title}“ eingeplant.`, 'success')
+    toastSaved(`„${job.title}“ eingeplant.`, job.warnings)
     emit('scheduled', job)
   } catch (e) {
     error.value = errorMessage(e)
@@ -61,7 +69,9 @@ async function save(): Promise<void> {
 const endHint = computed(() =>
   form.end
     ? ''
-    : `Ohne Ende wird ein Kalenderblock bis ${addMinutes(startsAt.value, DEFAULT_SLOT_MINUTES).toLocaleTimeString('de-AT', { hour: '2-digit', minute: '2-digit', hourCycle: 'h23' })} angezeigt.`,
+    : Number.isNaN(startsAt.value.getTime())
+      ? ''
+      : `Ohne Ende wird eine Stunde Arbeitszeit eingeplant (bis ${workEnd(startsAt.value, DEFAULT_SLOT_MINUTES).toLocaleTimeString('de-AT', { hour: '2-digit', minute: '2-digit', hourCycle: 'h23' })}).`,
 )
 </script>
 

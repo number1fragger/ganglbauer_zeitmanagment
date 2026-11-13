@@ -103,7 +103,7 @@ abstract class ApiTestCase extends WebTestCase
         ], 201);
     }
 
-    private function user(string $username, string $first, string $last, UserRole $role): User
+    protected function user(string $username, string $first, string $last, UserRole $role): User
     {
         $user = (new User())->setUsername($username)->setFirstName($first)->setLastName($last)->setRole($role)->setPassword('x');
         $this->em->persist($user);

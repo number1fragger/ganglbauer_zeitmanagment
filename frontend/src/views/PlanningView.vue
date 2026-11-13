@@ -570,18 +570,21 @@ const showRightPanel = computed(() => isDesktop.value && mode.value !== 'monat' 
           />
           Parallele Aufträge erlauben
         </label>
-        <button
-          v-if="auth.canManageAbsences"
-          class="btn btn--outline"
-          data-tip="Urlaub oder persönlichen Termin eintragen"
-          @click="absenceDialog = null"
-        >
-          <AppIcon name="calendar-off" :size="16" />
-          <span class="toolbar__new-label">Abwesenheit</span>
-        </button>
-        <button v-if="auth.isPlanner" class="btn btn--primary" @click="createJob()">
-          <AppIcon name="plus" :size="16" /> <span class="toolbar__new-label">Neuer Auftrag</span>
-        </button>
+        <!-- Anlegen: immer rechts am Rand -->
+        <div class="toolbar__actions">
+          <button
+            v-if="auth.canManageAbsences"
+            class="btn btn--outline"
+            data-tip="Urlaub oder persönlichen Termin eintragen"
+            @click="absenceDialog = null"
+          >
+            <AppIcon name="calendar-off" :size="16" />
+            <span class="toolbar__new-label">Abwesenheit</span>
+          </button>
+          <button v-if="auth.isPlanner" class="btn btn--primary" @click="createJob()">
+            <AppIcon name="plus" :size="16" /> <span class="toolbar__new-label">Neuer Auftrag</span>
+          </button>
+        </div>
       </div>
     </header>
 
@@ -807,9 +810,16 @@ const showRightPanel = computed(() => isDesktop.value && mode.value !== 'monat' 
 
 .toolbar__right {
   display: flex;
+  flex-grow: 1; /* bricht als Ganzes um und fuellt dann die Zeile */
   flex-wrap: wrap;
   align-items: center;
   gap: 10px;
+}
+
+.toolbar__actions {
+  display: flex;
+  gap: 10px;
+  margin-left: auto;
 }
 
 .toolbar__select {

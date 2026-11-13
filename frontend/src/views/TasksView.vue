@@ -10,6 +10,7 @@ import PageHeader from '@/components/PageHeader.vue'
 import TaskCard from '@/components/TaskCard.vue'
 import { useBreakpoint } from '@/composables/useBreakpoint'
 import { useJobActions } from '@/composables/useJobActions'
+import { loadSchedulingSettings, overlapsAreConflicts } from '@/composables/useSchedulingSettings'
 import { toast } from '@/composables/useToast'
 import { useAuthStore } from '@/stores/auth'
 import {
@@ -70,6 +71,7 @@ async function load(): Promise<void> {
 }
 
 onMounted(async () => {
+  void loadSchedulingSettings()
   if (auth.isPlanner) {
     planningApi
       .overview()
@@ -121,7 +123,7 @@ function compare(a: Job, b: Job): number {
 }
 
 const visible = computed(() => jobs.value.filter(matchesPeriod))
-const conflicts = computed(() => findConflicts(jobs.value))
+const conflicts = computed(() => findConflicts(jobs.value, [], { overlaps: overlapsAreConflicts() }))
 
 const columns = computed(() =>
   statuses

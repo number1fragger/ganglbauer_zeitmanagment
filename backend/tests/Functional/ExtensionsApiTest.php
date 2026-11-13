@@ -135,18 +135,23 @@ final class ExtensionsApiTest extends ApiTestCase
 
     // ---- Ueberschneidungen ---------------------------------------------------
 
-    public function testOverlappingJobsAreSavedAndReported(): void
+    /** Parallele Auftraege erlaubt (Standard): gleichzeitige Auftraege sind kein Konflikt. */
+    public function testOverlapsAreOnlyConflictsWhenParallelSchedulingIsOff(): void
     {
         $a = $this->createJob(['title' => 'A', 'startsAt' => '2026-09-28T09:00:00+02:00', 'minutes' => 120]);
         $b = $this->createJob(['title' => 'B', 'startsAt' => '2026-09-28T10:00:00+02:00', 'minutes' => 60]);
 
-        self::assertSame('ueberschneidung', $b['warnings'][0]['type']);
-        self::assertStringContainsString('Anton Huber ist zur selben Zeit auch für „A“', $b['warnings'][0]['message']);
-        self::assertSame($a['id'], $b['warnings'][0]['jobId']);
-
-        // Beide bleiben gespeichert und im Kalender.
+        self::assertSame([], $b['warnings']);
+        self::assertSame([], $this->api('GET', '/api/overview', $this->chef)['conflicts']);
         $calendar = $this->api('GET', '/api/jobs?from=2026-09-27T22:00:00Z&to=2026-09-28T22:00:00Z', $this->chef);
         self::assertEqualsCanonicalizing([$a['id'], $b['id']], array_column($calendar, 'id'));
+
+        // Ausgeschaltet: die bestehende Ueberschneidung wird gemeldet.
+        $this->storeParallelScheduling(false);
+        $warnings = $this->api('GET', "/api/jobs/{$b['id']}", $this->chef)['warnings'];
+        self::assertSame('ueberschneidung', $warnings[0]['type']);
+        self::assertStringContainsString('Anton Huber ist zur selben Zeit auch für „A“', $warnings[0]['message']);
+        self::assertSame($a['id'], $warnings[0]['jobId']);
         self::assertCount(1, $this->api('GET', '/api/overview', $this->chef)['conflicts']);
     }
 
@@ -312,15 +317,18 @@ final class ExtensionsApiTest extends ApiTestCase
         $this->api('PUT', "/api/users/{$this->apprentice->getId()}", $this->chef, ['firstName' => 'Lukas', 'lastName' => 'Wimmer', 'role' => 'arbeiter']);
     }
 
-    public function testApprenticeOverlapIsReportedButAllowed(): void
+    public function testApprenticeOverlapIsAllowedAndReportedWhenParallelIsOff(): void
     {
         $this->createJob(['title' => 'A', 'startsAt' => '2026-09-28T09:00:00+02:00', 'minutes' => 120, 'apprenticeId' => $this->apprentice->getId()]);
         $b = $this->createJob(['title' => 'B', 'startsAt' => '2026-09-28T10:00:00+02:00', 'minutes' => 60, 'assigneeId' => $this->otherWorker->getId(), 'apprenticeId' => $this->apprentice->getId()]);
 
         self::assertSame($this->apprentice->getId(), $b['apprentice']['id']);
-        self::assertSame('ueberschneidung', $b['warnings'][0]['type']);
-        self::assertStringContainsString('Lukas Wimmer', $b['warnings'][0]['message']);
+        self::assertSame([], $b['warnings']);
 
+        $this->storeParallelScheduling(false);
+        $warnings = $this->api('GET', "/api/jobs/{$b['id']}", $this->chef)['warnings'];
+        self::assertSame('ueberschneidung', $warnings[0]['type']);
+        self::assertStringContainsString('Lukas Wimmer', $warnings[0]['message']);
         $conflicts = $this->api('GET', '/api/overview', $this->chef)['conflicts'];
         self::assertSame(['L. Wimmer'], array_column($conflicts, 'worker'));
     }

@@ -148,13 +148,21 @@ export type ConflictInfo =
   | { kind: 'overlap'; person: UserRef; a: ScheduledJob; b: ScheduledJob; from: Date }
   | { kind: 'absence'; person: UserRef; job: ScheduledJob; absence: Absence; from: Date }
 
+export interface ConflictOptions {
+  /**
+   * Ueberschneidungen zweier Auftraege als Konflikt werten? Nur wenn parallele
+   * Auftraege ausgeschaltet sind – sonst ist das ausdruecklich erlaubt.
+   */
+  overlaps: boolean
+}
+
 /**
  * Alle Konflikte im geladenen Zeitraum – wie die Hinweise im Backend
- * (ScheduleChecker): zustaendige Person oder Lehrling ist zur selben Zeit
- * fuer einen anderen Auftrag eingeplant oder abwesend. Nichts wird
- * verhindert, alles wird angezeigt.
+ * (ScheduleChecker): zustaendige Person oder Lehrling ist abwesend oder –
+ * nur bei ausgeschalteten parallelen Auftraegen – zur selben Zeit fuer einen
+ * anderen Auftrag eingeplant. Nichts wird verhindert, alles wird angezeigt.
  */
-export function listConflicts(jobs: Job[], absences: Absence[] = []): ConflictInfo[] {
+export function listConflicts(jobs: Job[], absences: Absence[], options: ConflictOptions): ConflictInfo[] {
   const relevant = jobs.filter(
     (job): job is ScheduledJob => isScheduled(job) && !isDone(job) && peopleOf(job).length > 0,
   )
@@ -164,7 +172,7 @@ export function listConflicts(jobs: Job[], absences: Absence[] = []): ConflictIn
 
   const result: ConflictInfo[] = []
   relevant.forEach((a, i) => {
-    for (const b of relevant.slice(i + 1)) {
+    for (const b of options.overlaps ? relevant.slice(i + 1) : []) {
       if (!overlaps(a.startsAt, a.endsAt, b.startsAt, b.endsAt)) continue
       for (const person of peopleOf(a)) {
         if (peopleOf(b).some((p) => p.id === person.id))
@@ -181,11 +189,11 @@ export function listConflicts(jobs: Job[], absences: Absence[] = []): ConflictIn
 }
 
 /** Je Auftrag die Hinweise als Text – fuer Markierung und Tooltip im Kalender. */
-export function findConflicts(jobs: Job[], absences: Absence[] = []): Map<number, string[]> {
+export function findConflicts(jobs: Job[], absences: Absence[], options: ConflictOptions): Map<number, string[]> {
   const result = new Map<number, string[]>()
   const add = (id: number, message: string) => result.set(id, [...(result.get(id) ?? []), message])
 
-  for (const c of listConflicts(jobs, absences)) {
+  for (const c of listConflicts(jobs, absences, options)) {
     if (c.kind === 'overlap') {
       add(c.a.id, `${c.person.shortName} gleichzeitig bei „${c.b.title}“`)
       add(c.b.id, `${c.person.shortName} gleichzeitig bei „${c.a.title}“`)

@@ -5,6 +5,7 @@ namespace App\Tests\Functional;
 use App\Entity\Job;
 use App\Entity\User;
 use App\Enum\UserRole;
+use App\Service\SchedulingSettings;
 use Doctrine\ORM\EntityManagerInterface;
 use Doctrine\ORM\Tools\SchemaTool;
 use Lexik\Bundle\JWTAuthenticationBundle\Services\JWTTokenManagerInterface;
@@ -68,6 +69,16 @@ abstract class ApiTestCase extends WebTestCase
         $content = (string) $response->getContent();
 
         return '' === $content ? null : json_decode($content, true, flags: \JSON_THROW_ON_ERROR);
+    }
+
+    /**
+     * Einstellung "Parallele Auftraege erlauben" direkt speichern – ohne das
+     * Neusortieren von PUT /api/settings. So bleiben bestehende
+     * Ueberschneidungen stehen und die Konflikterkennung laesst sich pruefen.
+     */
+    protected function storeParallelScheduling(bool $allowed): void
+    {
+        static::getContainer()->get(SchedulingSettings::class)->setAllowsParallel($allowed);
     }
 
     /** Uhr vorstellen, z. B. "2026-09-28 12:00". */

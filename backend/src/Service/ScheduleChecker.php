@@ -15,7 +15,9 @@ use App\Util\WorkingHours;
  * damit nichts unbemerkt bleibt:
  *
  *  - arbeitszeit:      Beginn/Ende ausserhalb der regulaeren Arbeitszeit oder in der Pause
- *  - ueberschneidung:  zustaendige Person oder Lehrling ist zur selben Zeit anderweitig eingeplant
+ *  - ueberschneidung:  zustaendige Person oder Lehrling ist zur selben Zeit anderweitig
+ *                      eingeplant – nur wenn parallele Auftraege ausgeschaltet sind
+ *                      (SchedulingSettings); sonst ist das ausdruecklich erlaubt
  *  - abwesenheit:      zustaendige Person oder Lehrling ist abwesend (Urlaub, Arzttermin, ...)
  */
 class ScheduleChecker
@@ -29,6 +31,7 @@ class ScheduleChecker
     public function __construct(
         private readonly JobRepository $jobs,
         private readonly AbsenceRepository $absences,
+        private readonly SchedulingSettings $settings,
     ) {
     }
 
@@ -56,15 +59,18 @@ class ScheduleChecker
             WorkingHours::warnings($startsAt, $endsAt),
         );
 
+        $overlapsAreConflicts = !$this->settings->allowsParallel();
         foreach (array_filter([$assignee, $apprentice]) as $person) {
-            $exclude = null !== $excludeJobId ? [$excludeJobId] : [];
-            foreach ($this->jobs->findOpenInvolving($person, $startsAt, $endsAt, $exclude) as $other) {
-                $warnings[] = [
-                    'type' => self::UEBERSCHNEIDUNG,
-                    'message' => sprintf('%s ist zur selben Zeit auch für „%s“ eingeplant (%s).', $person->getFullName(), $other->getTitle(), $this->describe($other)),
-                    'jobId' => (int) $other->getId(),
-                    'userId' => (int) $person->getId(),
-                ];
+            if ($overlapsAreConflicts) {
+                $exclude = null !== $excludeJobId ? [$excludeJobId] : [];
+                foreach ($this->jobs->findOpenInvolving($person, $startsAt, $endsAt, $exclude) as $other) {
+                    $warnings[] = [
+                        'type' => self::UEBERSCHNEIDUNG,
+                        'message' => sprintf('%s ist zur selben Zeit auch für „%s“ eingeplant (%s).', $person->getFullName(), $other->getTitle(), $this->describe($other)),
+                        'jobId' => (int) $other->getId(),
+                        'userId' => (int) $person->getId(),
+                    ];
+                }
             }
 
             foreach ($this->absences->findInRange($startsAt, $endsAt, [$person]) as $absence) {

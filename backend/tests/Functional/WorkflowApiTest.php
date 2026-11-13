@@ -279,6 +279,11 @@ final class WorkflowApiTest extends ApiTestCase
         ]);
         self::assertSame('10:00', $this->reload($b)->getStartsAt()?->format('H:i'));
 
+        // Parallele Auftraege erlaubt (Standard): kein Konflikt.
+        self::assertSame([], $this->api('GET', '/api/overview', $this->chef)['conflicts']);
+
+        // Ausgeschaltet: die Ueberschneidung wird gemeldet.
+        $this->storeParallelScheduling(false);
         $overview = $this->api('GET', '/api/overview', $this->chef);
         self::assertCount(1, $overview['conflicts']);
         self::assertEqualsCanonicalizing([$a, $b], array_column($overview['conflicts'][0]['jobs'], 'id'));

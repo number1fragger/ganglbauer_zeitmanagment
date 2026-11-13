@@ -145,19 +145,27 @@ Beginn und Ende berechnet; Dauer und Termin können daher nie auseinanderlaufen.
 
 ### Überschneidungen und Konflikte
 
-Eine Person darf mehreren Aufträgen zur gleichen Zeit zugeteilt sein – nichts wird blockiert oder
-automatisch verschoben. Gleichzeitige Termine stehen **nebeneinander** (beide sichtbar und
-anklickbar/ziehbar), sind rot umrandet und schraffiert, und eine Hinweisleiste über dem Kalender
-nennt, wer wann für welche Aufträge gleichzeitig eingeplant ist. Das gilt auch für Lehrlinge und für
-Abwesenheiten. Das Backend liefert dieselben Hinweise bei jedem Speichern (`warnings`), in der
-Vorschau `GET /api/jobs/check` und im Dashboard (`/api/overview`: `conflicts`, `absenceConflicts`).
+Gleichzeitige Termine stehen im Kalender immer **nebeneinander** (beide sichtbar und
+anklickbar/ziehbar). Ob das ein Konflikt ist, hängt von der Einstellung **Parallele Aufträge** ab
+(siehe unten):
+
+- **Erlaubt:** Gleichzeitige Aufträge derselben Person sind gewollt – kein Hinweis, keine Markierung,
+  kein Eintrag in der Konfliktliste.
+- **Nicht erlaubt:** Überschneidungen (auch über den Lehrling) sind rot umrandet und schraffiert, und
+  eine Hinweisleiste über dem Kalender nennt, wer wann doppelt eingeplant ist. Neue Überschneidungen
+  löst das Backend beim Einplanen ohnehin durch Verschieben auf.
+
+Abwesenheiten (Urlaub, Arzttermin …) sind unabhängig davon immer ein Konflikt. Das Backend liefert
+dieselben Hinweise bei jedem Speichern (`warnings`), in der Vorschau `GET /api/jobs/check` und im
+Dashboard (`/api/overview`: `conflicts`, `absenceConflicts`); im Frontend entscheidet
+`useSchedulingSettings` nach derselben Regel.
 
 ### Parallele Aufträge
 
 Die Einstellung **Parallele Aufträge** (`GET/PUT /api/settings`, ändern dürfen Sekretärin und Chef)
 legt fest, ob sich Aufträge einer Person überschneiden dürfen.
 
-- **Erlaubt (Standard):** Überschneidungen werden gespeichert und nur als Hinweis gemeldet (siehe oben).
+- **Erlaubt (Standard):** Überschneidungen werden gespeichert und gelten nicht als Konflikt (siehe oben).
 - **Nicht erlaubt:** Ein Mitarbeiter kann immer nur eine Aufgabe gleichzeitig bearbeiten. Das gilt für
   den Zuständigen und den Lehrling – beide sind mit jedem Auftrag, an dem sie beteiligt sind, belegt.
   Überschneidet ein neuer oder verschobener Auftrag einen anderen, rutscht der spätere nach hinten.

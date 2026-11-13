@@ -20,6 +20,11 @@ import JobDialog from '@/components/JobDialog.vue'
 import { useBreakpoint } from '@/composables/useBreakpoint'
 import { confirmAction } from '@/composables/useConfirm'
 import { drag } from '@/composables/useJobDrag'
+import {
+  loadSchedulingSettings,
+  overlapsAreConflicts,
+  parallelScheduling,
+} from '@/composables/useSchedulingSettings'
 import { toast, toastSaved, toastShifted } from '@/composables/useToast'
 import { endAfterMove, type MoveEvent, type ResizeEvent } from '@/utils/calendar'
 import { findConflicts, isMovable, listConflicts } from '@/utils/domain'
@@ -154,11 +159,12 @@ const shownWorkers = computed(() =>
 const calendarVisible = computed(() =>
   selectedWorkerId.value === null ? visibleWorkers.value : [selectedWorkerId.value],
 )
-const conflicts = computed(() => findConflicts(shownJobs.value, shownAbsences.value))
+const conflictOptions = computed(() => ({ overlaps: overlapsAreConflicts() }))
+const conflicts = computed(() => findConflicts(shownJobs.value, shownAbsences.value, conflictOptions.value))
 
 /** Hinweisleiste: wer ist gleichzeitig doppelt eingeplant oder abwesend? */
 const conflictList = computed(() =>
-  listConflicts(shownJobs.value, shownAbsences.value).map((c) => ({
+  listConflicts(shownJobs.value, shownAbsences.value, conflictOptions.value).map((c) => ({
     job: c.kind === 'overlap' ? c.b : c.job,
     text:
       c.kind === 'overlap'
@@ -172,18 +178,9 @@ const formatDayTime = (date: Date) =>
 
 // ---- Parallele Auftraege ------------------------------------------------------
 
-/** null = noch nicht geladen. */
-const parallel = ref<boolean | null>(null)
+/** Geteilt mit der Aufgabenseite; null = noch nicht geladen (Schalter ausgeblendet). */
+const parallel = parallelScheduling
 const parallelBusy = ref(false)
-
-async function loadSettings(): Promise<void> {
-  if (!auth.isPlanner) return
-  try {
-    parallel.value = (await settingsApi.get()).parallelScheduling
-  } catch {
-    /* Schalter bleibt ausgeblendet */
-  }
-}
 
 /** Zeile fuer die Rueckfrage: "Titel · Kunde · Zustaendiger → Di 17.11., 07:30 – 09:00" */
 function shiftLine(job: Job): string {
@@ -243,7 +240,7 @@ async function load(): Promise<void> {
   const token = ++loadToken
   error.value = ''
   loading.value = true
-  void loadSettings() // kann inzwischen jemand anderer umgestellt haben
+  void loadSchedulingSettings() // kann inzwischen jemand anderer umgestellt haben
   try {
     const [nextJobs, nextOverview, board, nextAbsences] = await Promise.all([
       jobsApi.inRange(range.value.from, range.value.to),

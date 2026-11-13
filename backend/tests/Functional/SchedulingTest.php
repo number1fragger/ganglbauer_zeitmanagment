@@ -40,8 +40,8 @@ final class SchedulingTest extends ApiTestCase
 
         self::assertSame('2026-09-28T09:00:00+02:00', $second['startsAt']);
         self::assertSame([], $second['shifted']);
-        self::assertSame('ueberschneidung', $second['warnings'][0]['type']);
-        self::assertSame($first['id'], $second['warnings'][0]['jobId']);
+        self::assertSame([], $second['warnings'], 'gleichzeitige Auftraege sind erlaubt, kein Konflikt');
+        self::assertSame('2026-09-28T08:00:00+02:00', $this->api('GET', "/api/jobs/{$first['id']}", $this->chef)['startsAt']);
     }
 
     public function testOnlySecretaryAndChefMayChangeSettings(): void
@@ -309,7 +309,7 @@ final class SchedulingTest extends ApiTestCase
         $check = $this->api('GET', '/api/jobs/check?'.$query, $this->chef);
 
         self::assertNull($check['shift']);
-        self::assertSame('ueberschneidung', $check['warnings'][0]['type']);
+        self::assertSame([], $check['warnings']);
     }
 
     public function testApprenticeCannotWorkOnTwoJobsAtOnce(): void

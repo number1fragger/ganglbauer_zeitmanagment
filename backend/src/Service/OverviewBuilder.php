@@ -26,6 +26,7 @@ class OverviewBuilder
         private readonly WorkerStatus $status,
         private readonly FollowUpPlanner $followUps,
         private readonly AbsenceRepository $absences,
+        private readonly SchedulingSettings $settings,
     ) {
     }
 
@@ -69,12 +70,17 @@ class OverviewBuilder
 
     /**
      * Ueberschneidende Termine derselben Person (zustaendig oder als Lehrling)
-     * in den naechsten Tagen.
+     * in den naechsten Tagen – nur ein Konflikt, wenn parallele Auftraege
+     * ausgeschaltet sind.
      *
      * @return list<array<string, mixed>>
      */
     private function conflicts(\DateTimeImmutable $now): array
     {
+        if ($this->settings->allowsParallel()) {
+            return [];
+        }
+
         $conflicts = [];
         $jobs = $this->upcomingJobs($now);
         foreach ($jobs as $i => $a) {

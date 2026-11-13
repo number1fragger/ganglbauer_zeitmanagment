@@ -1,12 +1,16 @@
 <script setup lang="ts">
-/** Kleine Kunden-Pille neben dem Aufgabentitel (Aufgabenliste, Kalender). */
+/**
+ * Kunde einer Aufgabe – steht oben links ueber dem Titel (Aufgabenliste,
+ * To-do-Liste, Kalender). compact: kleinere Schrift fuer enge Kalenderkarten.
+ */
 defineProps<{
   customer: string
+  compact?: boolean
 }>()
 </script>
 
 <template>
-  <span class="customer-tag" :title="`Kunde: ${customer}`">
+  <span class="customer-tag" :class="{ 'customer-tag--compact': compact }" :title="`Kunde: ${customer}`">
     <svg
       class="customer-tag__icon"
       width="10"
@@ -31,7 +35,7 @@ defineProps<{
   display: inline-flex;
   align-items: center;
   gap: 4px;
-  max-width: 45%;
+  max-width: 100%;
   flex-shrink: 0;
   overflow: hidden;
   padding: 1px 6px;
@@ -44,6 +48,12 @@ defineProps<{
   line-height: 1.5;
   white-space: nowrap;
   text-overflow: ellipsis;
+}
+
+.customer-tag--compact {
+  padding: 0 4px;
+  font-size: 9px;
+  line-height: 1.4;
 }
 
 .customer-tag__icon {

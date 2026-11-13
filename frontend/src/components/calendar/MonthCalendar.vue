@@ -91,8 +91,8 @@ const cells = computed(() => {
           :title="`${job.title}${job.assignee ? ' · ' + job.assignee.fullName : ''}${job.apprentice ? ' + Lehrling ' + job.apprentice.fullName : ''}${conflicts?.has(job.id) ? '\n' + conflicts.get(job.id)!.join('\n') : ''}`"
           @click="$emit('open', job)"
         >
+          <CustomerTag v-if="job.customer" compact class="month__chip-tag" :customer="job.customer" />
           <span class="month__chip-title">{{ job.assignee?.initials ?? '–' }}<template v-if="job.apprentice">+{{ job.apprentice.initials }}</template> · {{ job.title }}</span>
-          <CustomerTag v-if="job.customer" class="month__chip-tag" :customer="job.customer" />
         </button>
 
         <button v-if="cell.jobs.length > MAX_CHIPS" class="link month__more" @click="$emit('showDay', cell.day)">
@@ -212,9 +212,7 @@ const cells = computed(() => {
 
 .month__chip-tag {
   min-width: 0;
-  padding: 0 4px;
-  font-size: 9px;
-  line-height: 1.4;
+  max-width: 55%;
 }
 
 .month__chip--conflict {

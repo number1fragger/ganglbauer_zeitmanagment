@@ -57,8 +57,10 @@ const when = computed(() => {
     @keydown.enter.self="emit('open', job)"
   >
     <header class="task__head">
-      <h3 class="task__title">{{ job.title }}</h3>
-      <CustomerTag v-if="job.customer" :customer="job.customer" />
+      <div class="task__heading">
+        <CustomerTag v-if="job.customer" :customer="job.customer" />
+        <h3 class="task__title">{{ job.title }}</h3>
+      </div>
       <span v-if="job.assignee" class="avatar avatar--small" :title="job.assignee.fullName">{{
         job.assignee.initials
       }}</span>
@@ -192,8 +194,17 @@ const when = computed(() => {
   min-width: 0;
 }
 
-.task__title {
+.task__heading {
+  display: flex;
   flex: 1;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 3px;
+  min-width: 0;
+}
+
+.task__title {
+  max-width: 100%;
   min-width: 0;
   overflow: hidden;
   text-overflow: ellipsis;
@@ -201,10 +212,6 @@ const when = computed(() => {
   font-weight: 600;
   line-height: 1.35;
   overflow-wrap: anywhere;
-}
-
-.task__head :deep(.customer-tag) {
-  margin-top: 1px;
 }
 
 .task__chips {

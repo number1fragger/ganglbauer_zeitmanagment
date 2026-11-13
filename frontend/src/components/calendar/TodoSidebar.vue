@@ -145,9 +145,9 @@ function startDrag(event: PointerEvent, job: Job): void {
         @pointerdown="startDrag($event, job)"
       >
         <button class="todo__open" :aria-label="`${job.title} öffnen`" @click="emit('open', job)">
-          <span class="todo__title-row">
-            <strong>{{ job.title }}</strong>
+          <span class="todo__heading">
             <CustomerTag v-if="job.customer" :customer="job.customer" />
+            <strong>{{ job.title }}</strong>
           </span>
           <small>
             <span>{{ job.assignee?.fullName ?? 'Nicht zugeteilt' }}</span>
@@ -327,15 +327,17 @@ function startDrag(event: PointerEvent, job: Job): void {
   cursor: inherit;
 }
 
-.todo__title-row {
+.todo__heading {
   display: flex;
-  align-items: center;
-  gap: 6px;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 2px;
   max-width: 100%;
   min-width: 0;
 }
 
 .todo__open strong {
+  max-width: 100%;
   min-width: 0;
   overflow: hidden;
   font-size: 13px;

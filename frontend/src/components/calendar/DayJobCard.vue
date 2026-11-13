@@ -46,8 +46,10 @@ const effort = computed(() => {
     @click="$emit('open', job)"
   >
     <span class="day-job__top">
-      <strong class="day-job__title">{{ job.title }}</strong>
-      <CustomerTag v-if="job.customer" class="day-job__tag" :customer="job.customer" />
+      <span class="day-job__heading">
+        <CustomerTag v-if="job.customer" :customer="job.customer" />
+        <strong class="day-job__title">{{ job.title }}</strong>
+      </span>
       <span v-if="asApprentice" class="badge day-job__badge" style="--b: var(--worker-3)">Lehrling</span>
       <AppIcon v-if="!isMovable(job) && !done" class="day-job__lock" name="timer" :size="12" />
       <AppIcon
@@ -137,18 +139,23 @@ const effort = computed(() => {
   gap: 6px;
 }
 
-.day-job__title {
+.day-job__heading {
+  display: flex;
   flex: 1;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 2px;
+  min-width: 0;
+}
+
+.day-job__title {
+  max-width: 100%;
   min-width: 0;
   overflow: hidden;
   font-size: 12px;
   font-weight: 600;
   text-overflow: ellipsis;
   white-space: nowrap;
-}
-
-.day-job__tag {
-  margin-top: 1px;
 }
 
 .day-job--done .day-job__title {

@@ -136,8 +136,8 @@ function createAt(day: Date): Date {
             <span class="agenda__time tabular">{{ item.label }}</span>
             <span class="agenda__main">
               <span class="agenda__title">
-                <strong>{{ item.job.title }}</strong>
                 <CustomerTag v-if="item.job.customer" :customer="item.job.customer" />
+                <strong>{{ item.job.title }}</strong>
               </span>
               <small>
                 {{ item.job.assignee?.fullName ?? 'Nicht zugeteilt'
@@ -251,12 +251,14 @@ function createAt(day: Date): Date {
 
 .agenda__title {
   display: flex;
-  align-items: center;
-  gap: 6px;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 2px;
   min-width: 0;
 }
 
 .agenda__main strong {
+  max-width: 100%;
   min-width: 0;
   overflow: hidden;
   font-size: 14px;

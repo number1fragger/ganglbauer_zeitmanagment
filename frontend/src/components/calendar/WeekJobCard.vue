@@ -31,8 +31,8 @@ defineEmits<{ open: [job: Job] }>()
   >
     <span class="week-job__top">
       <span class="week-job__name">
+        <CustomerTag v-if="job.customer" compact :customer="job.customer" />
         <strong>{{ job.title }}</strong>
-        <CustomerTag v-if="job.customer" :customer="job.customer" />
       </span>
       <AppIcon v-if="conflict?.length" class="week-job__warn" name="layers" :size="11" />
       <AppIcon v-else-if="outside.length" class="week-job__outside" name="clock" :size="11" />
@@ -97,17 +97,14 @@ defineEmits<{ open: [job: Job] }>()
 .week-job__name {
   display: flex;
   flex: 1;
-  align-items: center;
-  gap: 4px;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 2px;
   min-width: 0;
 }
 
-.week-job__name :deep(.customer-tag) {
-  padding: 0 4px;
-  font-size: 9px;
-}
-
 .week-job__top strong {
+  max-width: 100%;
   min-width: 0;
   overflow: hidden;
   font-size: 11px;

@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, ref, watch } from 'vue'
+import { computed, onMounted, onUnmounted, ref, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { absencesApi, jobsApi, planningApi, requestsApi, settingsApi } from '@/api'
 import { errorMessage } from '@/api/http'
@@ -496,6 +496,52 @@ async function resizeJob(event: ResizeEvent): Promise<void> {
 }
 
 const showRightPanel = computed(() => isDesktop.value && mode.value !== 'monat' && auth.isPlanner)
+
+// ---- Tastenkuerzel ---------------------------------------------------------
+
+const jobDialogRef = ref<{ canDelete: boolean; remove: () => Promise<void> } | null>(null)
+const absenceDialogRef = ref<{ canDelete: boolean; remove: () => Promise<void> } | null>(null)
+
+/**
+ * Pfeiltasten blaettern Tag/Woche/Monat weiter, "t" springt auf heute, Entf
+ * loescht die gerade geoeffnete Arbeit bzw. Abwesenheit (wie der Loeschen-
+ * Button im Dialog, mit derselben Rueckfrage). Wirkt nicht, waehrend in
+ * einem Feld getippt wird oder ein anderer Dialog offen ist.
+ */
+function onKeydown(event: KeyboardEvent): void {
+  const target = event.target as HTMLElement | null
+  const typing =
+    !!target && (['INPUT', 'TEXTAREA', 'SELECT'].includes(target.tagName) || target.isContentEditable)
+
+  if (event.key === 'Delete') {
+    if (typing) return
+    const open = jobDialogRef.value?.canDelete
+      ? jobDialogRef.value
+      : absenceDialogRef.value?.canDelete
+        ? absenceDialogRef.value
+        : null
+    if (!open) return
+    event.preventDefault()
+    void open.remove()
+    return
+  }
+
+  if (typing || dialog.value || absenceDialog.value !== undefined || planning.value) return
+
+  if (event.key === 'ArrowLeft') {
+    event.preventDefault()
+    step(-1)
+  } else if (event.key === 'ArrowRight') {
+    event.preventDefault()
+    step(1)
+  } else if (event.key.toLowerCase() === 't') {
+    event.preventDefault()
+    show(mode.value, startOfDay(new Date()))
+  }
+}
+
+onMounted(() => window.addEventListener('keydown', onKeydown))
+onUnmounted(() => window.removeEventListener('keydown', onKeydown))
 </script>
 
 <template>
@@ -727,6 +773,7 @@ const showRightPanel = computed(() => isDesktop.value && mode.value !== 'monat' 
 
     <JobDialog
       v-if="dialog"
+      ref="jobDialogRef"
       :job="dialog.job"
       :defaults="dialog.defaults"
       :workers="workerRefs"
@@ -737,6 +784,7 @@ const showRightPanel = computed(() => isDesktop.value && mode.value !== 'monat' 
     />
     <AbsenceDialog
       v-if="absenceDialog !== undefined"
+      ref="absenceDialogRef"
       :absence="absenceDialog"
       :workers="workerRefs"
       :defaults="{ day: mode === 'tag' ? anchor : undefined }"

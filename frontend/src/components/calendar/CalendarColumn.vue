@@ -232,15 +232,15 @@ function onBackgroundClick(event: MouseEvent): void {
   position: absolute;
   left: 0;
   right: 0;
-  background: repeating-linear-gradient(
-    -45deg,
-    var(--blocked) 0 6px,
-    transparent 6px 12px
-  );
+  background:
+    repeating-linear-gradient(-45deg, var(--blocked) 0 6px, transparent 6px 12px),
+    var(--blocked-bg);
 }
 
 .column__blocked--break {
-  background-color: color-mix(in srgb, var(--warning) 6%, transparent);
+  background:
+    repeating-linear-gradient(-45deg, var(--blocked) 0 6px, transparent 6px 12px),
+    color-mix(in srgb, var(--warning) 18%, var(--blocked-bg));
 }
 
 .column__blocked span {
@@ -298,7 +298,7 @@ function onBackgroundClick(event: MouseEvent): void {
   justify-content: center;
   background:
     repeating-linear-gradient(-45deg, var(--blocked) 0 6px, transparent 6px 12px),
-    color-mix(in srgb, var(--bg) 82%, transparent);
+    color-mix(in srgb, var(--warning) 18%, var(--blocked-bg));
   border-block: 1px dashed var(--border-strong);
   pointer-events: none;
 }

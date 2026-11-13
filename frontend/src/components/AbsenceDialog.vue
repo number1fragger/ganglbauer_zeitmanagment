@@ -145,6 +145,9 @@ async function remove(): Promise<void> {
     error.value = errorMessage(e)
   }
 }
+
+/** Fuer die Tastenkombination Entf im Kalender (PlanningView). */
+defineExpose({ canDelete: editing, remove })
 </script>
 
 <template>

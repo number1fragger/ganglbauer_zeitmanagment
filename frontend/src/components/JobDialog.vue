@@ -389,6 +389,9 @@ function entryLabel(startedAt: string, endedAt: string | null): string {
     ? `${formatDateTimeShort(start)} – ${formatTime(end)}`
     : `${formatDateTimeShort(start)} – ${formatDateTimeShort(end)}`
 }
+
+/** Fuer die Tastenkombination Entf im Kalender (PlanningView). */
+defineExpose({ canDelete: computed(() => editing.value && canEdit.value), remove })
 </script>
 
 <template>
